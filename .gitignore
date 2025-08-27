@@ -137,3 +137,17 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# VPN Management System
+# Sensitive files that should not be committed
+clients/
+keys/
+logs/
+*.key
+*.conf
+*.png
+*.qr
+*.db
+
+# But keep template files
+!templates/*.conf
