@@ -1,0 +1,16 @@
+{
+  "name": "ford",
+  "version": "1.0.0",
+  "description": "A simple greeting application",
+  "main": "index.js",
+  "bin": {
+    "ford": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  },
+  "keywords": ["greeting", "hello", "hi"],
+  "author": "",
+  "license": "ISC"
+}
