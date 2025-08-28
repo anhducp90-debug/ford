@@ -1,0 +1,39 @@
+[Unit]
+Description=VPN Statistics Monitor
+Documentation=https://github.com/anhducp90-debug/ford
+After=vpn-server.service network-online.target
+Wants=network-online.target
+PartOf=vpn-server.service
+
+[Service]
+Type=simple
+ExecStart=/opt/vpn-server/scripts/stats-monitor.sh monitor
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+RestartSec=30
+TimeoutStopSec=60
+
+# Security settings
+User=root
+Group=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/vpn-server /etc/vpn-server /var/lib/vpn-server /var/log
+PrivateTmp=true
+
+# Resource limits
+MemoryLimit=100M
+CPUQuota=10%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vpn-stats
+
+[Install]
+WantedBy=multi-user.target

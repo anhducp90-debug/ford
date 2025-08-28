@@ -1,0 +1,31 @@
+[Unit]
+Description=WireGuard VPN Tunnel
+Documentation=https://www.wireguard.com/
+PartOf=vpn-server.service
+After=network-online.target nss-lookup.target
+Wants=network-online.target nss-lookup.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wg-quick up /etc/vpn-server/wireguard/wg0.conf
+ExecStop=/usr/bin/wg-quick down /etc/vpn-server/wireguard/wg0.conf
+ExecReload=/bin/bash -c '/usr/bin/wg-quick down /etc/vpn-server/wireguard/wg0.conf; /usr/bin/wg-quick up /etc/vpn-server/wireguard/wg0.conf'
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Network capabilities
+AmbientCapabilities=CAP_NET_ADMIN
+
+# Environment
+Environment=WG_QUICK_USERSPACE_IMPLEMENTATION=native
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wg-quick
+
+[Install]
+WantedBy=multi-user.target
