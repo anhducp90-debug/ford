@@ -137,3 +137,61 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# VPN Server specific files
+# Private keys and certificates (SECURITY CRITICAL)
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+
+# WireGuard configurations with actual keys
+/configs/wireguard/wg0.conf
+/configs/wireguard/server_private.key
+/configs/wireguard/server_public.key
+/configs/wireguard/clients/
+
+# Docker volumes and data
+/docker/caddy/data/
+/docker/caddy/config/
+/docker/caddy/logs/
+
+# Statistics and monitoring data
+/stats/
+*.json.tmp
+
+# Client packages and downloads
+/downloads/
+*.tar.gz
+*.zip
+
+# Temporary files
+/tmp/
+.tmp/
+*.tmp
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local test configurations
+test-config.conf
+local.env

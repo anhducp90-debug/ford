@@ -1,0 +1,121 @@
+vpn.vietnga.info.vn {
+    # Enable TLS with Let's Encrypt
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    
+    # Enable logging
+    log {
+        output file /var/log/caddy.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+        level INFO
+    }
+    
+    # Security headers
+    header {
+        # Enable HSTS
+        Strict-Transport-Security max-age=31536000;
+        # Prevent MIME type sniffing
+        X-Content-Type-Options nosniff
+        # Prevent clickjacking
+        X-Frame-Options DENY
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer policy
+        Referrer-Policy strict-origin-when-cross-origin
+        # Remove server info
+        -Server
+    }
+    
+    # Rate limiting
+    rate_limit {
+        zone vpn_zone {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+    
+    # Main VPN management interface (wg-easy)
+    route / {
+        reverse_proxy vpn-wg-easy:51821 {
+            # Health check
+            health_uri /
+            health_interval 30s
+            health_timeout 5s
+            
+            # Headers for proper WebSocket handling
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+        }
+    }
+    
+    # WebSocket tunnel for WireGuard traffic
+    route /wstunnel* {
+        reverse_proxy vpn-wstunnel:8080 {
+            # WebSocket specific headers
+            header_up Upgrade {>Upgrade}
+            header_up Connection {>Connection}
+            header_up Sec-WebSocket-Key {>Sec-WebSocket-Key}
+            header_up Sec-WebSocket-Version {>Sec-WebSocket-Version}
+            header_up Sec-WebSocket-Protocol {>Sec-WebSocket-Protocol}
+            header_up Sec-WebSocket-Extensions {>Sec-WebSocket-Extensions}
+            
+            # Additional headers
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+    
+    # Custom statistics and monitoring dashboard
+    route /dashboard* {
+        reverse_proxy vpn-nginx:80 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+    
+    # API endpoints for client management
+    route /api* {
+        reverse_proxy vpn-wg-easy:51821 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up Content-Type {>Content-Type}
+        }
+    }
+    
+    # Static files for client helper scripts
+    route /downloads* {
+        root * /srv/downloads
+        file_server browse
+    }
+    
+    # Health check endpoint
+    route /health {
+        respond "OK" 200 {
+            header Content-Type "text/plain"
+        }
+    }
+}
+
+# Redirect HTTP to HTTPS
+http://vpn.vietnga.info.vn {
+    redir https://{host}{uri} permanent
+}
+
+# Handle www subdomain
+www.vpn.vietnga.info.vn {
+    redir https://vpn.vietnga.info.vn{uri} permanent
+}

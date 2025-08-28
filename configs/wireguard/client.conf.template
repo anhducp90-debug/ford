@@ -1,0 +1,13 @@
+# Sample WireGuard client configuration
+[Interface]
+PrivateKey = CLIENT_PRIVATE_KEY_PLACEHOLDER
+Address = 10.66.66.X/24
+DNS = 1.1.1.1, 8.8.8.8
+MTU = 1420
+
+[Peer]
+PublicKey = SERVER_PUBLIC_KEY_PLACEHOLDER
+PresharedKey = PRESHARED_KEY_PLACEHOLDER
+Endpoint = vpn.vietnga.info.vn:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

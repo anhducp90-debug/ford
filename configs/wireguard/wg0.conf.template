@@ -1,0 +1,16 @@
+# Sample WireGuard server configuration
+[Interface]
+Address = 10.66.66.1/24
+ListenPort = 51820
+PrivateKey = SERVER_PRIVATE_KEY_PLACEHOLDER
+SaveConfig = false
+
+# Enable IP forwarding and NAT
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+# Client configurations will be added here by the management script
+# Example client configuration:
+# [Peer]
+# PublicKey = CLIENT_PUBLIC_KEY
+# AllowedIPs = 10.66.66.2/32
