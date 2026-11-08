@@ -30,6 +30,21 @@ vpnctl link ten_moi
 vpnctl del  ten_moi
 ```
 
+## Bot Telegram cấp key + QR
+
+1. Tạo bot với [@BotFather](https://t.me/BotFather) → lấy `BOT_TOKEN`. Lấy Telegram ID của bạn từ @userinfobot.
+2. Trên VPS (sau `install.sh`):
+   ```bash
+   sudo BOT_TOKEN=123456:ABC... ADMIN_IDS=111111111 bash install-bot.sh
+   ```
+3. Dùng:
+   - Người dùng gửi `/start` → admin nhận nút **Duyệt / Từ chối**.
+   - Người được duyệt gửi `/key` → bot trả **QR + link** (mỗi người 1 key, tên `tg<id>`).
+   - Admin: `/users`, `/allow <id>`, `/revoke <id>` (xoá quyền và key).
+
+Bot chạy bằng user `vpnbot` (không phải root), chỉ được `sudo` đúng lệnh `/usr/local/bin/vpnctl`.
+Token lưu ở `/etc/vpnbot.env` (quyền 640).
+
 ## Lưu ý quan trọng khi dùng tại Nga
 
 - **VPS đặt ngoài Nga** (Đức, Hà Lan, Phần Lan, Thuỵ Điển… độ trễ thấp từ Nga). IP/nhà cung cấp
@@ -46,4 +61,5 @@ vpnctl del  ten_moi
 ## Cấu trúc
 
 - `install.sh` – cài đặt toàn bộ
+- `install-bot.sh`, `bot/` – bot Telegram (python-telegram-bot)
 - `scripts/vpnctl.sh` – quản lý client (được cài thành `/usr/local/bin/vpnctl`)

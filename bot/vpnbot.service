@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram bot cấp key VPN cho Happ
+After=network-online.target xray.service
+Wants=network-online.target
+
+[Service]
+User=vpnbot
+EnvironmentFile=/etc/vpnbot.env
+ExecStart=/opt/vpnbot/venv/bin/python /opt/vpnbot/bot.py
+Restart=always
+RestartSec=5
+# KHÔNG đặt NoNewPrivileges=true: bot cần sudo để gọi vpnctl
+
+[Install]
+WantedBy=multi-user.target

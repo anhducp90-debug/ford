@@ -14,6 +14,10 @@ save() { # giữ nguyên owner/mode của config
   cat > "$CONF" && xray run -test -config "$CONF" >/dev/null && systemctl restart xray
 }
 
+if [[ -n "${2:-}" && ! "$2" =~ ^[A-Za-z0-9_-]{1,32}$ ]]; then
+  echo "Tên chỉ gồm chữ/số/_/- (tối đa 32 ký tự)" >&2; exit 1
+fi
+
 case "${1:-}" in
   list)
     jq -r '.inbounds[0].settings.clients[] | "\(.email)\t\(.id)"' "$CONF" ;;
