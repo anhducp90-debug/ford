@@ -253,11 +253,14 @@ class Edge(
     val to: Long,
     val color: Int,
     val width: Float,
+    /** Text shown at the middle of the connector (e.g. "Có" / "Không"). */
+    val label: String = "",
 ) : Element() {
     /** Edge geometry depends on its nodes; the Document supplies real bounds. */
     override val bounds: Box get() = Box.EMPTY
-    override fun transformed(a: Affine) = Edge(id, from, to, color, width * a.s)
-    override fun withId(newId: Long) = Edge(newId, from, to, color, width)
+    override fun transformed(a: Affine) = Edge(id, from, to, color, width * a.s, label)
+    override fun withId(newId: Long) = Edge(newId, from, to, color, width, label)
+    fun withLabel(t: String) = Edge(id, from, to, color, width, t)
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean) = false
     override fun inLasso(poly: FloatArray) = false
 }

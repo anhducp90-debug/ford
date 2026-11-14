@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -95,6 +96,77 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
     var moveTarget by remember { mutableStateOf<DocMeta?>(null) }
     var deleteTarget by remember { mutableStateOf<DocMeta?>(null) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var busy by remember { mutableStateOf("") }
+    var showHomeMenu by remember { mutableStateOf(false) }
+    fun toast(t: String) = android.widget.Toast.makeText(context, t, android.widget.Toast.LENGTH_LONG).show()
+
+    /** Run [work] off the UI thread with a busy message, then refresh. */
+    fun io(msg: String, work: () -> String?) {
+        busy = msg
+        AppScope.launch {
+            val r = runCatching { work() }
+            withContext(Dispatchers.Main) {
+                busy = ""; refresh++
+                r.onSuccess { it?.let(::toast) }.onFailure { toast("Lỗi: ${it.message}") }
+            }
+        }
+    }
+
+    val pickPdf = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) io("Đang mở PDF…") {
+            val pages = com.inkboard.export.PdfImport.render(context, uri)
+            if (pages.isEmpty()) "PDF trống hoặc không đọc được"
+            else {
+                val name = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')?.take(60) ?: "PDF"
+                val meta = store.createFromPages(name, pages)
+                scope.launch { onOpen(meta) }
+                null
+            }
+        }
+    }
+    val pickBackup = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) io("Đang khôi phục…") {
+            val n = context.contentResolver.openInputStream(uri)!!.use { store.importBackup(it) }
+            "Đã khôi phục $n tài liệu"
+        }
+    }
+    val pickInkb = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) io("Đang mở tệp…") {
+            val name = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')?.take(60) ?: "Bản vẽ"
+            context.contentResolver.openInputStream(uri)!!.use { store.importInkb(it, name) }
+            "Đã thêm \"$name\""
+        }
+    }
+    val saveBackup = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) io("Đang sao lưu…") {
+            val n = context.contentResolver.openOutputStream(uri)!!.use { store.exportBackup(it) }
+            "Đã sao lưu $n tài liệu"
+        }
+    }
+    val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        if (res.resultCode == android.app.Activity.RESULT_OK) {
+            val result = com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.fromActivityResultIntent(res.data)
+            val uris = result?.pages?.map { it.imageUri }.orEmpty()
+            if (uris.isNotEmpty()) io("Đang tạo tài liệu…") {
+                val pages = uris.mapNotNull { u -> EditorActions.prepareImage(context, u, 2000)?.let { Triple(it.bytes, it.w, it.h) } }
+                val meta = store.createFromPages("Tài liệu quét ${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}", pages)
+                scope.launch { onOpen(meta) }
+                null
+            }
+        }
+    }
+    fun startScan() {
+        val activity = context as? android.app.Activity ?: return
+        val options = com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(true).setPageLimit(50)
+            .setResultFormats(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+            .setScannerMode(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .build()
+        com.google.mlkit.vision.documentscanner.GmsDocumentScanning.getClient(options).getStartScanIntent(activity)
+            .addOnSuccessListener { sender -> scanLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }
+            .addOnFailureListener { toast("Chưa dùng được máy quét: ${it.message ?: "cần Google Play services"}") }
+    }
 
     val all by produceState(initialValue = emptyList<DocMeta>(), refresh) {
         value = withContext(Dispatchers.IO) { store.list() }
@@ -124,6 +196,14 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("InkBoard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Box {
+                        IconButton(onClick = { showHomeMenu = true }) { Icon(Icons.Outlined.MoreVert, "Thêm") }
+                        DropdownMenu(expanded = showHomeMenu, onDismissRequest = { showHomeMenu = false }) {
+                            DropdownMenuItem(text = { Text("Sao lưu tất cả…") }, onClick = { showHomeMenu = false; saveBackup.launch("InkBoard-sao-luu-${java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault()).format(java.util.Date())}.zip") })
+                            DropdownMenuItem(text = { Text("Khôi phục từ bản sao lưu…") }, onClick = { showHomeMenu = false; pickBackup.launch(arrayOf("application/zip", "application/octet-stream")) })
+                            DropdownMenuItem(text = { Text("Mở tệp InkBoard (.inkb)…") }, onClick = { showHomeMenu = false; pickInkb.launch(arrayOf("*/*")) })
+                        }
+                    }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Outlined.Settings, "Cài đặt") }
                 }
                 OutlinedTextField(
@@ -177,6 +257,11 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
                     }
                 }
             }
+            if (busy.isNotEmpty()) {
+                Surface(Modifier.align(Alignment.BottomCenter).padding(24.dp), shape = RoundedCornerShape(20.dp), tonalElevation = 4.dp, shadowElevation = 6.dp) {
+                    Text(busy, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                }
+            }
             if (folder != TRASH) {
                 ExtendedFloatingActionButton(
                     onClick = { showNew = true },
@@ -208,8 +293,8 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
                             d.clearHistory()
                         }
                     }
-                    StartItem(Icons.Outlined.PictureAsPdf, "Chú thích PDF", "Có trong bản cập nhật tới", enabled = false) {}
-                    StartItem(Icons.Outlined.DocumentScanner, "Quét tài liệu", "Có trong bản cập nhật tới", enabled = false) {}
+                    StartItem(Icons.Outlined.PictureAsPdf, "Chú thích PDF", "Mở PDF và viết, vẽ lên từng trang") { showNew = false; pickPdf.launch(arrayOf("application/pdf")) }
+                    StartItem(Icons.Outlined.DocumentScanner, "Quét tài liệu", "Chụp giấy tờ, bảng trắng rồi ghi chú lên") { showNew = false; startScan() }
                 }
             },
             confirmButton = { TextButton(onClick = { showNew = false }) { Text("Đóng") } }
@@ -375,6 +460,9 @@ fun SettingsDialog(prefs: Prefs, onDismiss: () -> Unit) {
     var auto by remember { mutableStateOf(prefs.autoShape) }
     var lang by remember { mutableStateOf(prefs.recogLang) }
     var status by remember { mutableStateOf("") }
+    var smart by remember { mutableStateOf(prefs.smartInk) }
+    var snap by remember { mutableStateOf(prefs.snapGuides) }
+    var button by remember { mutableStateOf(prefs.penButton) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         val parts = ArrayList<String>()
@@ -390,6 +478,14 @@ fun SettingsDialog(prefs: Prefs, onDismiss: () -> Unit) {
             Column {
                 ToggleRow("Ngón tay cũng vẽ được", "Dành cho máy không có bút", finger) { finger = it; prefs.fingerDraws = it }
                 ToggleRow("Giữ bút để thành hình", "Tự làm đẹp hình khi giữ bút cuối nét", auto) { auto = it; prefs.autoShape = it }
+                ToggleRow("Nét thông minh", "Gạch ngoằn ngoèo để xoá; vẽ nét nối hai khối thành mũi tên", smart) { smart = it; prefs.smartInk = it }
+                ToggleRow("Bắt dính khi kéo", "Hiện đường gióng, căn theo cạnh/tâm vật gần", snap) { snap = it; prefs.snapGuides = it }
+                Text("Giữ nút bên S Pen để", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+                Row {
+                    for ((i, name) in listOf("Kéo canvas", "Tẩy", "Chọn").withIndex()) {
+                        FilterChip(selected = button == i, onClick = { button = i; prefs.penButton = i }, label = { Text(name) }, modifier = Modifier.padding(end = 6.dp))
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text("Ngôn ngữ nhận dạng chữ", fontWeight = FontWeight.Medium)
                 Row {

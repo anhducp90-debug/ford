@@ -130,10 +130,42 @@ class UiSmokeTest {
         rule.onNodeWithText("⇋ lật  ✕", useUnmergedTree = true).performClick()
         rule.waitForIdle()
 
+        // Shape library: search and insert a star, then save the selection as a template
+        rule.onNodeWithContentDescription("Chèn").performClick()
+        rule.onNodeWithText("Thư viện hình…", useUnmergedTree = true).performClick()
+        waitText("Hình có sẵn")
+        rule.onNode(hasSetTextAction()).performTextInput("sao 5")
+        waitText("Ngôi sao 5 cánh")
+        rule.onNodeWithText("Ngôi sao 5 cánh", useUnmergedTree = true).performClick()
+        waitText("Lưu mẫu")
+        rule.onNodeWithText("Lưu mẫu", useUnmergedTree = true).performClick()
+        waitText("Lưu vào thư viện của tôi")
+        rule.onNode(hasSetTextAction()).performTextInput("Sao")
+        rule.onNodeWithText("OK", useUnmergedTree = true).performClick()
+        rule.waitForIdle()
+
+        // Bookmark this place
+        rule.onNodeWithContentDescription("Menu").performClick()
+        rule.onNodeWithText("Đánh dấu vị trí này…", useUnmergedTree = true).performClick()
+        waitText("Đặt tên vị trí")
+        rule.onNodeWithText("OK", useUnmergedTree = true).performClick()
+        rule.onNodeWithContentDescription("Menu").performClick()
+        rule.onNodeWithText("Các vị trí đã đánh dấu…", useUnmergedTree = true).performClick()
+        waitText("Vị trí 1")
+        rule.onNodeWithText("Đóng", useUnmergedTree = true).performClick()
+
         // Back to home: the document is listed
         rule.onNodeWithContentDescription("Quay lại").performClick()
         rule.waitUntil(10000) { rule.onAllNodes(hasText("Bản vẽ", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(rule.onAllNodes(hasText("Bản vẽ", substring = true)).fetchSemanticsNodes().isNotEmpty())
+
+        // Home menu offers backup / restore / open file
+        waitDesc("Thêm")
+        rule.onNodeWithContentDescription("Thêm").performClick()
+        waitText("Sao lưu tất cả…")
+        rule.onNodeWithText("Mở tệp InkBoard (.inkb)…", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("Sao lưu tất cả…", useUnmergedTree = true).performClick() // opens the system file picker
+        rule.waitForIdle()
 
         // Reopen it
         rule.onNode(hasText("Bản vẽ", substring = true)).performClick()

@@ -30,6 +30,10 @@ class Document {
     var guides = Guides()
     /** Locked elements cannot be selected, erased or moved (e.g. PDF pages, backgrounds). */
     val locked = HashSet<Long>()
+    /** Mind-map nodes whose branches are folded away. */
+    val collapsed = HashSet<Long>()
+    /** Named camera positions to jump back to. */
+    val bookmarks = ArrayList<Bookmark>()
     var background = Background.DOTS
     /** Saved camera: world→screen scale and translation. */
     var camScale = 1f
@@ -172,6 +176,33 @@ class Document {
 
     val hasEdges get() = spatialIndex().let { edgeCount > 0 }
 
+    // ------------------------------------------------- derived, per version
+
+    private var derivedVersion = -1L
+    private var hiddenCache: Set<Long> = emptySet()
+    private var connCache: List<Element> = emptyList()
+
+    private fun derive() {
+        if (derivedVersion == version) return
+        derivedVersion = version
+        // Elements hidden by folded mind-map branches.
+        hiddenCache = if (collapsed.isEmpty()) emptySet() else HashSet<Long>().also { h ->
+            for (id in collapsed) if (byId(id) != null) h += descendants(id)
+        }
+        // Connectors: edges and mind-map children (drawn every frame, so keep the list small).
+        connCache = elements.filter { it is Edge || (it is Node && it.parentId != 0L) }
+    }
+
+    /** Ids not drawn because an ancestor branch is collapsed. */
+    fun hiddenIds(): Set<Long> { derive(); return hiddenCache }
+
+    fun connections(): List<Element> { derive(); return connCache }
+
+    fun toggleCollapsed(id: Long) {
+        if (!collapsed.remove(id)) collapsed += id
+        touch()
+    }
+
     // ---------------------------------------------------------- edit helpers
 
     fun add(vararg els: Element) = add(els.toList())
@@ -287,12 +318,14 @@ class Document {
         var bestIdx = -1
         for (e in query(Box(x - tol, y - tol, x + tol, y + tol)).asReversed()) {
             if (!includeLocked && e.id in locked) continue
+            if (e.id in hiddenIds()) continue
             if (e.hit(x, y, tol, solid = true)) { best = e; bestIdx = indexOf(e.id); break }
         }
         if (hasEdges) {
             for (i in elements.indices.reversed()) {
                 if (i <= bestIdx) break
                 val e = elements[i] as? Edge ?: continue
+                if (e.from in hiddenIds() || e.to in hiddenIds()) continue
                 val ends = edgeEnds(e) ?: continue
                 if (Geo.distToSegment(x, y, ends[0], ends[1], ends[2], ends[3]) <= tol + e.width) return e
             }
@@ -384,6 +417,8 @@ class Document {
         d.background = background
         d.guides = guides
         d.locked.addAll(locked)
+        d.collapsed.addAll(collapsed)
+        d.bookmarks.addAll(bookmarks)
         d.camScale = camScale; d.camX = camX; d.camY = camY
         return d
     }
@@ -392,3 +427,6 @@ class Document {
         undoStack.clear(); redoStack.clear()
     }
 }
+
+/** A saved place on the infinite canvas. */
+data class Bookmark(val name: String, val scale: Float, val cx: Float, val cy: Float)

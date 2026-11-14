@@ -8,6 +8,10 @@ import com.inkboard.canvas.InkCanvasView
 import com.inkboard.core.InkCore
 import com.inkboard.core.RecognizedShape
 import com.inkboard.model.Affine
+import com.inkboard.model.Bookmark
+import com.inkboard.model.Box
+import com.inkboard.model.ShapeLibrary
+import com.inkboard.model.TextFit
 import com.inkboard.model.Document
 import com.inkboard.model.Edge
 import com.inkboard.model.Element
@@ -111,6 +115,8 @@ class EditorActions(private val view: InkCanvasView) {
     class PreparedImage(val bytes: ByteArray, val w: Int, val h: Int)
 
     companion object Img {
+        val PLACEHOLDERS = setOf("Bước", "Điều kiện?", "Bắt đầu", "Ý mới", "Khối", "")
+
         /** Read, downscale (≤ 2048 px) and JPEG-compress a picture. Call on a background thread. */
         fun prepareImage(context: Context, uri: Uri, maxSide: Int = 2048): PreparedImage? {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
@@ -210,6 +216,7 @@ class EditorActions(private val view: InkCanvasView) {
             is Node -> el.fitText(text.ifBlank { " " })
             is ShapeEl -> el.withLabel(text.trim())
             is TableEl -> el.withCell(if (wx.isNaN()) 0 else el.cellAt(wx, wy), text.trim())
+            is Edge -> el.withLabel(text.trim())
             else -> return
         }
         if (updated == null) { doc.remove(listOf(el.id)); committed(); return }
@@ -265,9 +272,94 @@ class EditorActions(private val view: InkCanvasView) {
         val b = strokes.fold(com.inkboard.model.Box.EMPTY) { a, s -> a.union(s.bounds) }
         val lines = InkToText.groupLines(strokes).size
         val size = (b.h / lines) * 0.62f
+        // Handwriting inside a shape / block / note / table cell becomes that container's text.
+        val container = strokes.map { doc.containerOf(it.id) }.distinct().singleOrNull()?.let { doc.byId(it) }
+        val oneLine = text.replace('\n', ' ')
+        when (container) {
+            is ShapeEl -> if (container.closed) {
+                doc.batch { doc.remove(strokes.map { it.id }); doc.replace(listOf(container.withLabel(if (container.label.isBlank()) text else container.label + "\n" + text, strokes.first().color))) }
+                committed(listOf(container.id)); return text
+            }
+            is Node -> {
+                doc.batch { doc.remove(strokes.map { it.id }); doc.replace(listOf(container.fitText(if (container.text.isBlank() || container.text in PLACEHOLDERS) text else container.text + "\n" + text))) }
+                if (container.mindmap) doc.layoutMindmap(container.id)
+                committed(listOf(container.id)); return text
+            }
+            is StickyEl -> {
+                doc.batch { doc.remove(strokes.map { it.id }); doc.replace(listOf(container.withText(if (container.text.isBlank()) text else container.text + "\n" + text))) }
+                committed(listOf(container.id)); return text
+            }
+            is TableEl -> {
+                val cell = container.cellAt(b.cx, b.cy)
+                val old = container.cells[cell].orEmpty()
+                doc.batch { doc.remove(strokes.map { it.id }); doc.replace(listOf(container.withCell(cell, if (old.isBlank()) oneLine else old + "\n" + oneLine))) }
+                committed(listOf(container.id)); return text
+            }
+            else -> Unit
+        }
         val t = TextEl(doc.nextId(), b.l, b.t, text, max(size, w(10f)), strokes.first().color)
         doc.swap(strokes.map { it.id }, listOf(t)); committed(listOf(t.id))
         return text
+    }
+
+    // ------------------------------------------------------------ more tools
+
+    fun toggleLock() {
+        val ids = view.selection.toList()
+        if (ids.isEmpty()) return
+        doc.locked.addAll(ids); doc.markDirty()
+        view.clearSelection(); committed()
+    }
+
+    fun unlockAll(): Int {
+        val n = doc.locked.size
+        doc.locked.clear(); doc.markDirty(); committed()
+        return n
+    }
+
+    fun toggleCollapse() {
+        val n = doc.byId(view.primaryId) as? Node ?: return
+        doc.toggleCollapsed(n.id)
+        committed(listOf(n.id))
+    }
+
+    /** Closed hand-drawn / library shapes → connectable blocks (keeps their label). */
+    fun shapesToNodes(): Int {
+        val shapes = selected().filterIsInstance<ShapeEl>().filter { it.closed }
+        if (shapes.isEmpty()) return 0
+        val nodes = shapes.map { s ->
+            val b = Box.of(s.geo).let { if (s.kind == ShapeKind.ELLIPSE) s.bounds.inset(s.width) else it }
+            val kind = when {
+                s.kind == ShapeKind.ELLIPSE -> NodeKind.ELLIPSE
+                s.geo.size == 8 && TextFit.polygonArea(s.geo).let { kotlin.math.abs(it) } < b.w * b.h * 0.7f -> NodeKind.DIAMOND
+                else -> NodeKind.RECT
+            }
+            Node(doc.nextId(), b.l, b.t, b.w, b.h, s.label, kind, if (s.fill != 0) s.fill else 0xFFFFFFFF.toInt(), max(b.h * 0.18f, w(12f)))
+        }
+        doc.swap(shapes.map { it.id }, nodes); committed(nodes.map { it.id })
+        return nodes.size
+    }
+
+    fun insertLibrary(entry: ShapeLibrary.Entry, color: Int) {
+        val (cx, cy) = view.centerWorld()
+        val els = entry.build(doc, cx, cy, w(70f), color, w(2.5f))
+        doc.add(els); committed(els.map { it.id })
+    }
+
+    fun insertFromLibraryDoc(lib: Document) {
+        val (cx, cy) = view.centerWorld()
+        val els = com.inkboard.data.LibraryStore.instantiate(lib, doc, cx, cy)
+        committed(els.map { it.id })
+    }
+
+    fun addBookmark(name: String) {
+        val (cx, cy) = view.centerWorld()
+        doc.bookmarks += Bookmark(name.ifBlank { "Vị trí ${doc.bookmarks.size + 1}" }, view.scale, cx, cy)
+        doc.markDirty(); view.listener?.onDocChanged()
+    }
+
+    fun goTo(b: Bookmark) {
+        view.setZoom(b.scale); view.centerOn(b.cx, b.cy)
     }
 
 }

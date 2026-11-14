@@ -22,13 +22,15 @@ import kotlin.math.sqrt
 enum class ExportFormat(val ext: String, val mime: String) {
     PNG("png", "image/png"),
     PDF("pdf", "application/pdf"),
+    SVG("svg", "image/svg+xml"),
+    INKB("inkb", "application/octet-stream"),
 }
 
 /** Renders a document region to PNG or vector PDF. Runs off the UI thread. */
 object Exporter {
     private const val MAX_PIXELS = 40_000_000 // ~ 6300 x 6300
 
-    fun export(context: Context, doc: Document, region: Box, format: ExportFormat, name: String): File {
+    fun export(context: Context, doc: Document, region: Box, format: ExportFormat, name: String, onlyIds: Set<Long>? = null): File {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         val safe = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "InkBoard" }
         val file = File(dir, "$safe.${format.ext}")
@@ -43,7 +45,7 @@ object Exporter {
                 val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                 val c = Canvas(bmp)
                 c.drawColor(0xFFFFFFFF.toInt())
-                Renderer().drawAll(c, doc, Affine(s, -b.l * s, -b.t * s))
+                Renderer().drawAll(c, doc, Affine(s, -b.l * s, -b.t * s), onlyIds)
                 file.outputStream().buffered().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 bmp.recycle()
             }
@@ -52,11 +54,13 @@ object Exporter {
                 val s = min(1f, 14400f / max(b.w, b.h))
                 val pdf = PdfDocument()
                 val page = pdf.startPage(PdfDocument.PageInfo.Builder(max(1, (b.w * s).toInt()), max(1, (b.h * s).toInt()), 1).create())
-                Renderer().drawAll(page.canvas, doc, Affine(s, -b.l * s, -b.t * s))
+                Renderer().drawAll(page.canvas, doc, Affine(s, -b.l * s, -b.t * s), onlyIds)
                 pdf.finishPage(page)
                 file.outputStream().buffered().use { pdf.writeTo(it) }
                 pdf.close()
             }
+            ExportFormat.SVG -> file.writeText(SvgExport.export(doc, region, onlyIds))
+            ExportFormat.INKB -> file.outputStream().buffered().use { com.inkboard.model.DocCodec.write(doc, it) }
         }
         return file
     }

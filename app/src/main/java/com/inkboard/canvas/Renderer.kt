@@ -71,12 +71,15 @@ class Renderer {
 
     /** Edges and mind-map branches. [lookup] lets callers substitute moving nodes. */
     fun drawConnections(c: Canvas, doc: Document, lookup: (Long) -> Node?) {
-        for (e in doc.elements) {
-            if (e is Node && e.parentId != 0L) {
+        val hidden = doc.hiddenIds()
+        for (e in doc.connections()) {
+            if (e is Node) {
+                if (e.id in hidden) continue
                 val p = lookup(e.parentId) ?: continue
                 val n = lookup(e.id) ?: continue
                 drawBranch(c, p, n)
             } else if (e is Edge) {
+                if (e.from in hidden || e.to in hidden) continue
                 val a = lookup(e.from) ?: continue
                 val b = lookup(e.to) ?: continue
                 val (x0, y0) = a.borderToward(b.x + b.w / 2, b.y + b.h / 2)
@@ -84,7 +87,31 @@ class Renderer {
                 line.color = e.color; line.strokeWidth = e.width; line.alpha = 255
                 c.drawLine(x0, y0, x1, y1, line)
                 arrowHead(c, x0, y0, x1, y1, e.width, e.color)
+                if (e.label.isNotBlank()) {
+                    val size = max(10f, e.width * 6f)
+                    text.textSize = size; text.color = e.color
+                    val w = text.measureText(e.label) + size
+                    val cx = (x0 + x1) / 2; val cy = (y0 + y1) / 2
+                    fill.color = 0xFFFFFFFF.toInt()
+                    tmpRect.set(cx - w / 2, cy - size * 0.75f, cx + w / 2, cy + size * 0.75f)
+                    c.drawRoundRect(tmpRect, size * 0.4f, size * 0.4f, fill)
+                    c.drawText(e.label, cx - w / 2 + size / 2, cy + size * 0.35f, text)
+                }
             }
+        }
+        // "+N" badge on folded mind-map nodes
+        for (id in doc.collapsed) {
+            val n = lookup(id) ?: continue
+            if (n.id in hidden) continue
+            val count = doc.descendants(id).size
+            if (count == 0) continue
+            val r = max(8f, n.size * 0.7f)
+            val bx = n.x + n.w + r * 0.6f; val by = n.y + n.h / 2
+            fill.color = darken(n.fill, 0.6f)
+            c.drawCircle(bx, by, r, fill)
+            text.color = 0xFFFFFFFF.toInt(); text.textSize = r * 1.05f
+            val label = "+$count"
+            c.drawText(label, bx - text.measureText(label) / 2, by + r * 0.38f, text)
         }
     }
 
@@ -304,11 +331,12 @@ class Renderer {
     }
 
     /** Render a whole document (exports, thumbnails). [a] maps world → output. */
-    fun drawAll(c: Canvas, doc: Document, a: Affine) {
+    fun drawAll(c: Canvas, doc: Document, a: Affine, onlyIds: Set<Long>? = null) {
         c.save()
         c.translate(a.tx, a.ty); c.scale(a.s, a.s)
-        drawConnections(c, doc) { doc.byId(it) as? Node }
-        for (e in doc.elements) draw(c, doc, e)
+        val hidden = doc.hiddenIds()
+        drawConnections(c, doc) { id -> (doc.byId(id) as? Node)?.takeIf { onlyIds == null || it.id in onlyIds } }
+        for (e in doc.elements) if (e.id !in hidden && (onlyIds == null || e.id in onlyIds)) draw(c, doc, e)
         c.restore()
     }
 

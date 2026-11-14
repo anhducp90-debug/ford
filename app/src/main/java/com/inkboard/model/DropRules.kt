@@ -27,13 +27,14 @@ object DropRules {
         class Reparent(val nodeId: Long, target: Long) : Action(target, "Thả để chuyển nhánh tới đây")
         class Attach(val ids: List<Long>, target: Long, name: String) : Action(target, "Thả để gắn vào $name")
         class Detach(val ids: List<Long>) : Action(0L, "Thả để tách khỏi khung")
+        class EdgeLabel(val textId: Long, target: Long) : Action(target, "Thả để làm nhãn đường nối")
     }
 
     private val PLACEHOLDERS = setOf("Bước", "Điều kiện?", "Bắt đầu", "Ý mới", "Khối", "")
 
     private fun isContainer(e: Element) = when (e) {
         is ShapeEl -> e.closed
-        is Node, is StickyEl, is TableEl -> true
+        is Node, is StickyEl, is TableEl, is ImageEl -> true
         else -> false
     }
 
@@ -42,6 +43,7 @@ object DropRules {
         is Node -> "khối"
         is StickyEl -> "ghi chú"
         is TableEl -> "bảng"
+        is ImageEl -> "ảnh"
         else -> "khung"
     }
 
@@ -61,6 +63,15 @@ object DropRules {
         val primNode = prim as? Node
         val isSubtree = primNode != null && items.all { it.id == primNode.id || it.id in (if (primNode.mindmap) doc.descendants(primNode.id) else emptySet()) || doc.containerOf(it.id) != 0L && doc.containerOf(it.id) in moving }
 
+        if (target == null && singleText != null) {
+            // Text dropped on a connector becomes its label.
+            val tol = 12f
+            for (e in doc.connections()) {
+                if (e !is Edge || e.id in doc.hiddenIds()) continue
+                val ends = doc.edgeEnds(e) ?: continue
+                if (Geo.distToSegment(x, y, ends[0], ends[1], ends[2], ends[3]) <= tol + e.width * 2) return Action.EdgeLabel(singleText.id, e.id)
+            }
+        }
         if (target == null) {
             // Dragged out of a container that is not moving with it → detach.
             val out = items.filter { e ->
@@ -101,7 +112,7 @@ object DropRules {
         val inside = moving + doc.attachedTree(moving)
         for (i in doc.elements.indices.reversed()) {
             val e = doc.elements[i]
-            if (e.id in inside || !isContainer(e)) continue
+            if (e.id in inside || !isContainer(e) || e.id in doc.hiddenIds()) continue
             if (e.hit(x, y, 0f, solid = true)) return e
         }
         return null
@@ -173,6 +184,13 @@ object DropRules {
                 for (id in a.ids) doc.setContainer(id, 0L)
                 return a.ids
             }
+            is Action.EdgeLabel -> {
+                val t = doc.byId(a.textId) as? TextEl ?: return emptyList()
+                val e = doc.byId(a.targetId) as? Edge ?: return emptyList()
+                doc.replace(listOf(e.withLabel(if (e.label.isBlank()) t.text else e.label + " " + t.text)))
+                doc.remove(listOf(t.id))
+                return listOf(e.id)
+            }
         }
     }
 
@@ -180,7 +198,7 @@ object DropRules {
     fun enclosingContainer(doc: Document, b: Box, exclude: Long = 0L): Element? {
         for (i in doc.elements.indices.reversed()) {
             val e = doc.elements[i]
-            if (e.id == exclude || !isContainer(e)) continue
+            if (e.id == exclude || !isContainer(e) || e.id in doc.hiddenIds()) continue
             val cb = if (e is ShapeEl) Box.of(e.geo).let { if (e.kind == ShapeKind.ELLIPSE) e.bounds else it } else e.bounds
             if (cb.l <= b.l && cb.r >= b.r && cb.t <= b.t && cb.b >= b.b) return e
         }

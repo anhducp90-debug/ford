@@ -72,4 +72,17 @@ class Prefs(context: Context) {
     var refImageVisible: Boolean
         get() = sp.getBoolean("refImageVisible", false)
         set(v) = sp.edit().putBoolean("refImageVisible", v).apply()
+
+    /** 0 = pan, 1 = erase, 2 = select while the S Pen side button is held. */
+    var penButton: Int
+        get() = sp.getInt("penButton", 0)
+        set(v) = sp.edit().putInt("penButton", v).apply()
+
+    var smartInk: Boolean
+        get() = sp.getBoolean("smartInk", true)
+        set(v) = sp.edit().putBoolean("smartInk", v).apply()
+
+    var snapGuides: Boolean
+        get() = sp.getBoolean("snapGuides", true)
+        set(v) = sp.edit().putBoolean("snapGuides", v).apply()
 }

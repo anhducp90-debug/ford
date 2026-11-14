@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -176,6 +177,13 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     val refFile = remember { java.io.File(context.filesDir, "reference.jpg") }
     var refVisible by remember { mutableStateOf(prefs.refImageVisible && refFile.exists()) }
     var refVersion by remember { mutableIntStateOf(0) }
+    val libraryStore = remember { com.inkboard.data.LibraryStore(context.filesDir) }
+    var showLibrary by remember { mutableStateOf(false) }
+    var libVersion by remember { mutableIntStateOf(0) }
+    var saveTemplate by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    var newBookmark by remember { mutableStateOf(false) }
+    var laser by remember { mutableStateOf(false) }
 
     val view = remember {
         InkCanvasView(context).apply {
@@ -185,6 +193,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             this.penColor = withAlpha(penColor, penOpacity); this.penWidthDp = penWidth; this.penType = penType
             stabilizerLevel = stabilizer; pressureCurve = curve; this.taper = taper
             rotationEnabled = prefs.rotateCanvas
+            penButton = InkCanvasView.PenButton.entries.getOrElse(prefs.penButton) { InkCanvasView.PenButton.PAN }
+            smartInk = prefs.smartInk
+            snapGuides = prefs.snapGuides
             fingerDraws = prefs.fingerDraws
             autoShape = prefs.autoShape
             showRulers = prefs.showRulers
@@ -316,6 +327,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         InsertMenu(showInsert, onDismiss = { showInsert = false }) { item ->
                             showInsert = false
                             when (item) {
+                                "library" -> showLibrary = true
                                 "text" -> newText = true
                                 "sticky" -> actions.insertSticky()
                                 "image" -> pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -326,7 +338,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                                 "terminal" -> actions.insertNode(NodeKind.ELLIPSE, "Bắt đầu")
                                 else -> actions.insertShape(item, penColor)
                             }
-                            if (item != "text" && item != "image") { setTool(Tool.SELECT); tick++ }
+                            if (item != "text" && item != "image" && item != "library") { setTool(Tool.SELECT); tick++ }
                         }
                     }
                     ToolButton(Icons.AutoMirrored.Outlined.Undo, "Hoàn tác", false, enabled = tick >= 0 && document.canUndo) { undo() }
@@ -338,6 +350,11 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                             when (item) {
                                 "png" -> exportFormat = ExportFormat.PNG
                                 "pdf" -> exportFormat = ExportFormat.PDF
+                                "svg" -> exportFormat = ExportFormat.SVG
+                                "inkb" -> exportFormat = ExportFormat.INKB
+                                "bookmark_add" -> newBookmark = true
+                                "bookmarks" -> showBookmarks = true
+                                "unlock" -> { val n = actions.unlockAll(); toast(if (n == 0) "Không có gì đang khoá" else "Đã mở khoá $n mục"); tick++ }
                                 "bg_plain" -> { document.background = Background.PLAIN; document.markDirty(); view.invalidate(); tick++ }
                                 "bg_dots" -> { document.background = Background.DOTS; document.markDirty(); view.invalidate(); tick++ }
                                 "bg_grid" -> { document.background = Background.GRID; document.markDirty(); view.invalidate(); tick++ }
@@ -366,6 +383,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         onStabilizer = { stabilizer = it; view.stabilizerLevel = it; prefs.stabilizer = it },
                         onCurve = { curve = it; view.pressureCurve = it; prefs.pressureCurve = it.ordinal },
                         onTaper = { taper = it; view.taper = it; prefs.taper = it },
+                        laser = laser, onLaser = { laser = it; view.laser = it },
                         onDismiss = { showPenOptions = false }
                     )
                 }
@@ -417,6 +435,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 mindmapNode = remember(selIds, tick) { (document.byId(view.primaryId) as? Node)?.takeIf { it.mindmap } },
                 twoNodes = remember(selIds, tick) { actions.selectedNodes().size == 2 && actions.selectedNodes().none { it.mindmap } },
                 table = remember(selIds, tick) { actions.selected().singleOrNull() as? TableEl },
+                foldable = remember(selIds, tick) { (document.byId(view.primaryId) as? Node)?.takeIf { it.mindmap && document.children(it.id).isNotEmpty() }?.let { it.id in document.collapsed } },
+                closedShapes = remember(selIds, tick) { actions.selected().any { it is ShapeEl && it.closed } },
                 onAction = { a ->
                     when (a) {
                         "text" -> runInkToText()
@@ -434,6 +454,10 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         "row-" -> actions.tableResize(-1, 0)
                         "col+" -> actions.tableResize(0, 1)
                         "col-" -> actions.tableResize(0, -1)
+                        "lock" -> { actions.toggleLock(); toast("Đã khoá. Mở lại: Menu → Mở khoá tất cả") }
+                        "fold" -> actions.toggleCollapse()
+                        "tonode" -> actions.shapesToNodes()
+                        "savelib" -> saveTemplate = true
                     }
                     tick++
                 }
@@ -466,6 +490,52 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             onDismiss = { showGuides = false },
         )
     }
+    if (showLibrary) {
+        LibraryPanel(libraryStore, penColor, libVersion, onDismiss = { showLibrary = false },
+            onBuiltIn = { e -> showLibrary = false; actions.insertLibrary(e, penColor); setTool(Tool.SELECT); tick++ },
+            onMine = { item ->
+                showLibrary = false
+                AppScope.launch {
+                    val lib = runCatching { libraryStore.load(item) }.getOrNull()
+                    withContext(Dispatchers.Main) { if (lib != null) { actions.insertFromLibraryDoc(lib); setTool(Tool.SELECT); tick++ } else toast("Không mở được mẫu") }
+                }
+            },
+            onDeleteMine = { item -> AppScope.launch { libraryStore.delete(item); withContext(Dispatchers.Main) { libVersion++ } } })
+    }
+    if (saveTemplate) {
+        TextInputDialog("Lưu vào thư viện của tôi", "", onDismiss = { saveTemplate = false }) { name ->
+            saveTemplate = false
+            val ids = selIds.toList()
+            val snap = document.snapshot()
+            AppScope.launch {
+                runCatching { libraryStore.save(snap, ids, name) }
+                withContext(Dispatchers.Main) { libVersion++; toast("Đã lưu mẫu \"${name.ifBlank { "Mẫu" }}\"") }
+            }
+        }
+    }
+    if (newBookmark) {
+        TextInputDialog("Đặt tên vị trí", "Vị trí ${document.bookmarks.size + 1}", onDismiss = { newBookmark = false }) { name ->
+            newBookmark = false; actions.addBookmark(name); tick++; toast("Đã đánh dấu")
+        }
+    }
+    if (showBookmarks) {
+        AlertDialog(
+            onDismissRequest = { showBookmarks = false },
+            title = { Text("Vị trí đã đánh dấu") },
+            text = {
+                Column {
+                    if (document.bookmarks.isEmpty()) Text("Chưa có. Menu → Đánh dấu vị trí này.")
+                    for ((i, b) in document.bookmarks.withIndex()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(b.name, modifier = Modifier.weight(1f).clickable { showBookmarks = false; actions.goTo(b) }.padding(vertical = 10.dp))
+                            TextButton(onClick = { document.bookmarks.removeAt(i); document.markDirty(); tick++; showBookmarks = false; showBookmarks = true }) { Text("Xoá") }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Đóng") } }
+        )
+    }
     if (showComponents) {
         ComponentsPanel(document, tick, onDismiss = { showComponents = false }) { c ->
             showComponents = false
@@ -477,7 +547,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     editing?.let { el ->
         val (px, py) = editPoint
         val initial = when (el) {
-            is TextEl -> el.text; is StickyEl -> el.text; is Node -> el.text; is ShapeEl -> el.label
+            is TextEl -> el.text; is StickyEl -> el.text; is Node -> el.text; is ShapeEl -> el.label; is com.inkboard.model.Edge -> el.label
             is TableEl -> el.cells[if (px.isNaN()) 0 else el.cellAt(px, py)].orEmpty()
             else -> ""
         }
@@ -539,7 +609,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                             busy = "Đang xuất…"
                             AppScope.launch {
                                 val r = runCatching {
-                                    val f = Exporter.export(context, snap, box, fmt, meta.name)
+                                    val only = if (selIds.isNotEmpty() && fmt != ExportFormat.INKB) selIds.toSet() else null
+                                    val f = Exporter.export(context, snap, box, fmt, meta.name, only)
                                     if (mode == "save") Exporter.saveToDownloads(context, f, fmt)
                                     f
                                 }
@@ -562,7 +633,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
 // ------------------------------------------------------------------ pieces
 
 private fun isEditable(el: Element) =
-    el is TextEl || el is StickyEl || el is Node || el is TableEl || (el is ShapeEl && el.closed)
+    el is TextEl || el is StickyEl || el is Node || el is TableEl || el is com.inkboard.model.Edge || (el is ShapeEl && el.closed)
 
 @Composable
 private fun Pill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
@@ -585,7 +656,7 @@ private fun ToolButton(icon: ImageVector, label: String, active: Boolean, tint: 
 @Composable
 private fun PenOptions(
     modifier: Modifier, color: Int, width: Float, type: PenType, opacity: Float, stabilizer: Int,
-    curve: PressureCurve, taper: Boolean, recent: List<Int>,
+    curve: PressureCurve, taper: Boolean, recent: List<Int>, laser: Boolean, onLaser: (Boolean) -> Unit,
     onColor: (Int) -> Unit, onCustomColor: () -> Unit, onWidth: (Float) -> Unit, onType: (PenType) -> Unit,
     onOpacity: (Float) -> Unit, onStabilizer: (Int) -> Unit, onCurve: (PressureCurve) -> Unit, onTaper: (Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -594,12 +665,16 @@ private fun PenOptions(
         Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((t, label) in listOf(PenType.PEN to "Bút", PenType.HIGHLIGHTER to "Bút nhấn", PenType.PENCIL to "Bút chì")) {
-                    val sel = t == type
+                    val sel = t == type && !laser
                     Text(label, modifier = Modifier.clip(RoundedCornerShape(12.dp))
                         .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
-                        .clickable { onType(t) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                        .clickable { onLaser(false); onType(t) }.padding(horizontal = 12.dp, vertical = 6.dp),
                         fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
                 }
+                Text("Laser", modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                    .background(if (laser) Color(0x33FF3B30) else Color.Transparent)
+                    .clickable { onLaser(!laser) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontWeight = if (laser) FontWeight.Bold else FontWeight.Normal, color = if (laser) Color(0xFFD93025) else Color.Unspecified)
             }
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -670,6 +745,8 @@ fun withAlpha(color: Int, opacity: Float): Int = (color and 0x00FFFFFF) or ((opa
 @Composable
 private fun InsertMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        MenuItem("Thư viện hình…", Icons.Outlined.Category) { onPick("library") }
+        HorizontalDivider()
         MenuItem("Chữ", Icons.Outlined.TextFields) { onPick("text") }
         MenuItem("Ghi chú dán", Icons.Outlined.Edit) { onPick("sticky") }
         MenuItem("Ảnh", Icons.Outlined.Image) { onPick("image") }
@@ -701,8 +778,14 @@ private fun MainMenu(expanded: Boolean, bg: Background, rulers: Boolean, minimap
         MenuItem("Thước toạ độ" + if (rulers) "  ✓" else "", null) { onPick("rulers") }
         MenuItem("Bản đồ thu nhỏ" + if (minimap) "  ✓" else "", null) { onPick("minimap") }
         HorizontalDivider()
+        MenuItem("Đánh dấu vị trí này…", null) { onPick("bookmark_add") }
+        MenuItem("Các vị trí đã đánh dấu…", null) { onPick("bookmarks") }
+        MenuItem("Mở khoá tất cả", null) { onPick("unlock") }
+        HorizontalDivider()
         MenuItem("Xuất PNG", null) { onPick("png") }
         MenuItem("Xuất PDF", null) { onPick("pdf") }
+        MenuItem("Xuất SVG", null) { onPick("svg") }
+        MenuItem("Chia sẻ tệp InkBoard (.inkb)", null) { onPick("inkb") }
         HorizontalDivider()
         MenuItem("Về toàn bộ nội dung", null) { onPick("fit") }
         HorizontalDivider()
@@ -721,6 +804,7 @@ private fun MenuItem(label: String, icon: ImageVector?, onClick: () -> Unit) {
 private fun ContextBar(
     rect: RectF, tick: Int,
     hasStrokes: Boolean, singleStroke: Boolean, editable: Element?, mindmapNode: Node?, twoNodes: Boolean, table: TableEl?,
+    foldable: Boolean?, closedShapes: Boolean,
     onAction: (String) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -747,10 +831,14 @@ private fun ContextBar(
                         CtxButton("Cột", null, "+") { onAction("col+") }
                         CtxButton("Cột", null, "−") { onAction("col-") }
                     }
+                    if (foldable != null) CtxButton(if (foldable) "Mở nhánh" else "Thu gọn", null, if (foldable) "⊕" else "⊖") { onAction("fold") }
+                    if (closedShapes) CtxButton("Thành khối", Icons.Outlined.AccountTree) { onAction("tonode") }
                     CtxButton("Màu", Icons.Outlined.Palette) { onAction("color") }
                     CtxButton("Nhân đôi", Icons.Outlined.ContentCopy) { onAction("dup") }
                     CtxButton("Lên trên", Icons.Outlined.FlipToFront) { onAction("front") }
                     CtxButton("Xuống dưới", Icons.Outlined.FlipToBack) { onAction("back") }
+                    CtxButton("Lưu mẫu", Icons.Outlined.Category) { onAction("savelib") }
+                    CtxButton("Khoá", null, "🔒") { onAction("lock") }
                     CtxButton("Xoá", Icons.Outlined.Delete) { onAction("delete") }
                 }
             }

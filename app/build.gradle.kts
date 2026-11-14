@@ -79,6 +79,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
     implementation("androidx.input:input-motionprediction:1.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")

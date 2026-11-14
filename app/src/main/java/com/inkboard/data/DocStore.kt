@@ -96,6 +96,86 @@ class DocStore(context: Context) {
         writeIndex(readIndex().filter { it.id != id })
     }
 
+    // ------------------------------------------------------- backup / import
+
+    /** Write every document (not in the trash) into a zip backup. Returns the count. */
+    fun exportBackup(out: java.io.OutputStream): Int {
+        val items = list().filter { it.trashedAt == 0L }
+        java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+            val arr = JSONArray()
+            for (m in items) arr.put(JSONObject().put("id", m.id).put("name", m.name).put("modified", m.modified).put("folder", m.folder))
+            zip.putNextEntry(java.util.zip.ZipEntry("inkboard-backup.json"))
+            zip.write(JSONObject().put("format", 1).put("docs", arr).toString().toByteArray())
+            zip.closeEntry()
+            for (m in items) {
+                val f = File(dir, "${m.id}.inkb")
+                if (!f.exists()) continue
+                zip.putNextEntry(java.util.zip.ZipEntry("docs/${m.id}.inkb"))
+                f.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+        }
+        return items.size
+    }
+
+    /** Restore a zip backup; documents that already exist are imported as copies. Returns the count. */
+    fun importBackup(input: java.io.InputStream): Int {
+        var manifest: JSONObject? = null
+        val files = HashMap<String, ByteArray>()
+        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+            while (true) {
+                val e = zip.nextEntry ?: break
+                val bytes = zip.readBytes()
+                if (bytes.size > 512 * 1024 * 1024) throw java.io.IOException("Tệp quá lớn")
+                when {
+                    e.name == "inkboard-backup.json" -> manifest = JSONObject(String(bytes))
+                    e.name.startsWith("docs/") && e.name.endsWith(".inkb") && !e.name.contains("..") -> files[e.name.removePrefix("docs/").removeSuffix(".inkb")] = bytes
+                }
+            }
+        }
+        val docs = manifest?.optJSONArray("docs") ?: throw java.io.IOException("Không phải bản sao lưu InkBoard")
+        val existing = list().map { it.id }.toSet()
+        var n = 0
+        for (i in 0 until docs.length()) {
+            val o = docs.getJSONObject(i)
+            val bytes = files[o.getString("id")] ?: continue
+            val doc = runCatching { DocCodec.read(bytes.inputStream()) }.getOrNull() ?: continue
+            val name = o.optString("name", "Bản vẽ") + if (o.getString("id") in existing) " (khôi phục)" else ""
+            val meta = create(name, o.optString("folder", ""), doc)
+            runCatching { saveThumbnail(meta.id, doc) }
+            n++
+        }
+        return n
+    }
+
+    /** Import a single .inkb file. */
+    fun importInkb(input: java.io.InputStream, name: String): DocMeta {
+        val doc = DocCodec.read(input.buffered())
+        return create(name, "", doc).also { runCatching { saveThumbnail(it.id, doc) } }
+    }
+
+    /**
+     * New document whose pages are pictures stacked vertically and locked
+     * (PDF annotation / scanned paper). [pages] = JPEG bytes with pixel size.
+     */
+    fun createFromPages(name: String, pages: List<Triple<ByteArray, Int, Int>>): DocMeta {
+        val doc = Document()
+        doc.background = com.inkboard.model.Background.PLAIN
+        val pageW = 1000f
+        var y = 0f
+        for ((bytes, w, h) in pages) {
+            val key = UUID.randomUUID().toString()
+            doc.images[key] = bytes
+            val ph = pageW * h / w.coerceAtLeast(1)
+            val el = com.inkboard.model.ImageEl(doc.nextId(), -pageW / 2, y, pageW, ph, key)
+            doc.add(el)
+            doc.locked += el.id
+            y += ph + 40f
+        }
+        doc.clearHistory()
+        return create(name, "", doc).also { runCatching { saveThumbnail(it.id, doc) } }
+    }
+
     /** Remove items that have been in the trash for more than 30 days. */
     fun purgeTrash() {
         val cutoff = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
