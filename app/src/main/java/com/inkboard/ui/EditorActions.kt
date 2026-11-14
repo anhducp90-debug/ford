@@ -156,7 +156,15 @@ class EditorActions(private val view: InkCanvasView) {
                 else -> e.transformed(Affine.translate(off, off)).withId(nid)
             }
         }
-        doc.add(copies); committed(copies.map { it.id })
+        doc.batch {
+            doc.add(copies)
+            // Keep "attached to" relations inside the copied group.
+            for (e in sel) {
+                val c = doc.containerOf(e.id)
+                if (c in idMap) doc.setContainer(idMap.getValue(e.id), idMap.getValue(c))
+            }
+        }
+        committed(copies.map { it.id })
     }
 
     fun reorder(front: Boolean) {
@@ -179,11 +187,13 @@ class EditorActions(private val view: InkCanvasView) {
         doc.replace(updated); committed(view.selection.toList())
     }
 
-    fun setText(el: Element, text: String) {
+    fun setText(el: Element, text: String, wx: Float = Float.NaN, wy: Float = Float.NaN) {
         val updated = when (el) {
             is TextEl -> if (text.isBlank()) null else el.withText(text)
             is StickyEl -> el.withText(text)
             is Node -> el.fitText(text.ifBlank { " " })
+            is ShapeEl -> el.withLabel(text.trim())
+            is TableEl -> el.withCell(if (wx.isNaN()) 0 else el.cellAt(wx, wy), text.trim())
             else -> return
         }
         if (updated == null) { doc.remove(listOf(el.id)); committed(); return }

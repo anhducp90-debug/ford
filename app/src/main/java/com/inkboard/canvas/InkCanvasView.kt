@@ -18,6 +18,7 @@ import com.inkboard.core.RecognizedShape
 import com.inkboard.model.Affine
 import com.inkboard.model.Box
 import com.inkboard.model.Document
+import com.inkboard.model.DropRules
 import com.inkboard.model.Edge
 import com.inkboard.model.Element
 import com.inkboard.model.Geo
@@ -53,7 +54,7 @@ class InkCanvasView(context: Context) : View(context) {
         fun onSelectionChanged(screenRect: RectF?, ids: Set<Long>)
         fun onDocChanged()
         fun onCameraChanged(scale: Float)
-        fun onEditRequest(el: Element)
+        fun onEditRequest(el: Element, wx: Float = Float.NaN, wy: Float = Float.NaN)
         /** World position under the pen / last touch (for the coordinate bar). */
         fun onPointer(wx: Float, wy: Float) {}
     }
@@ -152,6 +153,10 @@ class InkCanvasView(context: Context) : View(context) {
     private val eraserR get() = 12f * density / scale
 
     private val holdRunnable = Runnable { onPenHold() }
+    private var dropAction: DropRules.Action? = null
+    private var dropSX = 0f
+    private var dropSY = 0f
+    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14f * resources.displayMetrics.density; color = Color.WHITE }
     private val autoScroll = object : Runnable {
         override fun run() { stepAutoScroll() }
     }
@@ -259,6 +264,8 @@ class InkCanvasView(context: Context) : View(context) {
             val n = doc.byId(id) as? Node
             if (n != null && n.mindmap) selection += doc.descendants(id)
         }
+        // Items attached to a selected container travel with it.
+        selection += doc.attachedTree(selection)
         // Edges whose both ends are selected travel with them.
         for (e in doc.elements) if (e is Edge && e.from in selection && e.to in selection) selection += e.id
         primaryId = if (primary in selection) primary else selection.firstOrNull() ?: 0L
@@ -383,6 +390,27 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     private fun drawOverlays(c: Canvas) {
+        dropAction?.let { act ->
+            if (selPreview.isIdentity) return@let
+            doc.byId(act.targetId)?.let { t ->
+                val b = doc.boundsOf(t)
+                val r = RectF(sx(b.l), sy(b.t), sx(b.r), sy(b.b))
+                r.inset(-4f * density, -4f * density)
+                overlayFill.color = 0x262F80ED
+                c.drawRoundRect(r, 8f * density, 8f * density, overlayFill)
+                overlay.color = 0xFF2F80ED.toInt(); overlay.strokeWidth = 3f * density
+                c.drawRoundRect(r, 8f * density, 8f * density, overlay)
+                overlay.strokeWidth = 1.5f * density
+            }
+            // Hint bubble near the pointer
+            val tw = hintPaint.measureText(act.hint)
+            val pad = 10f * density
+            val bx = (dropSX - tw / 2 - pad).coerceIn(4f, width - tw - 2 * pad - 4f)
+            val by = (dropSY - 64f * density).coerceAtLeast(4f)
+            overlayFill.color = 0xE61F3A5F.toInt()
+            c.drawRoundRect(bx, by, bx + tw + 2 * pad, by + 30f * density, 15f * density, 15f * density, overlayFill)
+            c.drawText(act.hint, bx + pad, by + 20f * density, hintPaint)
+        }
         // Selection frame + corner handles
         selectionScreenRect()?.let { r ->
             r.inset(-6f * density, -6f * density)
@@ -630,6 +658,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     private fun updateDrag(x: Float, y: Float) {
         selPreview = Affine.translate(wx(x) - dragStartWX, wy(y) - dragStartWY)
+        updateDropHint(x, y)
         val edge = 48f * density
         val nearEdge = x < edge || y < edge || x > width - edge || y > height - edge
         if (nearEdge && !autoScrolling) { autoScrolling = true; postOnAnimation(autoScroll) }
@@ -651,6 +680,7 @@ class InkCanvasView(context: Context) : View(context) {
         saveCamera()
         if (penMode == PenMode.DRAG) selPreview = Affine.translate(wx(x) - dragStartWX, wy(y) - dragStartWY)
         else selPreview = Affine.translate(wx(x) - fingerDragWX, wy(y) - fingerDragWY)
+        updateDropHint(x, y)
         notifySelection()
         invalidate()
         postOnAnimation(autoScroll)
@@ -714,10 +744,12 @@ class InkCanvasView(context: Context) : View(context) {
         when (penMode) {
             PenMode.DRAW, PenMode.LINE -> {
                 val shape = snapped
-                if (shape != null) {
-                    doc.add(ShapeEl(doc.nextId(), shape.kind, shape.geo, shape.color, shape.width, shape.fill))
-                } else if (liveN > 0) {
-                    doc.add(Stroke(doc.nextId(), livePts.copyOf(liveN * 3), penColor, liveWidth, penType))
+                val el: Element? = if (shape != null) ShapeEl(doc.nextId(), shape.kind, shape.geo, shape.color, shape.width, shape.fill)
+                else if (liveN > 0) Stroke(doc.nextId(), livePts.copyOf(liveN * 3), penColor, liveWidth, penType) else null
+                if (el != null) doc.batch {
+                    doc.add(el)
+                    // Ink written fully inside a shape / block / note / table belongs to it.
+                    DropRules.enclosingContainer(doc, el.bounds, el.id)?.let { doc.setContainer(el.id, it.id) }
                 }
                 liveN = 0; snapped = null
                 changed()
@@ -731,7 +763,8 @@ class InkCanvasView(context: Context) : View(context) {
                 }
             }
             PenMode.LASSO -> finishLasso()
-            PenMode.DRAG, PenMode.SCALE -> commitPreview()
+            PenMode.DRAG -> commitPreview(lastPenSX, lastPenSY)
+            PenMode.SCALE -> commitPreview()
             PenMode.PAN -> Unit
             PenMode.NONE -> Unit
         }
@@ -748,14 +781,29 @@ class InkCanvasView(context: Context) : View(context) {
         invalidateContent()
     }
 
-    private fun commitPreview() {
+    /** Commit a drag/scale preview; for drags, apply the drop rule at the pointer as the same undo step. */
+    private fun commitPreview(dropSX: Float = Float.NaN, dropSY: Float = Float.NaN) {
         val a = selPreview
         selPreview = Affine.IDENTITY
+        val action = dropAction
+        dropAction = null
         if (!a.isIdentity) {
-            doc.transform(selection.filter { doc.byId(it) !is Edge }, a)
+            var reselect: List<Long>? = null
+            doc.batch {
+                doc.transform(selection.filter { doc.byId(it) !is Edge }, a)
+                if (action != null && !dropSX.isNaN()) reselect = DropRules.apply(doc, action)
+            }
             changed()
+            reselect?.let { ids -> if (ids.isNotEmpty()) select(ids, ids.first()) }
+            if (action != null) performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         }
         notifySelection()
+    }
+
+    /** Recompute the drop target while dragging (pointer in screen coords). */
+    private fun updateDropHint(sx: Float, sy: Float) {
+        dropSX = sx; dropSY = sy
+        dropAction = if (selection.isEmpty()) null else DropRules.resolve(doc, selection, primaryId, wx(sx), wy(sy))
     }
 
     private fun finishLasso() {
@@ -778,7 +826,7 @@ class InkCanvasView(context: Context) : View(context) {
         if (hit == null) { clearSelection(); return }
         val now = SystemClock.uptimeMillis()
         if (hit.id == lastTapId && now - lastTapTime < 400) {
-            listener?.onEditRequest(hit)
+            listener?.onEditRequest(hit, wx, wy)
             lastTapTime = 0
         } else {
             lastTapTime = now; lastTapId = hit.id
@@ -873,6 +921,7 @@ class InkCanvasView(context: Context) : View(context) {
             }
             3 -> {
                 selPreview = Affine.translate(wx(f.x) - fingerDragWX, wy(f.y) - fingerDragWY)
+                updateDropHint(f.x, f.y)
                 val edge = 48f * density
                 if ((f.x < edge || f.y < edge || f.x > width - edge || f.y > height - edge) && !autoScrolling) {
                     autoScrolling = true; postOnAnimation(autoScroll)
@@ -895,7 +944,7 @@ class InkCanvasView(context: Context) : View(context) {
         }
         // Last finger lifted.
         stopAutoScroll()
-        if (fingerGesture == 3) commitPreview()
+        if (fingerGesture == 3) commitPreview(f.x, f.y)
         val wasTap = !f.moved && fingerGesture == 0 && !canceled && !penUsedWithFingers &&
             SystemClock.uptimeMillis() - fingerDownTime < TAP_MS
         if (wasTap && penPointer < 0) {

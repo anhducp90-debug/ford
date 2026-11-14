@@ -89,7 +89,18 @@ class ShapeEl(
     val color: Int,
     val width: Float,
     val fill: Int = 0,
+    /** Text placed inside a closed shape; always auto-fitted to the shape. */
+    val label: String = "",
+    val labelColor: Int = 0xFF202124.toInt(),
 ) : Element() {
+    val closed get() = kind == ShapeKind.POLYGON || kind == ShapeKind.ELLIPSE
+
+    /** Area inside the shape where a label fits (world coordinates). */
+    val labelBox: Box by lazy { TextFit.innerBox(this) }
+
+    /** Fitted label layout, computed once per instance. */
+    val labelFit: TextFit.Fit by lazy { TextFit.fitLabel(label, labelBox.w, labelBox.h) }
+
     override val bounds: Box by lazy {
         when (kind) {
             ShapeKind.ELLIPSE -> {
@@ -112,12 +123,13 @@ class ShapeEl(
             var i = 0
             while (i + 1 < g.size) { g[i] = a.x(geo[i]); g[i + 1] = a.y(geo[i + 1]); i += 2 }
         }
-        return ShapeEl(id, kind, g, color, width * a.s, fill)
+        return ShapeEl(id, kind, g, color, width * a.s, fill, label, labelColor)
     }
 
-    override fun withId(newId: Long) = ShapeEl(newId, kind, geo, color, width, fill)
+    override fun withId(newId: Long) = ShapeEl(newId, kind, geo, color, width, fill, label, labelColor)
 
-    fun withStyle(color: Int = this.color, fill: Int = this.fill) = ShapeEl(id, kind, geo, color, width, fill)
+    fun withStyle(color: Int = this.color, fill: Int = this.fill) = ShapeEl(id, kind, geo, color, width, fill, label, labelColor)
+    fun withLabel(t: String, c: Int = labelColor) = ShapeEl(id, kind, geo, color, width, fill, t, c)
 
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
         val pad = tol + width / 2
@@ -198,7 +210,7 @@ class Node(
     fun copy(
         x: Float = this.x, y: Float = this.y, w: Float = this.w, h: Float = this.h,
         text: String = this.text, kind: NodeKind = this.kind, fill: Int = this.fill,
-        parentId: Long = this.parentId,
+        parentId: Long = this.parentId, mindmap: Boolean = this.mindmap,
     ) = Node(id, x, y, w, h, text, kind, fill, size, parentId, mindmap)
 
     /** Resize to fit text, keeping the centre fixed. */
@@ -268,15 +280,44 @@ class TableEl(
     val cols: Int,
     val color: Int,
     val width: Float,
+    /** Cell texts keyed by row * cols + col. */
+    val cells: Map<Int, String> = emptyMap(),
 ) : Element() {
     override val bounds: Box by lazy { Box(x - width, y - width, x + w + width, y + h + width) }
-    override fun transformed(a: Affine) = TableEl(id, a.x(x), a.y(y), w * a.s, h * a.s, rows, cols, color, width * a.s)
-    override fun withId(newId: Long) = TableEl(newId, x, y, w, h, rows, cols, color, width)
+    override fun transformed(a: Affine) = TableEl(id, a.x(x), a.y(y), w * a.s, h * a.s, rows, cols, color, width * a.s, cells)
+    override fun withId(newId: Long) = TableEl(newId, x, y, w, h, rows, cols, color, width, cells)
+
+    fun cellAt(px: Float, py: Float): Int {
+        val c = ((px - x) / (w / cols)).toInt().coerceIn(0, cols - 1)
+        val r = ((py - y) / (h / rows)).toInt().coerceIn(0, rows - 1)
+        return r * cols + c
+    }
+    fun cellBox(i: Int): Box {
+        val r = i / cols; val c = i % cols
+        val cw = w / cols; val ch = h / rows
+        return Box(x + c * cw, y + r * ch, x + (c + 1) * cw, y + (r + 1) * ch)
+    }
+    fun withCell(i: Int, t: String): TableEl {
+        val m = HashMap(cells); if (t.isBlank()) m.remove(i) else m[i] = t
+        return TableEl(id, x, y, w, h, rows, cols, color, width, m)
+    }
+
+    @Transient
+    var cellFits: HashMap<Int, TextFit.Fit>? = null
+    fun cellFit(i: Int): TextFit.Fit {
+        val m = cellFits ?: HashMap<Int, TextFit.Fit>().also { cellFits = it }
+        return m.getOrPut(i) {
+            val b = cellBox(i).inset(minOf(w / cols, h / rows) * 0.08f)
+            TextFit.fit(cells[i].orEmpty(), b.w, b.h, maxSize = (h / rows) * 0.45f)
+        }
+    }
     fun resized(rows: Int, cols: Int): TableEl {
         val r = rows.coerceIn(1, 100); val c = cols.coerceIn(1, 50)
-        return TableEl(id, x, y, w / this.cols * c, h / this.rows * r, r, c, color, width)
+        val m = HashMap<Int, String>()
+        for ((i, t) in cells) { val rr = i / cols; val cc = i % cols; if (rr < r && cc < c) m[rr * c + cc] = t }
+        return TableEl(id, x, y, w / this.cols * c, h / this.rows * r, r, c, color, width, m)
     }
-    fun withColor(c: Int) = TableEl(id, x, y, w, h, rows, cols, c, width)
+    fun withColor(c: Int) = TableEl(id, x, y, w, h, rows, cols, c, width, cells)
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
         val b = Box(this.x, this.y, this.x + w, this.y + h)
         if (!b.inset(-tol - width).contains(x, y)) return false

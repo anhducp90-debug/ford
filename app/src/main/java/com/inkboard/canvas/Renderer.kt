@@ -163,8 +163,23 @@ class Renderer {
                 tmpRect.set(g[0] - g[2], g[1] - g[3], g[0] + g[2], g[1] + g[3])
                 if (s.fill != 0) { fill.color = s.fill; c.drawOval(tmpRect, fill) }
                 c.drawOval(tmpRect, line)
+                if (s.label.isNotBlank()) drawFitted(c, s.labelFit, s.labelBox, s.labelColor)
                 c.restore()
             }
+        }
+        if (s.kind == ShapeKind.POLYGON && s.label.isNotBlank()) drawFitted(c, s.labelFit, s.labelBox, s.labelColor)
+    }
+
+    /** Draw pre-fitted lines centred inside [box]. */
+    fun drawFitted(c: Canvas, f: com.inkboard.model.TextFit.Fit, box: com.inkboard.model.Box, color: Int) {
+        if (f.lines.isEmpty()) return
+        text.color = color; text.textSize = f.size
+        val lh = TextMetrics.lineHeight(f.size)
+        var y = box.cy - f.lines.size * lh / 2 + (lh - f.size) / 2 + f.size * 0.92f
+        for (ln in f.lines) {
+            val w = text.measureText(ln)
+            c.drawText(ln, box.cx - w / 2, y, text)
+            y += lh
         }
     }
 
@@ -246,6 +261,7 @@ class Renderer {
         c.drawRect(t.x, t.y, t.x + t.w, t.y + t.h / t.rows, fill)
         for (i in 0..t.cols) { val x = t.x + t.w * i / t.cols; c.drawLine(x, t.y, x, t.y + t.h, line) }
         for (j in 0..t.rows) { val y = t.y + t.h * j / t.rows; c.drawLine(t.x, y, t.x + t.w, y, line) }
+        for ((i, _) in t.cells) drawFitted(c, t.cellFit(i), t.cellBox(i), 0xFF202124.toInt())
     }
 
     // ------------------------------------------------------------------ images

@@ -7,6 +7,8 @@ sealed class Op {
     class Insert(val index: Int, val el: Element) : Op()
     class Delete(val index: Int, val el: Element) : Op()
     class Update(val index: Int, val old: Element, val new: Element) : Op()
+    /** Child → container relation change (0 = none). */
+    class Attach(val child: Long, val old: Long, val new: Long) : Op()
 }
 
 class Change(val ops: List<Op>) {
@@ -22,6 +24,8 @@ enum class Background { PLAIN, GRID, DOTS, LINES }
 class Document {
     val elements = ArrayList<Element>()
     val images = HashMap<String, ByteArray>()
+    /** child id → container id. Attached elements move/scale/delete with their container. */
+    val attach = HashMap<Long, Long>()
     var background = Background.DOTS
     /** Saved camera: world→screen scale and translation. */
     var camScale = 1f
@@ -36,6 +40,7 @@ class Document {
     private val undoStack = ArrayDeque<Change>()
     private val redoStack = ArrayDeque<Change>()
     private var indexCache: HashMap<Long, Int>? = null
+    private var batchOps: ArrayList<Op>? = null
 
     val canUndo get() = undoStack.isNotEmpty()
     val canRedo get() = redoStack.isNotEmpty()
@@ -63,10 +68,20 @@ class Document {
         if (change.isEmpty) return
         for (op in change.ops) applyOp(op)
         if (record) {
-            undoStack.addLast(change)
-            redoStack.clear()
+            val b = batchOps
+            if (b != null) b.addAll(change.ops)
+            else { undoStack.addLast(change); redoStack.clear() }
         }
         touch()
+    }
+
+    /** Run several edits as a single undo step. */
+    fun batch(block: () -> Unit) {
+        if (batchOps != null) { block(); return }
+        val ops = ArrayList<Op>()
+        batchOps = ops
+        try { block() } finally { batchOps = null }
+        if (ops.isNotEmpty()) { undoStack.addLast(Change(ops)); redoStack.clear() }
     }
 
     fun undo(): Change? {
@@ -93,6 +108,7 @@ class Document {
         is Op.Insert -> Op.Delete(op.index, op.el)
         is Op.Delete -> Op.Insert(op.index, op.el)
         is Op.Update -> Op.Update(op.index, op.new, op.old)
+        is Op.Attach -> Op.Attach(op.child, op.new, op.old)
     }
 
     private fun applyOp(op: Op) {
@@ -108,6 +124,7 @@ class Document {
                 if (i >= 0) elements[i] = op.new
                 indexCache?.set(op.new.id, i)
             }
+            is Op.Attach -> if (op.new == 0L) attach.remove(op.child) else attach[op.child] = op.new
         }
     }
 
@@ -124,8 +141,39 @@ class Document {
     fun cascade(ids: Collection<Long>): Set<Long> {
         val out = HashSet(ids)
         for (id in ids) (byId(id) as? Node)?.let { if (it.mindmap) out += descendants(id) }
+        out += attachedTree(out)
         for (e in elements) if (e is Edge && (e.from in out || e.to in out)) out += e.id
         return out
+    }
+
+    // ------------------------------------------------------------ containers
+
+    fun containerOf(id: Long): Long = attach[id]?.takeIf { byId(it) != null } ?: 0L
+
+    /** Everything attached (recursively) to any of [ids], not including [ids]. */
+    fun attachedTree(ids: Collection<Long>): Set<Long> {
+        if (attach.isEmpty()) return emptySet()
+        val byContainer = HashMap<Long, MutableList<Long>>()
+        for ((c, p) in attach) if (byId(c) != null) byContainer.getOrPut(p) { mutableListOf() } += c
+        val out = LinkedHashSet<Long>()
+        val queue = ArrayDeque(ids)
+        while (queue.isNotEmpty()) {
+            val p = queue.removeFirst()
+            for (c in byContainer[p].orEmpty()) if (c !in ids && out.add(c)) queue.addLast(c)
+        }
+        return out
+    }
+
+    /** Attach [child] to [container] (0 detaches). Prevents cycles. */
+    fun setContainer(child: Long, container: Long) {
+        val old = attach[child] ?: 0L
+        if (old == container || child == container) return
+        if (container != 0L) {
+            var p = container
+            val seen = HashSet<Long>()
+            while (p != 0L && seen.add(p)) { if (p == child) return; p = attach[p] ?: 0L }
+        }
+        apply(Change(listOf(Op.Attach(child, old, container))))
     }
 
     fun remove(ids: Collection<Long>) {
@@ -281,6 +329,7 @@ class Document {
         val d = Document()
         d.elements.addAll(elements)
         d.images.putAll(images)
+        for ((c, p) in attach) if (byId(c) != null && byId(p) != null) d.attach[c] = p
         d.background = background
         d.camScale = camScale; d.camX = camX; d.camY = camY
         return d

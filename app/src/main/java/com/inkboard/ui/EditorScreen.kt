@@ -94,6 +94,7 @@ import com.inkboard.model.Element
 import com.inkboard.model.Node
 import com.inkboard.model.NodeKind
 import com.inkboard.model.PenType
+import com.inkboard.model.ShapeEl
 import com.inkboard.model.StickyEl
 import com.inkboard.model.Stroke
 import com.inkboard.model.TableEl
@@ -146,6 +147,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var showMenu by remember { mutableStateOf(false) }
     var showColor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Element?>(null) }
+    var editPoint by remember { mutableStateOf(Float.NaN to Float.NaN) }
     var newText by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf<ExportFormat?>(null) }
     var busy by remember { mutableStateOf("") }
@@ -196,7 +198,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             override fun onSelectionChanged(screenRect: RectF?, ids: Set<Long>) { selRect = screenRect; selIds = ids }
             override fun onDocChanged() { tick++ }
             override fun onCameraChanged(scale: Float) { zoom = scale }
-            override fun onEditRequest(el: Element) { if (el is TextEl || el is StickyEl || el is Node) editing = el }
+            override fun onEditRequest(el: Element, wx: Float, wy: Float) {
+                if (isEditable(el)) { editPoint = wx to wy; editing = el }
+            }
             override fun onPointer(wx: Float, wy: Float) { pointer = wx to wy }
         }
         view.onUndoGesture = { undo() }
@@ -349,7 +353,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 rect, tick,
                 hasStrokes = remember(selIds, tick) { actions.selectedStrokes().isNotEmpty() },
                 singleStroke = remember(selIds, tick) { actions.selected().let { it.size == 1 && it[0] is Stroke } },
-                editable = remember(selIds, tick) { actions.selected().singleOrNull { it is TextEl || it is StickyEl || it is Node } },
+                editable = remember(selIds, tick) { actions.selected().singleOrNull { isEditable(it) && it !is TableEl } },
                 mindmapNode = remember(selIds, tick) { (document.byId(view.primaryId) as? Node)?.takeIf { it.mindmap } },
                 twoNodes = remember(selIds, tick) { actions.selectedNodes().size == 2 && actions.selectedNodes().none { it.mindmap } },
                 table = remember(selIds, tick) { actions.selected().singleOrNull() as? TableEl },
@@ -358,7 +362,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         "text" -> runInkToText()
                         "shape" -> if (!actions.strokeToShape()) toast("Chưa nhận ra hình")
                         "color" -> showColor = true
-                        "edit" -> editing = actions.selected().singleOrNull { it is TextEl || it is StickyEl || it is Node }
+                        "edit" -> { editPoint = Float.NaN to Float.NaN; editing = actions.selected().singleOrNull { isEditable(it) && it !is TableEl } }
                         "dup" -> actions.duplicate()
                         "front" -> actions.reorder(true)
                         "back" -> actions.reorder(false)
@@ -386,10 +390,16 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
 
     // ----- Dialogs
     editing?.let { el ->
-        val initial = when (el) { is TextEl -> el.text; is StickyEl -> el.text; is Node -> el.text; else -> "" }
-        TextInputDialog("Sửa chữ", initial, singleLine = false, onDismiss = { editing = null }) { t ->
+        val (px, py) = editPoint
+        val initial = when (el) {
+            is TextEl -> el.text; is StickyEl -> el.text; is Node -> el.text; is ShapeEl -> el.label
+            is TableEl -> el.cells[if (px.isNaN()) 0 else el.cellAt(px, py)].orEmpty()
+            else -> ""
+        }
+        val title = when (el) { is ShapeEl -> "Chữ trong hình"; is TableEl -> "Chữ trong ô"; else -> "Sửa chữ" }
+        TextInputDialog(title, initial, singleLine = false, onDismiss = { editing = null }) { t ->
             editing = null
-            document.byId(el.id)?.let { actions.setText(it, t) }
+            document.byId(el.id)?.let { actions.setText(it, t, px, py) }
             tick++
         }
     }
@@ -465,6 +475,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
 }
 
 // ------------------------------------------------------------------ pieces
+
+private fun isEditable(el: Element) =
+    el is TextEl || el is StickyEl || el is Node || el is TableEl || (el is ShapeEl && el.closed)
 
 @Composable
 private fun Pill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {

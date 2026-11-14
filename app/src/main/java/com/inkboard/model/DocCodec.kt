@@ -15,7 +15,7 @@ import java.util.zip.InflaterInputStream
  */
 object DocCodec {
     private const val MAGIC = 0x494E4B42 // "INKB"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     private const val T_STROKE = 1
     private const val T_SHAPE = 2
@@ -37,6 +37,10 @@ object DocCodec {
         d.writeFloat(doc.camScale); d.writeFloat(doc.camX); d.writeFloat(doc.camY)
         d.writeInt(doc.elements.size)
         for (e in doc.elements) writeElement(d, e)
+        val ids = doc.elements.map { it.id }.toHashSet()
+        val att = doc.attach.filter { (c, p) -> c in ids && p in ids }
+        d.writeInt(att.size)
+        for ((c, p) in att) { d.writeLong(c); d.writeLong(p) }
         val usedKeys = doc.elements.filterIsInstance<ImageEl>().map { it.key }.toSet()
         val imgs = doc.images.filterKeys { it in usedKeys }
         d.writeInt(imgs.size)
@@ -58,7 +62,8 @@ object DocCodec {
         doc.background = Background.entries.getOrElse(d.readUnsignedByte()) { Background.DOTS }
         doc.camScale = d.readFloat(); doc.camX = d.readFloat(); doc.camY = d.readFloat()
         val n = d.readInt()
-        repeat(n) { readElement(d)?.let { doc.elements.add(it) } }
+        repeat(n) { readElement(d, ver)?.let { doc.elements.add(it) } }
+        if (ver >= 2) repeat(d.readInt()) { doc.attach[d.readLong()] = d.readLong() }
         val ni = d.readInt()
         repeat(ni) {
             val k = d.readStr()
@@ -99,6 +104,7 @@ object DocCodec {
             is ShapeEl -> {
                 d.writeByte(T_SHAPE); d.writeLong(e.id); d.writeByte(e.kind.ordinal); d.writeInt(e.color)
                 d.writeFloat(e.width); d.writeInt(e.fill); d.writeFloats(e.geo)
+                d.writeStr(e.label); d.writeInt(e.labelColor)
             }
             is TextEl -> {
                 d.writeByte(T_TEXT); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
@@ -121,6 +127,8 @@ object DocCodec {
                 d.writeByte(T_TABLE); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
                 d.writeFloat(e.w); d.writeFloat(e.h); d.writeInt(e.rows); d.writeInt(e.cols)
                 d.writeInt(e.color); d.writeFloat(e.width)
+                d.writeInt(e.cells.size)
+                for ((k, v) in e.cells) { d.writeInt(k); d.writeStr(v) }
             }
             is ImageEl -> {
                 d.writeByte(T_IMAGE); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
@@ -129,7 +137,7 @@ object DocCodec {
         }
     }
 
-    private fun readElement(d: DataInputStream): Element? = when (d.readUnsignedByte()) {
+    private fun readElement(d: DataInputStream, ver: Int): Element? = when (d.readUnsignedByte()) {
         T_STROKE -> {
             val id = d.readLong(); val color = d.readInt(); val w = d.readFloat()
             val pen = PenType.entries.getOrElse(d.readUnsignedByte()) { PenType.PEN }
@@ -138,7 +146,9 @@ object DocCodec {
         T_SHAPE -> {
             val id = d.readLong(); val kind = ShapeKind.entries[d.readUnsignedByte()]
             val color = d.readInt(); val w = d.readFloat(); val fill = d.readInt()
-            ShapeEl(id, kind, d.readFloats(), color, w, fill)
+            val geo = d.readFloats()
+            if (ver >= 2) ShapeEl(id, kind, geo, color, w, fill, d.readStr(), d.readInt())
+            else ShapeEl(id, kind, geo, color, w, fill)
         }
         T_TEXT -> TextEl(d.readLong(), d.readFloat(), d.readFloat(), d.readStr(), d.readFloat(), d.readInt())
         T_STICKY -> StickyEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr(), d.readInt(), d.readFloat())
@@ -148,7 +158,14 @@ object DocCodec {
         )
         T_EDGE -> Edge(d.readLong(), d.readLong(), d.readLong(), d.readInt(), d.readFloat())
         T_IMAGE -> ImageEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr())
-        T_TABLE -> TableEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readInt(), d.readInt(), d.readInt(), d.readFloat())
+        T_TABLE -> {
+            val t = TableEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readInt(), d.readInt(), d.readInt(), d.readFloat())
+            if (ver >= 2) {
+                val m = HashMap<Int, String>()
+                repeat(d.readInt()) { m[d.readInt()] = d.readStr() }
+                TableEl(t.id, t.x, t.y, t.w, t.h, t.rows, t.cols, t.color, t.width, m)
+            } else t
+        }
         else -> throw IOException("Phần tử không xác định")
     }
 }

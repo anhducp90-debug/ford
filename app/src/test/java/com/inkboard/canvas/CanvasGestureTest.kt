@@ -269,4 +269,50 @@ class CanvasGestureTest {
         val vb = view.viewBox()
         assertTrue(vb.l <= b.l && vb.r >= b.r && vb.t <= b.t && vb.b >= b.b)
     }
+
+    private fun sx(wx: Float) = wx * view.scale + view.tx
+    private fun sy(wy: Float) = wy * view.scale + view.ty
+
+    @Test
+    fun dragTextIntoShapeMakesLabel() {
+        val box = ShapeEl(doc.nextId(), ShapeKind.POLYGON, floatArrayOf(0f, 0f, 300f, 0f, 300f, 160f, 0f, 160f), 0, 2f)
+        val t = com.inkboard.model.TextEl(doc.nextId(), -200f, 300f, "Nội dung", 20f, 0)
+        doc.add(box, t)
+        view.onDocMutated()
+        view.tool = Tool.SELECT
+        view.select(listOf(t.id))
+        val r = view.selectionScreenRect()!!
+        // Drag the text by its centre into the middle of the rectangle.
+        penStroke(*line(r.centerX(), r.centerY(), sx(150f), sy(80f)))
+        val s = doc.byId(box.id) as ShapeEl
+        assertEquals("Nội dung", s.label)
+        assertEquals(null, doc.byId(t.id))
+        assertEquals(setOf(box.id), view.selection) // target becomes the selection
+        render()
+        // One undo restores the text and its old position.
+        doc.undo()
+        assertEquals("", (doc.byId(box.id) as ShapeEl).label)
+        assertEquals(-200f, (doc.byId(t.id) as com.inkboard.model.TextEl).x, 0.01f)
+    }
+
+    @Test
+    fun inkWrittenInsideStickyMovesWithIt() {
+        val st = StickyEl(doc.nextId(), 0f, 0f, 300f, 300f, "", 0xFFFFF59D.toInt(), 16f)
+        doc.add(st)
+        view.onDocMutated()
+        penStroke(*line(sx(50f), sy(100f), sx(250f), sy(120f)))
+        val ink = doc.elements.last()
+        assertTrue(ink is Stroke)
+        assertEquals(st.id, doc.containerOf(ink.id))
+        // Tap-select the sticky with a finger, then drag it: the ink follows.
+        val f = MotionEvent.TOOL_TYPE_FINGER
+        send(ev(MotionEvent.ACTION_DOWN, listOf(P(0, sx(20f), sy(250f), f))))
+        send(ev(MotionEvent.ACTION_UP, listOf(P(0, sx(20f), sy(250f), f))))
+        assertTrue(ink.id in view.selection)
+        val x0 = (doc.byId(ink.id) as Stroke).pts[0]
+        send(ev(MotionEvent.ACTION_DOWN, listOf(P(0, sx(20f), sy(250f), f))))
+        for (k in 1..10) send(ev(MotionEvent.ACTION_MOVE, listOf(P(0, sx(20f) + k * 30, sy(250f), f))))
+        send(ev(MotionEvent.ACTION_UP, listOf(P(0, sx(20f) + 300, sy(250f), f))))
+        assertEquals(x0 + 300f / view.scale, (doc.byId(ink.id) as Stroke).pts[0], 1f)
+    }
 }

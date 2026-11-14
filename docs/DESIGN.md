@@ -32,6 +32,27 @@ Quy tắc ra quyết định: nếu một tính năng làm giao diện rối hơ
 - **Thành phần**: danh sách mindmap, khối, chữ, ghi chú dán, bảng, ảnh, hình và các cụm nét vẽ (gom theo vị trí) kèm toạ độ, lọc theo loại; chạm để đưa vào giữa màn hình.
 - Thước và bản đồ bật/tắt trong Menu (mặc định bật).
 
+### 2.1c Logic kết hợp (kéo thả thông minh)
+Một bảng quy tắc duy nhất cho mọi thao tác kéo thả (bút hay ngón tay). Trong lúc kéo, vật đích **sáng viền xanh** và có **gợi ý "Thả để…"**; khi thả, việc di chuyển + kết hợp là **một bước hoàn tác**.
+
+| Kéo | Thả lên | Kết quả |
+|---|---|---|
+| Chữ | Hình kín (chữ nhật, tròn/elip, tam giác, thoi, đa giác) | Thành **nhãn của hình**, tự **co giãn vừa khít** trong vùng bên trong hình, dòng chia cân; phóng to/thu nhỏ hình thì chữ tự khớp lại |
+| Chữ | Khối flowchart | Thay chữ mẫu ("Bước", "Điều kiện?"…) hoặc thêm dòng; khối tự nở theo chữ |
+| Chữ | Ghi chú dán | Nối thêm vào nội dung ghi chú |
+| Chữ | Bảng | Vào **đúng ô** dưới đầu bút, tự vừa ô |
+| Chữ / ghi chú dán | Nút mindmap | Thành **nhánh con** mới, mindmap tự sắp xếp |
+| Nhánh mindmap (cả cây con) | Nút mindmap khác | **Chuyển nhánh** tới đó; không cho thả vào chính cây con của nó |
+| Khối flowchart | Nút mindmap | Chuyển thành nhánh mindmap |
+| Mọi thứ khác (nét vẽ, hình, ảnh, khối…) | Hình kín / khối / ghi chú / bảng | **Gắn vào** vật chứa: đi theo khi kéo, phóng to theo, xoá cùng |
+| Vật đang gắn | Ra ngoài vật chứa | **Tách ra** |
+
+Quy tắc liên quan:
+- **Nét vẽ mới nằm trọn trong** hình / khối / ghi chú / bảng tự gắn vào nó (viết tay trong ghi chú sẽ đi theo ghi chú).
+- Chọn vật chứa là chọn luôn mọi thứ gắn bên trong; nhân đôi giữ nguyên quan hệ gắn.
+- **Chạm đúp** vào hình để sửa nhãn, vào ô bảng để sửa chữ trong ô.
+- Không tạo vòng lặp gắn (A trong B trong A).
+
 ### 2.2 Cử chỉ đơn giản, nhất quán
 | Hành động | Cách làm |
 |---|---|
