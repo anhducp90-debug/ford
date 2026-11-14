@@ -31,7 +31,10 @@ Quy tắc ra quyết định: nếu một tính năng làm giao diện rối hơ
 | Vẽ | Bút S Pen chạm xuống |
 | Di chuyển canvas | Một ngón kéo (hoặc giữ nút S Pen + kéo) |
 | Zoom | Hai ngón chụm / mở; chạm đúp hai ngón để vừa nội dung |
-| Chọn | Khoanh vòng bằng lasso; chạm đối tượng |
+| Chọn | Khoanh vòng bằng lasso (vẽ vòng kín quanh vùng cần chọn); chạm đối tượng; chọn thêm bằng cách khoanh tiếp |
+| Di chuyển | Kéo thả phần đã chọn bằng bút hoặc ngón tay; thả ra là xong |
+| Phóng to / xoay | Kéo tay cầm ở góc vùng chọn, hoặc hai ngón chụm / xoay trên vùng chọn |
+| Nhân đôi / xoá | Nút trên thanh ngữ cảnh cạnh vùng chọn; chạm ra ngoài để bỏ chọn |
 | Xoá nhanh | Gạch ngoằn ngoèo lên chữ/nét (scratch-out) |
 | Hoàn tác | Chạm hai ngón / nút trên thanh công cụ |
 | Nét → hình | Vẽ xong, giữ bút ~0,5 s ở cuối nét: nét tự đều thành hình chuẩn |
@@ -48,6 +51,7 @@ Mọi chuyển đổi tự động đều **hoàn tác được ngay một chạ
 ## 3. Phạm vi v1: giữ, ẩn, hoãn, loại
 
 ### GIỮ (cốt lõi)
+- **Chọn vùng và kéo thả (ưu tiên cao):** khoanh vòng lasso quanh nét, chữ, hình, node bất kỳ rồi kéo thả để di chuyển cả cụm cùng lúc; hỗ trợ phóng to, xoay, nhân đôi, xoá. Khi kéo gần mép màn hình, canvas tự cuộn để kéo đi xa trong không gian vô hạn. Connector và nhánh mindmap tự bám theo khi di chuyển. Vùng chọn hiển thị bóng mờ khi kéo để thấy trước vị trí thả. Mọi thao tác hoàn tác được. Lasso chỉ chọn đối tượng nằm trong vòng (nét đi qua vòng cũng được chọn nếu phần lớn nằm trong).
 - Canvas vô hạn vector, bút S Pen (áp lực, nghiêng, hover, nút bấm), tẩy nét, lasso, hoàn tác/làm lại không giới hạn.
 - **Nét → chữ** (Việt, Anh), **nét → hình** (đường thẳng, tròn, elip, chữ nhật, tam giác, mũi tên…), làm mượt nét.
 - **Mindmap tự động:** chạm "+" để thêm nhánh (viết hoặc gõ), tự bố trí, thu gọn/mở rộng, kéo nhánh đổi cha.
@@ -110,7 +114,7 @@ Chính sách quyền riêng tư, Data safety "không thu thập", AAB + App Sign
 |---|---|---|
 | 0 | Khung dự án (Gradle + cargo-ndk), JNI, Skia, prototype canvas + benchmark | 100k nét mượt 120 fps; đo được độ trễ bút |
 | 1 | Canvas vô hạn, pan/zoom, bút, tẩy, hoàn tác, lưu/mở, thanh công cụ tối giản | Người mới vẽ được ngay |
-| 2 | Chọn, shape, chữ, ảnh, xuất PNG/PDF/SVG | Xuất đúng, vector |
+| 2 | Lasso chọn + kéo thả/phóng/xoay, shape, chữ, ảnh, xuất PNG/PDF/SVG | Kéo cụm 10k đối tượng vẫn mượt; xuất đúng, vector |
 | 3 | Nét → chữ (vi/en), nét → hình, scratch-out | Độ chính xác đo trên bộ mẫu |
 | 4 | Mindmap, sơ đồ + connector, thư viện shape | Dựng mindmap/flowchart không cần hướng dẫn |
 | 5 | PDF nền + chú thích, 4 điểm bắt đầu, onboarding | Chú thích và xuất PDF |
