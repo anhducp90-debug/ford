@@ -174,7 +174,7 @@ class EditorActions(private val view: InkCanvasView) {
     fun recolor(color: Int, sticky: Int, fill: Int) {
         val updated = selected().mapNotNull { e ->
             when (e) {
-                is Stroke -> Stroke(e.id, e.pts, color, e.width, e.pen)
+                is Stroke -> e.withColor((color and 0x00FFFFFF) or (e.color and 0xFF000000.toInt()))
                 is ShapeEl -> e.withStyle(color = color)
                 is TextEl -> e.withColor(color)
                 is StickyEl -> e.withColor(sticky)

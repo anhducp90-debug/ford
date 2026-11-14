@@ -46,6 +46,8 @@ class Stroke(
     val color: Int,
     val width: Float,
     val pen: PenType,
+    /** Thin the stroke at its start and end (calligraphic look). */
+    val taper: Boolean = false,
 ) : Element() {
     val count get() = pts.size / 3
     override val bounds: Box by lazy { Box.of(pts, 3, width) }
@@ -57,10 +59,11 @@ class Stroke(
             out[i] = a.x(pts[i]); out[i + 1] = a.y(pts[i + 1]); out[i + 2] = pts[i + 2]
             i += 3
         }
-        return Stroke(id, out, color, width * a.s, pen)
+        return Stroke(id, out, color, width * a.s, pen, taper)
     }
 
-    override fun withId(newId: Long) = Stroke(newId, pts, color, width, pen)
+    override fun withId(newId: Long) = Stroke(newId, pts, color, width, pen, taper)
+    fun withColor(c: Int) = Stroke(id, pts, c, width, pen, taper)
 
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
         val pad = tol + width / 2

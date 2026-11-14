@@ -26,6 +26,8 @@ class Document {
     val images = HashMap<String, ByteArray>()
     /** child id → container id. Attached elements move/scale/delete with their container. */
     val attach = HashMap<Long, Long>()
+    /** Drawing aids (symmetry / perspective). View state, not part of undo history. */
+    var guides = Guides()
     var background = Background.DOTS
     /** Saved camera: world→screen scale and translation. */
     var camScale = 1f
@@ -74,6 +76,9 @@ class Document {
         }
         touch()
     }
+
+    /** Mark non-undoable document settings (background, guides) as changed so they get saved. */
+    fun markDirty() { touch() }
 
     /** Run several edits as a single undo step. */
     fun batch(block: () -> Unit) {
@@ -331,6 +336,7 @@ class Document {
         d.images.putAll(images)
         for ((c, p) in attach) if (byId(c) != null && byId(p) != null) d.attach[c] = p
         d.background = background
+        d.guides = guides
         d.camScale = camScale; d.camX = camX; d.camY = camY
         return d
     }

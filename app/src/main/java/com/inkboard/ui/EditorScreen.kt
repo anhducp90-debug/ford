@@ -53,6 +53,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.inkboard.model.PressureCurve
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -156,13 +162,29 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var minimap by remember { mutableStateOf(prefs.showMinimap) }
     var showComponents by remember { mutableStateOf(false) }
     var pointer by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var penOpacity by remember { mutableFloatStateOf(prefs.penOpacity) }
+    var stabilizer by remember { mutableIntStateOf(prefs.stabilizer) }
+    var curve by remember { mutableStateOf(PressureCurve.entries.getOrElse(prefs.pressureCurve) { PressureCurve.NORMAL }) }
+    var taper by remember { mutableStateOf(prefs.taper) }
+    var recent by remember { mutableStateOf(prefs.recentColors) }
+    var showColorPicker by remember { mutableStateOf(false) }
+    var showGuides by remember { mutableStateOf(false) }
+    var viewRot by remember { mutableFloatStateOf(0f) }
+    var viewFlip by remember { mutableStateOf(false) }
+    var rotateOn by remember { mutableStateOf(prefs.rotateCanvas) }
+    var guidesTick by remember { mutableIntStateOf(0) }
+    val refFile = remember { java.io.File(context.filesDir, "reference.jpg") }
+    var refVisible by remember { mutableStateOf(prefs.refImageVisible && refFile.exists()) }
+    var refVersion by remember { mutableIntStateOf(0) }
 
     val view = remember {
         InkCanvasView(context).apply {
             doc = document
             this.dark = dark
             this.tool = Tool.PEN
-            this.penColor = penColor; this.penWidthDp = penWidth; this.penType = penType
+            this.penColor = withAlpha(penColor, penOpacity); this.penWidthDp = penWidth; this.penType = penType
+            stabilizerLevel = stabilizer; pressureCurve = curve; this.taper = taper
+            rotationEnabled = prefs.rotateCanvas
             fingerDraws = prefs.fingerDraws
             autoShape = prefs.autoShape
             showRulers = prefs.showRulers
@@ -202,6 +224,11 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 if (isEditable(el)) { editPoint = wx to wy; editing = el }
             }
             override fun onPointer(wx: Float, wy: Float) { pointer = wx to wy }
+            override fun onColorPicked(color: Int) {
+                penColor = color; view.penColor = withAlpha(color, penOpacity); prefs.penColor = color
+            }
+            override fun onViewTransformChanged(rotation: Float, flipped: Boolean) { viewRot = rotation; viewFlip = flipped }
+            override fun onGuidesChanged() { guidesTick++; tick++ }
         }
         view.onUndoGesture = { undo() }
         view.onRedoGesture = { redo() }
@@ -221,6 +248,15 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
         onDispose { lifecycle.removeObserver(obs) }
     }
     BackHandler { if (selIds.isNotEmpty()) view.clearSelection() else close() }
+
+    val pickReference = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) AppScope.launch {
+            val f = runCatching { saveReferenceImage(context, uri) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (f == null) toast("Không đọc được ảnh") else { refVersion++; refVisible = true; prefs.refImageVisible = true }
+            }
+        }
+    }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
@@ -290,19 +326,23 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                     ToolButton(Icons.AutoMirrored.Outlined.Redo, "Làm lại", false, enabled = tick >= 0 && document.canRedo) { redo() }
                     Box {
                         ToolButton(Icons.Outlined.MoreVert, "Menu", false) { showMenu = true }
-                        MainMenu(showMenu, document.background, rulers, minimap, onDismiss = { showMenu = false }) { item ->
+                        MainMenu(showMenu, document.background, rulers, minimap, rotateOn, refVisible, onDismiss = { showMenu = false }) { item ->
                             showMenu = false
                             when (item) {
                                 "png" -> exportFormat = ExportFormat.PNG
                                 "pdf" -> exportFormat = ExportFormat.PDF
-                                "bg_plain" -> { document.background = Background.PLAIN; view.invalidate(); tick++ }
-                                "bg_dots" -> { document.background = Background.DOTS; view.invalidate(); tick++ }
-                                "bg_grid" -> { document.background = Background.GRID; view.invalidate(); tick++ }
-                                "bg_lines" -> { document.background = Background.LINES; view.invalidate(); tick++ }
+                                "bg_plain" -> { document.background = Background.PLAIN; document.markDirty(); view.invalidate(); tick++ }
+                                "bg_dots" -> { document.background = Background.DOTS; document.markDirty(); view.invalidate(); tick++ }
+                                "bg_grid" -> { document.background = Background.GRID; document.markDirty(); view.invalidate(); tick++ }
+                                "bg_lines" -> { document.background = Background.LINES; document.markDirty(); view.invalidate(); tick++ }
                                 "fit" -> view.zoomToContent()
                                 "rulers" -> { rulers = !rulers; view.showRulers = rulers; prefs.showRulers = rulers }
                                 "minimap" -> { minimap = !minimap; view.showMinimap = minimap; prefs.showMinimap = minimap }
                                 "components" -> showComponents = true
+                                "guides" -> showGuides = true
+                                "flip" -> view.toggleFlip()
+                                "rotate" -> { rotateOn = !rotateOn; view.rotationEnabled = rotateOn; prefs.rotateCanvas = rotateOn }
+                                "reference" -> if (refFile.exists()) { refVisible = !refVisible; prefs.refImageVisible = refVisible } else pickReference.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             }
                         }
                     }
@@ -310,10 +350,15 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 if (showPenOptions && tool == Tool.PEN) {
                     PenOptions(
                         Modifier.align(Alignment.TopCenter).offset(y = 60.dp),
-                        penColor, penWidth, penType,
-                        onColor = { penColor = it; view.penColor = it; prefs.penColor = it },
+                        penColor, penWidth, penType, penOpacity, stabilizer, curve, taper, recent,
+                        onColor = { penColor = it; view.penColor = withAlpha(it, penOpacity); prefs.penColor = it },
+                        onCustomColor = { showColorPicker = true },
                         onWidth = { penWidth = it; view.penWidthDp = it; prefs.penWidth = it },
                         onType = { penType = it; view.penType = it; prefs.penType = it.ordinal },
+                        onOpacity = { penOpacity = it; view.penColor = withAlpha(penColor, it); prefs.penOpacity = it },
+                        onStabilizer = { stabilizer = it; view.stabilizerLevel = it; prefs.stabilizer = it },
+                        onCurve = { curve = it; view.pressureCurve = it; prefs.pressureCurve = it.ordinal },
+                        onTaper = { taper = it; view.taper = it; prefs.taper = it },
                         onDismiss = { showPenOptions = false }
                     )
                 }
@@ -323,6 +368,14 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             Row(Modifier.align(Alignment.BottomStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Pill(Modifier.clickable { view.setZoom(1f) }) {
                     Text("${(zoom * 100).roundToInt()}%", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge)
+                }
+                if (viewRot != 0f || viewFlip) {
+                    Pill(Modifier.clickable { view.resetViewTransform() }) {
+                        Text(
+                            listOfNotNull(if (viewRot != 0f) "↻ ${viewRot.roundToInt()}°" else null, if (viewFlip) "⇋ lật" else null).joinToString("  ") + "  ✕",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge
+                        )
+                    }
                 }
                 if (rulers) {
                     val selBox = remember(selIds, tick) { if (selIds.isEmpty()) null else document.boundsOf(selIds).takeUnless { it.isEmpty } }
@@ -381,6 +434,31 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
         }
     }
 
+    if (refVisible) {
+        ReferenceWindow(refFile, refVersion, onClose = { refVisible = false; prefs.refImageVisible = false }) { c ->
+            penColor = c; view.penColor = withAlpha(c, penOpacity); prefs.penColor = c
+            prefs.pushRecent(c); recent = prefs.recentColors
+            toast("Đã lấy màu")
+        }
+    }
+    if (showColorPicker) {
+        ColorPickerDialog(penColor, recent, onDismiss = { showColorPicker = false }) { c ->
+            showColorPicker = false
+            penColor = c; view.penColor = withAlpha(c, penOpacity); prefs.penColor = c
+            prefs.pushRecent(c); recent = prefs.recentColors
+        }
+    }
+    if (showGuides) {
+        val g = remember(guidesTick, showGuides) { document.guides }
+        GuidesDialog(
+            g.symmetry, g.radialN, g.perspective, g.assist, refFile.exists(),
+            onSymmetry = { m, n -> view.setSymmetry(m, n); guidesTick++ },
+            onPerspective = { view.setPerspective(it); guidesTick++ },
+            onAssist = { view.setPerspectiveAssist(it); guidesTick++ },
+            onReference = { showGuides = false; pickReference.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onDismiss = { showGuides = false },
+        )
+    }
     if (showComponents) {
         ComponentsPanel(document, tick, onDismiss = { showComponents = false }) { c ->
             showComponents = false
@@ -499,11 +577,14 @@ private fun ToolButton(icon: ImageVector, label: String, active: Boolean, tint: 
 
 @Composable
 private fun PenOptions(
-    modifier: Modifier, color: Int, width: Float, type: PenType,
-    onColor: (Int) -> Unit, onWidth: (Float) -> Unit, onType: (PenType) -> Unit, onDismiss: () -> Unit,
+    modifier: Modifier, color: Int, width: Float, type: PenType, opacity: Float, stabilizer: Int,
+    curve: PressureCurve, taper: Boolean, recent: List<Int>,
+    onColor: (Int) -> Unit, onCustomColor: () -> Unit, onWidth: (Float) -> Unit, onType: (PenType) -> Unit,
+    onOpacity: (Float) -> Unit, onStabilizer: (Int) -> Unit, onCurve: (PressureCurve) -> Unit, onTaper: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    Surface(modifier.shadow(8.dp, RoundedCornerShape(20.dp)), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.padding(12.dp)) {
+    Surface(modifier.shadow(8.dp, RoundedCornerShape(20.dp)).widthIn(max = 420.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((t, label) in listOf(PenType.PEN to "Bút", PenType.HIGHLIGHTER to "Bút nhấn", PenType.PENCIL to "Bút chì")) {
                     val sel = t == type
@@ -514,28 +595,70 @@ private fun PenOptions(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (c in PEN_COLORS) {
-                    Box(Modifier.size(30.dp).clip(CircleShape).background(Color(c))
-                        .border(if (c == color) 3.dp else 0.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), CircleShape)
-                        .clickable { onColor(c) })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                for (c in PEN_COLORS) Swatch(c, c == color) { onColor(c) }
+                // Custom colour (HSV picker)
+                Box(Modifier.size(30.dp).clip(CircleShape)
+                    .background(Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)))
+                    .clickable(onClick = onCustomColor), contentAlignment = Alignment.Center) {
+                    Text("+", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            val extra = recent.filter { it !in PEN_COLORS }.take(9)
+            if (extra.isNotEmpty() || color !in PEN_COLORS) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (color !in PEN_COLORS && color !in extra) Swatch(color, true) {}
+                    for (c in extra) Swatch(c, c == color) { onColor(c) }
+                }
+            }
+            Text("Mẹo: giữ 1 ngón tay lên bản vẽ để hút màu.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 for (w in WIDTHS) {
                     Box(Modifier.size(36.dp).clip(CircleShape)
                         .background(if (w == width) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
                         .clickable { onWidth(w) }, contentAlignment = Alignment.Center) {
-                        Box(Modifier.size((w * 2.2f).coerceIn(3f, 24f).dp).clip(CircleShape).background(Color(color)))
+                        Box(Modifier.size((w * 2.2f).coerceIn(3f, 24f).dp).clip(CircleShape).background(Color(withAlpha(color, opacity))))
                     }
                 }
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onDismiss) { Text("Xong") }
             }
+            LabeledSlider("Độ đậm ${(opacity * 100).roundToInt()}%", opacity, 0.1f..1f) { onOpacity(it) }
+            LabeledSlider("Chống rung nét ${if (stabilizer == 0) "tắt" else stabilizer.toString()}", stabilizer.toFloat(), 0f..10f, steps = 9) { onStabilizer(it.roundToInt()) }
+            Text("Lực nhấn", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+            Row {
+                for (c in PressureCurve.entries) {
+                    FilterChip(selected = c == curve, onClick = { onCurve(c) }, label = { Text(c.label) }, modifier = Modifier.padding(end = 6.dp))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Thon đầu & cuối nét", modifier = Modifier.weight(1f))
+                Switch(checked = taper, onCheckedChange = onTaper)
+            }
+            if (type == PenType.PENCIL) Text("Bút chì: nghiêng bút để tô bóng (nếu bút hỗ trợ cảm biến nghiêng).",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row { Spacer(Modifier.weight(1f)); TextButton(onClick = onDismiss) { Text("Xong") } }
         }
     }
 }
+
+@Composable
+private fun Swatch(c: Int, selected: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(30.dp).clip(CircleShape).background(Color(c))
+        .border(if (selected) 3.dp else 0.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), CircleShape)
+        .clickable(onClick = onClick))
+}
+
+@Composable
+private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int = 0, onChange: (Float) -> Unit) {
+    Column(Modifier.padding(top = 4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Slider(value = value, onValueChange = onChange, valueRange = range, steps = steps)
+    }
+}
+
+fun withAlpha(color: Int, opacity: Float): Int = (color and 0x00FFFFFF) or ((opacity.coerceIn(0f, 1f) * 255).roundToInt() shl 24)
 
 @Composable
 private fun InsertMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
@@ -560,8 +683,13 @@ private fun InsertMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (String
 }
 
 @Composable
-private fun MainMenu(expanded: Boolean, bg: Background, rulers: Boolean, minimap: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+private fun MainMenu(expanded: Boolean, bg: Background, rulers: Boolean, minimap: Boolean, rotateOn: Boolean, refOn: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        MenuItem("Trợ vẽ: đối xứng, phối cảnh…", null) { onPick("guides") }
+        MenuItem("Ảnh tham khảo" + if (refOn) "  ✓" else "", null) { onPick("reference") }
+        MenuItem("Lật canvas ngang", null) { onPick("flip") }
+        MenuItem("Xoay canvas bằng 2 ngón" + if (rotateOn) "  ✓" else "", null) { onPick("rotate") }
+        HorizontalDivider()
         MenuItem("Thành phần trên bảng vẽ", null) { onPick("components") }
         MenuItem("Thước toạ độ" + if (rulers) "  ✓" else "", null) { onPick("rulers") }
         MenuItem("Bản đồ thu nhỏ" + if (minimap) "  ✓" else "", null) { onPick("minimap") }

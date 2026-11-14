@@ -2,7 +2,9 @@ package com.inkboard.canvas
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
@@ -22,6 +24,11 @@ import com.inkboard.model.DropRules
 import com.inkboard.model.Edge
 import com.inkboard.model.Element
 import com.inkboard.model.Geo
+import com.inkboard.model.Perspective
+import com.inkboard.model.PressureCurve
+import com.inkboard.model.Stabilizer
+import com.inkboard.model.Symmetry
+import com.inkboard.model.SymmetryMode
 import com.inkboard.model.Node
 import com.inkboard.model.PenType
 import com.inkboard.model.ShapeEl
@@ -57,6 +64,12 @@ class InkCanvasView(context: Context) : View(context) {
         fun onEditRequest(el: Element, wx: Float = Float.NaN, wy: Float = Float.NaN)
         /** World position under the pen / last touch (for the coordinate bar). */
         fun onPointer(wx: Float, wy: Float) {}
+        /** Eyedropper result (long-press with a finger). */
+        fun onColorPicked(color: Int) {}
+        /** Canvas rotation (degrees) or mirroring changed. */
+        fun onViewTransformChanged(rotation: Float, flipped: Boolean) {}
+        /** Guides (symmetry centre, vanishing points) were moved. */
+        fun onGuidesChanged() {}
     }
 
     var listener: Listener? = null
@@ -82,6 +95,40 @@ class InkCanvasView(context: Context) : View(context) {
     var showMinimap = true
         set(v) { field = v; invalidate() }
     private val nav = NavOverlay(resources.displayMetrics.density)
+
+    // Brush feel
+    /** 0 = off … 10 = strong. */
+    var stabilizerLevel = 0
+    var pressureCurve = PressureCurve.NORMAL
+    var taper = true
+    private val stabilizer = Stabilizer(0f)
+    private var lastRawWX = 0f
+    private var lastRawWY = 0f
+    private var lastRawP = 0.5f
+    /** Straight perspective-assisted stroke being drawn (x0, y0, x1, y1). */
+    private var perspLine: FloatArray? = null
+
+    // View rotation / mirroring (applied around the view centre on top of the camera)
+    var rotationEnabled = true
+    var canvasRotation = 0f; private set
+    var flipped = false; private set
+    private val viewM = Matrix()
+    private val viewInv = Matrix()
+    private val viewIdentity get() = canvasRotation == 0f && !flipped
+    private var rotTracking = false
+    private var rotEngaged = false
+    private var rotAngle0 = 0f
+    private var rotBase = 0f
+
+    // Eyedropper
+    private var eyedropping = false
+    private var eyeColor = 0
+    private val eyeBmp by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) }
+    private val eyedropRunnable = Runnable { startEyedrop() }
+
+    // Guide handles: 1 = symmetry centre, 2 = VP1, 3 = VP2
+    private var handleDrag = 0
+    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private var pointerSX = -1f
     private var pointerSY = -1f
     private var mapNavigating = false
@@ -107,7 +154,7 @@ class InkCanvasView(context: Context) : View(context) {
     private val hidden = HashSet<Long>()
 
     // ------------------------------------------------------------------ input
-    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN }
+    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE }
 
     private var penPointer = -1
     private var penMode = PenMode.NONE
@@ -152,6 +199,8 @@ class InkCanvasView(context: Context) : View(context) {
     private val handleR = 16f * density
     private val eraserR get() = 12f * density / scale
 
+    /** Main-thread timer (works even before the view is attached). */
+    private val timer = android.os.Handler(android.os.Looper.getMainLooper())
     private val holdRunnable = Runnable { onPenHold() }
     private var dropAction: DropRules.Action? = null
     private var dropSX = 0f
@@ -178,7 +227,83 @@ class InkCanvasView(context: Context) : View(context) {
     private fun sx(wx: Float) = wx * scale + tx
     private fun sy(wy: Float) = wy * scale + ty
 
-    fun viewBox(): Box = Box(wx(0f), wy(0f), wx(width.toFloat()), wy(height.toFloat()))
+    fun viewBox(): Box {
+        val r = visibleRegion()
+        return Box(wx(r.left), wy(r.top), wx(r.right), wy(r.bottom))
+    }
+
+    /** Region of the unrotated view plane that is visible on screen. */
+    private fun visibleRegion(): RectF {
+        val r = RectF(0f, 0f, width.toFloat(), height.toFloat())
+        if (!viewIdentity) viewInv.mapRect(r)
+        return r
+    }
+
+    // ------------------------------------------------------- rotation / flip
+
+    private fun updateViewMatrix() {
+        viewM.reset()
+        val cx = width / 2f; val cy = height / 2f
+        viewM.postTranslate(-cx, -cy)
+        if (flipped) viewM.postScale(-1f, 1f)
+        viewM.postRotate(canvasRotation)
+        viewM.postTranslate(cx, cy)
+        viewM.invert(viewInv)
+    }
+
+    fun setViewRotation(deg: Float) {
+        var r = ((deg % 360f) + 360f) % 360f
+        if (r > 180f) r -= 360f
+        canvasRotation = r
+        updateViewMatrix()
+        listener?.onViewTransformChanged(canvasRotation, flipped)
+        notifySelection(); invalidate()
+    }
+
+    fun toggleFlip() {
+        flipped = !flipped
+        updateViewMatrix()
+        listener?.onViewTransformChanged(canvasRotation, flipped)
+        notifySelection(); invalidate()
+    }
+
+    fun resetViewTransform() {
+        canvasRotation = 0f; flipped = false
+        updateViewMatrix()
+        listener?.onViewTransformChanged(canvasRotation, flipped)
+        notifySelection(); invalidate()
+    }
+
+    /** Two-finger rotation from raw (screen) coordinates; engages after 12°, snaps to 90° steps. */
+    private fun trackRotation(e: MotionEvent) {
+        val fingerIdx = (0 until e.pointerCount).filter { e.getToolType(it) == MotionEvent.TOOL_TYPE_FINGER }
+        val ending = e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL ||
+            e.actionMasked == MotionEvent.ACTION_POINTER_UP || e.actionMasked == MotionEvent.ACTION_POINTER_DOWN
+        if (!rotationEnabled || penPointer >= 0 || fingerIdx.size < 2 || ending || eyedropping) {
+            rotTracking = false; rotEngaged = false; return
+        }
+        if (e.actionMasked != MotionEvent.ACTION_MOVE) return
+        val a = fingerIdx[0]; val b = fingerIdx[1]
+        val ang = Math.toDegrees(atan2((e.getY(b) - e.getY(a)).toDouble(), (e.getX(b) - e.getX(a)).toDouble())).toFloat()
+        if (!rotTracking) { rotTracking = true; rotEngaged = false; rotAngle0 = ang; return }
+        fun norm(d: Float): Float { var x = d % 360f; if (x > 180f) x -= 360f; if (x < -180f) x += 360f; return x }
+        val diff = norm(ang - rotAngle0)
+        if (!rotEngaged) {
+            if (abs(diff) < 12f) return
+            rotEngaged = true; rotAngle0 = ang; rotBase = canvasRotation
+            return
+        }
+        var r = rotBase + norm(ang - rotAngle0) * if (flipped) -1f else 1f
+        val snap = Math.round(r / 90f) * 90f
+        if (abs(r - snap) < 5f) r = snap
+        if (r != canvasRotation) setViewRotation(r)
+    }
+
+    /** Map a raw screen point into the unrotated view plane. */
+    private fun toPlane(x: Float, y: Float): Pair<Float, Float> {
+        if (viewIdentity) return x to y
+        val p = floatArrayOf(x, y); viewInv.mapPoints(p); return p[0] to p[1]
+    }
 
     private fun saveCamera() {
         doc.camScale = scale; doc.camX = tx; doc.camY = ty
@@ -281,7 +406,15 @@ class InkCanvasView(context: Context) : View(context) {
         notifySelection(); invalidate()
     }
 
+    /** Selection bounds on screen (after rotation), for UI placement. */
     fun selectionScreenRect(): RectF? {
+        val r = planeSelRect() ?: return null
+        if (!viewIdentity) viewM.mapRect(r)
+        return r
+    }
+
+    /** Selection bounds in the unrotated view plane (used for hit testing). */
+    private fun planeSelRect(): RectF? {
         if (selection.isEmpty()) return null
         val b = doc.boundsOf(selection)
         if (b.isEmpty) return null
@@ -311,6 +444,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        updateViewMatrix()
         if (oldw == 0 && doc.camScale == 1f && doc.camX == 0f && doc.camY == 0f) {
             if (doc.elements.isEmpty()) { tx = w / 2f; ty = h / 2f; saveCamera() } else fitContent(1f)
         }
@@ -318,7 +452,19 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     override fun onDraw(c: Canvas) {
-        renderer.drawBackground(c, doc.background, width, height, scale, tx, ty, dark)
+        c.drawColor(if (dark) 0xFF1E1F22.toInt() else 0xFFFBFBF9.toInt())
+        c.save()
+        if (!viewIdentity) c.concat(viewM)
+        drawWorld(c)
+        drawInnerOverlays(c)
+        c.restore()
+        drawOuterOverlays(c)
+    }
+
+    /** Background, content and live input, in the unrotated view plane. */
+    private fun drawWorld(c: Canvas) {
+        val vr = visibleRegion()
+        renderer.drawBackground(c, doc.background, vr.left, vr.top, vr.right, vr.bottom, scale, tx, ty, dark)
         if (showRulers) nav.drawOrigin(c, scale, tx, ty, dark) // under the content
         val previewing = !selPreview.isIdentity
         c.save()
@@ -350,14 +496,166 @@ class InkCanvasView(context: Context) : View(context) {
             c.restore()
         }
 
-        // Live input
+        // Live input (+ symmetric copies)
+        val pl = perspLine
         when {
-            snapped != null -> renderer.drawShape(c, snapped!!)
-            penMode == PenMode.DRAW && liveN > 0 -> renderer.drawLiveStroke(c, livePts, liveN, penColor, liveWidth, penType)
+            pl != null -> {
+                val pts = lineStroke(pl)
+                renderer.drawLiveStroke(c, pts, pts.size / 3, penColor, liveWidth, penType, taper)
+                for (cp in Symmetry.copies(pts, doc.guides)) renderer.drawLiveStroke(c, cp, cp.size / 3, penColor, liveWidth, penType, taper)
+            }
+            snapped != null -> {
+                renderer.drawShape(c, snapped!!)
+                for (cp in symmetricShapes(snapped!!)) renderer.drawShape(c, cp)
+            }
+            penMode == PenMode.DRAW && liveN > 0 -> {
+                renderer.drawLiveStroke(c, livePts, liveN, penColor, liveWidth, penType, taper)
+                if (doc.guides.symmetry != SymmetryMode.OFF) {
+                    for (cp in Symmetry.copies(livePts.copyOf(liveN * 3), doc.guides)) renderer.drawLiveStroke(c, cp, liveN, penColor, liveWidth, penType, taper)
+                }
+            }
         }
+        drawGuides(c)
         c.restore()
+    }
 
-        drawOverlays(c)
+    /** Symmetry axes and perspective lines (world space, inside the camera transform). */
+    private fun drawGuides(c: Canvas) {
+        val g = doc.guides
+        if (g.symmetry == SymmetryMode.OFF && g.perspective == 0) return
+        val vb = viewBox()
+        val big = max(vb.w, vb.h) * 2f
+        guidePaint.strokeWidth = 1.2f * density / scale
+        guidePaint.pathEffect = null
+        if (g.symmetry != SymmetryMode.OFF) {
+            guidePaint.color = 0x99E52592.toInt()
+            val cx = g.symX; val cy = g.symY
+            when (g.symmetry) {
+                SymmetryMode.VERTICAL -> c.drawLine(cx, cy - big, cx, cy + big, guidePaint)
+                SymmetryMode.HORIZONTAL -> c.drawLine(cx - big, cy, cx + big, cy, guidePaint)
+                SymmetryMode.QUAD -> { c.drawLine(cx, cy - big, cx, cy + big, guidePaint); c.drawLine(cx - big, cy, cx + big, cy, guidePaint) }
+                SymmetryMode.RADIAL -> {
+                    val n = g.radialN.coerceIn(2, 24)
+                    for (k in 0 until n) {
+                        val a = -Math.PI / 2 + 2 * Math.PI * k / n
+                        c.drawLine(cx, cy, cx + (big * cos(a)).toFloat(), cy + (big * sin(a)).toFloat(), guidePaint)
+                    }
+                }
+                SymmetryMode.OFF -> Unit
+            }
+        }
+        if (g.perspective > 0) {
+            guidePaint.color = 0x661A73E8
+            c.drawLine(vb.l - big, g.vp1y, vb.r + big, g.vp1y, guidePaint) // horizon
+            val vps = if (g.perspective >= 2) listOf(g.vp1x to g.vp1y, g.vp2x to g.vp2y) else listOf(g.vp1x to g.vp1y)
+            guidePaint.color = 0x331A73E8
+            for ((vx, vy) in vps) for (k in 0 until 24) {
+                val a = 2 * Math.PI * k / 24
+                c.drawLine(vx, vy, vx + (big * cos(a)).toFloat(), vy + (big * sin(a)).toFloat(), guidePaint)
+            }
+        }
+    }
+
+    /** Draggable handles of the active guides, as (id, world x, world y). */
+    private fun guideHandles(): List<Triple<Int, Float, Float>> {
+        val g = doc.guides
+        val out = ArrayList<Triple<Int, Float, Float>>()
+        if (g.symmetry != SymmetryMode.OFF) out += Triple(1, g.symX, g.symY)
+        if (g.perspective >= 1) out += Triple(2, g.vp1x, g.vp1y)
+        if (g.perspective >= 2) out += Triple(3, g.vp2x, g.vp2y)
+        return out
+    }
+
+    private fun hitGuideHandle(px: Float, py: Float): Int =
+        guideHandles().firstOrNull { (_, x, y) -> hypot(sx(x) - px, sy(y) - py) <= 22f * density }?.first ?: 0
+
+    private fun moveGuideHandle(h: Int, px: Float, py: Float) {
+        val x = wx(px); val y = wy(py)
+        doc.guides = when (h) {
+            1 -> doc.guides.copy(symX = x, symY = y)
+            2 -> doc.guides.copy(vp1x = x, vp1y = y, vp2y = if (doc.guides.perspective >= 2) y else doc.guides.vp2y)
+            3 -> doc.guides.copy(vp2x = x, vp2y = y, vp1y = y)
+            else -> doc.guides
+        }
+        invalidate()
+    }
+
+    /** Turn guides on with sensible defaults around the current view. */
+    fun setSymmetry(mode: SymmetryMode, n: Int = doc.guides.radialN) {
+        val (cx, cy) = centerWorld()
+        val g = doc.guides
+        doc.guides = if (g.symmetry == SymmetryMode.OFF && mode != SymmetryMode.OFF) g.copy(symmetry = mode, radialN = n, symX = cx, symY = cy)
+        else g.copy(symmetry = mode, radialN = n)
+        doc.markDirty(); listener?.onGuidesChanged(); invalidate()
+    }
+
+    fun setPerspective(points: Int) {
+        val (cx, cy) = centerWorld()
+        val g = doc.guides
+        val span = width / scale * 0.35f
+        doc.guides = if (g.perspective == 0 && points > 0) g.copy(perspective = points, vp1x = if (points == 2) cx - span else cx, vp1y = cy - height / scale * 0.15f, vp2x = cx + span, vp2y = cy - height / scale * 0.15f)
+        else if (points == 2 && g.perspective == 1) g.copy(perspective = 2, vp1x = g.vp1x - span, vp2x = g.vp1x + span, vp2y = g.vp1y)
+        else g.copy(perspective = points)
+        doc.markDirty(); listener?.onGuidesChanged(); invalidate()
+    }
+
+    fun setPerspectiveAssist(on: Boolean) {
+        doc.guides = doc.guides.copy(assist = on); doc.markDirty(); listener?.onGuidesChanged(); invalidate()
+    }
+
+    /** Resample a straight segment into a pressure-carrying stroke. */
+    private fun lineStroke(l: FloatArray): FloatArray {
+        val n = 24
+        val p = if (liveN > 0) (0 until liveN).map { livePts[3 * it + 2] }.average().toFloat() else 0.5f
+        return FloatArray(n * 3) { k ->
+            val i = k / 3; val t = i / (n - 1f)
+            when (k % 3) { 0 -> l[0] + (l[2] - l[0]) * t; 1 -> l[1] + (l[3] - l[1]) * t; else -> p }
+        }
+    }
+
+    /** Symmetric copies of a shape (lines, polygons, ellipses). */
+    private fun symmetricShapes(s: ShapeEl): List<ShapeEl> {
+        val g = doc.guides
+        if (g.symmetry == SymmetryMode.OFF) return emptyList()
+        return if (s.kind == ShapeKind.ELLIPSE) {
+            val cx = s.geo[0]; val cy = s.geo[1]; val a = s.geo[4]
+            val probe = floatArrayOf(cx, cy, 0f, cx + cos(a), cy + sin(a), 0f)
+            Symmetry.copies(probe, g).map { q ->
+                val na = atan2(q[4] - q[1], q[3] - q[0])
+                ShapeEl(0, s.kind, floatArrayOf(q[0], q[1], s.geo[2], s.geo[3], na), s.color, s.width, s.fill)
+            }
+        } else {
+            val tri = FloatArray(s.geo.size / 2 * 3) { k -> if (k % 3 == 2) 0f else s.geo[(k / 3) * 2 + k % 3] }
+            Symmetry.copies(tri, g).map { q ->
+                ShapeEl(0, s.kind, FloatArray(s.geo.size) { k -> q[(k / 2) * 3 + k % 2] }, s.color, s.width, s.fill)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- eyedropper
+
+    private fun startEyedrop() {
+        val f = fingers.values.singleOrNull() ?: return
+        if (f.moved || penPointer >= 0 || fingerGesture != 0) return
+        // Holding on the selection (to drag it) or on a guide handle is not an eyedropper.
+        if (planeSelRect()?.apply { inset(-6f * density, -6f * density) }?.contains(f.sx, f.sy) == true) return
+        if (hitGuideHandle(f.sx, f.sy) != 0) return
+        eyedropping = true
+        fingerGesture = 5
+        sampleAt(f.x, f.y)
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    /** Read the rendered colour at a point of the view plane. */
+    fun sampleAt(px: Float, py: Float): Int {
+        val bc = Canvas(eyeBmp)
+        bc.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR)
+        bc.translate(-px, -py)
+        drawWorld(bc)
+        eyeColor = eyeBmp.getPixel(0, 0) or 0xFF000000.toInt()
+        listener?.onColorPicked(eyeColor)
+        invalidate()
+        return eyeColor
     }
 
     /** Committed content is recorded into world-space RenderNodes and replayed. */
@@ -389,7 +687,7 @@ class InkCanvasView(context: Context) : View(context) {
         contentDirty = false
     }
 
-    private fun drawOverlays(c: Canvas) {
+    private fun drawInnerOverlays(c: Canvas) {
         dropAction?.let { act ->
             if (selPreview.isIdentity) return@let
             doc.byId(act.targetId)?.let { t ->
@@ -412,7 +710,7 @@ class InkCanvasView(context: Context) : View(context) {
             c.drawText(act.hint, bx + pad, by + 20f * density, hintPaint)
         }
         // Selection frame + corner handles
-        selectionScreenRect()?.let { r ->
+        planeSelRect()?.let { r ->
             r.inset(-6f * density, -6f * density)
             overlay.color = 0xFF2F80ED.toInt(); overlay.pathEffect = Renderer.dash
             c.drawRect(r, overlay)
@@ -443,8 +741,33 @@ class InkCanvasView(context: Context) : View(context) {
             overlayFill.color = penColor
             c.drawCircle(hoverX, hoverY, max(1.5f * density, penWidthDp * density / 2), overlayFill)
         }
+        handlesAndLoupe(c)
+    }
+
+    private fun handlesAndLoupe(c: Canvas) {
+        for ((_, x, y) in guideHandles()) {
+            overlayFill.color = Color.WHITE
+            c.drawCircle(sx(x), sy(y), 9f * density, overlayFill)
+            overlay.color = 0xFFE52592.toInt()
+            c.drawCircle(sx(x), sy(y), 9f * density, overlay)
+            c.drawCircle(sx(x), sy(y), 2.5f * density, overlay)
+        }
+        if (eyedropping) {
+            val f = fingers.values.firstOrNull() ?: return
+            val ly = f.y - 70f * density
+            overlayFill.color = eyeColor
+            c.drawCircle(f.x, ly, 30f * density, overlayFill)
+            overlay.color = Color.WHITE; overlay.strokeWidth = 4f * density
+            c.drawCircle(f.x, ly, 30f * density, overlay)
+            overlay.color = 0x55000000; overlay.strokeWidth = 1.5f * density
+            c.drawCircle(f.x, ly, 32f * density, overlay)
+        }
+    }
+
+    /** Screen-space aids that do not rotate with the canvas. */
+    private fun drawOuterOverlays(c: Canvas) {
         val ins = insets()
-        if (showRulers) {
+        if (showRulers && viewIdentity) {
             nav.drawRulers(c, width, height, (ins?.left ?: 0).toFloat(), (ins?.top ?: 0).toFloat(), scale, tx, ty, pointerSX, pointerSY, dark)
         }
         if (showMinimap) {
@@ -460,7 +783,8 @@ class InkCanvasView(context: Context) : View(context) {
     override fun onHoverEvent(e: MotionEvent): Boolean {
         if (e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS || e.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) {
             lastHoverTime = SystemClock.uptimeMillis()
-            if (e.actionMasked == MotionEvent.ACTION_HOVER_EXIT) { hoverX = -1f; hoverY = -1f } else { hoverX = e.x; hoverY = e.y; reportPointer(e.x, e.y) }
+            val (hx, hy) = toPlane(e.x, e.y)
+            if (e.actionMasked == MotionEvent.ACTION_HOVER_EXIT) { hoverX = -1f; hoverY = -1f } else { hoverX = hx; hoverY = hy; reportPointer(hx, hy) }
             invalidate()
             return true
         }
@@ -479,6 +803,14 @@ class InkCanvasView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (handleMinimapTouch(e)) return true
+        trackRotation(e)
+        if (viewIdentity) return handleTouch(e)
+        val ve = MotionEvent.obtain(e)
+        ve.transform(viewInv)
+        try { return handleTouch(ve) } finally { ve.recycle() }
+    }
+
+    private fun handleTouch(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val idx = e.actionIndex
@@ -512,6 +844,7 @@ class InkCanvasView(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 if (penPointer >= 0) { penCancel(); penPointer = -1 }
                 fingers.clear(); fingerGesture = 0
+                timer.removeCallbacks(eyedropRunnable); eyedropping = false
                 selPreview = Affine.IDENTITY
                 stopAutoScroll()
                 invalidate()
@@ -539,11 +872,15 @@ class InkCanvasView(context: Context) : View(context) {
     private fun penDown(e: MotionEvent, idx: Int) {
         val x = e.getX(idx); val y = e.getY(idx)
         if (fingers.isNotEmpty()) penUsedWithFingers = true
+        timer.removeCallbacks(eyedropRunnable)
+        if (eyedropping) { eyedropping = false; fingerGesture = 0 }
         lastPenSX = x; lastPenSY = y
         hoverX = -1f
         val button = (e.buttonState and (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY)) != 0
         val eraserTip = e.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER
+        handleDrag = if (!button) hitGuideHandle(x, y) else 0
         penMode = when {
+            handleDrag != 0 -> PenMode.HANDLE
             button -> PenMode.PAN
             eraserTip || tool == Tool.ERASER -> PenMode.ERASE
             tool == Tool.SELECT -> selectModeAt(x, y)
@@ -555,10 +892,13 @@ class InkCanvasView(context: Context) : View(context) {
                 clearSelection()
                 liveN = 0
                 liveWidth = penWidthDp * density / scale * if (penType == PenType.HIGHLIGHTER) 6f else 1f
-                snapped = null
-                addLivePoint(wx(x), wy(y), pressure(e, idx, -1))
+                snapped = null; perspLine = null
+                stabilizer.radius = stabilizerLevel * 1.6f * density / scale
+                stabilizer.reset(wx(x), wy(y))
+                lastRawWX = wx(x); lastRawWY = wy(y); lastRawP = pressure(e, idx, -1)
+                addLivePoint(wx(x), wy(y), lastRawP)
                 holdX = x; holdY = y
-                if (modifierHeld()) penMode = PenMode.LINE
+                if (modifierHeld() || perspectiveAssist()) penMode = PenMode.LINE
                 scheduleHold()
             }
             PenMode.ERASE -> { hidden.clear(); eraseAt(wx(x), wy(y)) }
@@ -571,7 +911,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     /** SELECT tool: decide between scaling, dragging and a new lasso. */
     private fun selectModeAt(x: Float, y: Float): PenMode {
-        val r = selectionScreenRect()
+        val r = planeSelRect()
         if (r != null) {
             r.inset(-6f * density, -6f * density)
             val cs = corners(r)
@@ -591,9 +931,30 @@ class InkCanvasView(context: Context) : View(context) {
         return PenMode.LASSO
     }
 
+    private fun perspectiveAssist() = doc.guides.perspective > 0 && doc.guides.assist
+
+    /** Pressure through the user's curve; for the pencil, tilt adds width (shading). */
     private fun pressure(e: MotionEvent, idx: Int, h: Int): Float {
-        val p = if (h < 0) e.getPressure(idx) else e.getHistoricalPressure(idx, h)
-        return if (e.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER) 0.6f else p.coerceIn(0.05f, 1f)
+        if (e.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER) return if (penType == PenType.PENCIL) 0.3f else 0.6f
+        val raw = if (h < 0) e.getPressure(idx) else e.getHistoricalPressure(idx, h)
+        var p = pressureCurve.map(raw)
+        if (penType == PenType.PENCIL) {
+            val tilt = if (h < 0) e.getAxisValue(MotionEvent.AXIS_TILT, idx) else e.getHistoricalAxisValue(MotionEvent.AXIS_TILT, idx, h)
+            val tf = sin(tilt.toDouble()).toFloat().coerceIn(0f, 1f)
+            p = if (tf > 0.05f) p * 0.4f + tf * 0.6f else p * 0.5f
+        }
+        return p.coerceIn(0.03f, 1f)
+    }
+
+    /** Add a pen point through the stabilizer. */
+    private fun addStabilized(x: Float, y: Float, p: Float) {
+        lastRawWX = x; lastRawWY = y; lastRawP = p
+        val q = stabilizer.feed(x, y)
+        if (q == null) {
+            if (liveN > 0) livePts[3 * (liveN - 1) + 2] = max(livePts[3 * (liveN - 1) + 2], p)
+            return
+        }
+        addLivePoint(q.first, q.second, p)
     }
 
     private fun addLivePoint(x: Float, y: Float, p: Float) {
@@ -618,7 +979,7 @@ class InkCanvasView(context: Context) : View(context) {
             when (penMode) {
                 PenMode.DRAW -> {
                     if (snapped != null) continue
-                    addLivePoint(wx(x), wy(y), pressure(e, idx, if (h < hs) h else -1))
+                    addStabilized(wx(x), wy(y), pressure(e, idx, if (h < hs) h else -1))
                     if (hypot(x - holdX, y - holdY) > 6f * density) { holdX = x; holdY = y; scheduleHold() }
                     if (modifierHeld()) penMode = PenMode.LINE
                 }
@@ -637,6 +998,7 @@ class InkCanvasView(context: Context) : View(context) {
                     if (hypot(sx(wxp) - sx(lasso[n - 2]), sy(wyp) - sy(lasso[n - 1])) > 3f) { lasso += wxp; lasso += wyp }
                 }
                 PenMode.DRAG -> updateDrag(x, y)
+                PenMode.HANDLE -> moveGuideHandle(handleDrag, x, y)
                 PenMode.SCALE -> {
                     val f = (hypot(wx(x) - anchorWX, wy(y) - anchorWY) / scaleStartDist).coerceIn(0.05f, 50f)
                     selPreview = Affine.scaleAround(f, anchorWX, anchorWY)
@@ -694,6 +1056,11 @@ class InkCanvasView(context: Context) : View(context) {
         if (liveN == 0) return
         val x0 = livePts[0]; val y0 = livePts[1]
         val x1 = livePts[3 * (liveN - 1)]; val y1 = livePts[3 * (liveN - 1) + 1]
+        if (perspectiveAssist() && !modifierHeld()) {
+            perspLine = Perspective.snap(x0, y0, x1, y1, doc.guides)
+            snapped = null
+            return
+        }
         val len = hypot(x1 - x0, y1 - y0)
         val ang = Geo.snapAngle(atan2((y1 - y0).toDouble(), (x1 - x0).toDouble()), Math.PI / 12)
         val ex = x0 + (len * cos(ang)).toFloat(); val ey = y0 + (len * sin(ang)).toFloat()
@@ -703,8 +1070,8 @@ class InkCanvasView(context: Context) : View(context) {
     private fun strokeWidthForShapes() = max(liveWidth, 1.5f * density / scale) * if (penType == PenType.HIGHLIGHTER) 0.25f else 1f
 
     private fun scheduleHold() {
-        removeCallbacks(holdRunnable)
-        if (autoShape && penMode == PenMode.DRAW) postDelayed(holdRunnable, HOLD_MS)
+        timer.removeCallbacks(holdRunnable)
+        if (autoShape && penMode == PenMode.DRAW) timer.postDelayed(holdRunnable, HOLD_MS)
     }
 
     /** Pen held still: try to snap the live stroke to a clean shape. */
@@ -739,19 +1106,37 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     private fun penUp() {
-        removeCallbacks(holdRunnable)
+        timer.removeCallbacks(holdRunnable)
         stopAutoScroll()
         when (penMode) {
             PenMode.DRAW, PenMode.LINE -> {
                 val shape = snapped
-                val el: Element? = if (shape != null) ShapeEl(doc.nextId(), shape.kind, shape.geo, shape.color, shape.width, shape.fill)
-                else if (liveN > 0) Stroke(doc.nextId(), livePts.copyOf(liveN * 3), penColor, liveWidth, penType) else null
-                if (el != null) doc.batch {
-                    doc.add(el)
-                    // Ink written fully inside a shape / block / note / table belongs to it.
-                    DropRules.enclosingContainer(doc, el.bounds, el.id)?.let { doc.setContainer(el.id, it.id) }
+                val pl = perspLine
+                val useTaper = taper && penType != PenType.HIGHLIGHTER
+                if (shape == null && pl == null && liveN > 0 && stabilizer.radius > 0f) addLivePoint(lastRawWX, lastRawWY, lastRawP)
+                val els = ArrayList<Element>()
+                when {
+                    pl != null -> {
+                        val pts = lineStroke(pl)
+                        els += Stroke(doc.nextId(), pts, penColor, liveWidth, penType, useTaper)
+                        for (cp in Symmetry.copies(pts, doc.guides)) els += Stroke(doc.nextId(), cp, penColor, liveWidth, penType, useTaper)
+                    }
+                    shape != null -> {
+                        els += ShapeEl(doc.nextId(), shape.kind, shape.geo, shape.color, shape.width, shape.fill)
+                        for (cp in symmetricShapes(shape)) els += ShapeEl(doc.nextId(), cp.kind, cp.geo, cp.color, cp.width, cp.fill)
+                    }
+                    liveN > 0 -> {
+                        val pts = livePts.copyOf(liveN * 3)
+                        els += Stroke(doc.nextId(), pts, penColor, liveWidth, penType, useTaper)
+                        for (cp in Symmetry.copies(pts, doc.guides)) els += Stroke(doc.nextId(), cp, penColor, liveWidth, penType, useTaper)
+                    }
                 }
-                liveN = 0; snapped = null
+                if (els.isNotEmpty()) doc.batch {
+                    doc.add(els)
+                    // Ink written fully inside a shape / block / note / table belongs to it.
+                    for (el in els) DropRules.enclosingContainer(doc, el.bounds, el.id)?.let { doc.setContainer(el.id, it.id) }
+                }
+                liveN = 0; snapped = null; perspLine = null
                 changed()
             }
             PenMode.ERASE -> {
@@ -766,6 +1151,7 @@ class InkCanvasView(context: Context) : View(context) {
             PenMode.DRAG -> commitPreview(lastPenSX, lastPenSY)
             PenMode.SCALE -> commitPreview()
             PenMode.PAN -> Unit
+            PenMode.HANDLE -> { handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged() }
             PenMode.NONE -> Unit
         }
         penMode = PenMode.NONE
@@ -773,9 +1159,9 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     private fun penCancel() {
-        removeCallbacks(holdRunnable)
+        timer.removeCallbacks(holdRunnable)
         stopAutoScroll()
-        liveN = 0; snapped = null; hidden.clear(); lasso.clear()
+        liveN = 0; snapped = null; perspLine = null; hidden.clear(); lasso.clear()
         selPreview = Affine.IDENTITY
         penMode = PenMode.NONE
         invalidateContent()
@@ -850,7 +1236,9 @@ class InkCanvasView(context: Context) : View(context) {
             penUsedWithFingers = penPointer >= 0
             fingerDownTime = SystemClock.uptimeMillis()
             fingerGesture = 0
+            if (penPointer < 0 && !penNear()) timer.postDelayed(eyedropRunnable, EYEDROP_MS)
         } else {
+            timer.removeCallbacks(eyedropRunnable)
             maxFingers = max(maxFingers, fingers.size)
             // Rebase gesture origins so a pan that becomes a pinch does not jump.
             for (o in fingers.values) { o.sx = o.x; o.sy = o.y }
@@ -879,8 +1267,13 @@ class InkCanvasView(context: Context) : View(context) {
             f.x = e.getX(i); f.y = e.getY(i)
             if (!f.moved && hypot(f.x - f.sx, f.y - f.sy) > touchSlop) f.moved = true
         }
+        if (eyedropping) {
+            fingers.values.firstOrNull()?.let { sampleAt(it.x, it.y) }
+            return
+        }
         val anyMoved = fingers.values.any { it.moved }
         if (!anyMoved) return
+        timer.removeCallbacks(eyedropRunnable)
 
         if (fingers.size >= 2) {
             // Pinch / two-finger pan (also allowed while the pen draws).
@@ -904,8 +1297,11 @@ class InkCanvasView(context: Context) : View(context) {
         if (penNear()) return
         val f = fingers.values.first()
         if (fingerGesture == 0) {
-            val r = selectionScreenRect()?.apply { inset(-6f * density, -6f * density) }
-            if (r != null && r.contains(f.sx, f.sy)) {
+            val r = planeSelRect()?.apply { inset(-6f * density, -6f * density) }
+            handleDrag = hitGuideHandle(f.sx, f.sy)
+            if (handleDrag != 0) {
+                fingerGesture = 4
+            } else if (r != null && r.contains(f.sx, f.sy)) {
                 fingerGesture = 3
                 fingerDragWX = wx(f.sx); fingerDragWY = wy(f.sy)
             } else {
@@ -914,6 +1310,7 @@ class InkCanvasView(context: Context) : View(context) {
             }
         }
         when (fingerGesture) {
+            4 -> moveGuideHandle(handleDrag, f.x, f.y)
             1 -> {
                 tx += f.x - gestureCX; ty += f.y - gestureCY
                 gestureCX = f.x; gestureCY = f.y
@@ -933,6 +1330,13 @@ class InkCanvasView(context: Context) : View(context) {
 
     private fun fingerUp(pid: Int, canceled: Boolean) {
         val f = fingers.remove(pid) ?: return
+        timer.removeCallbacks(eyedropRunnable)
+        if (eyedropping && fingers.isEmpty()) {
+            eyedropping = false; fingerGesture = 0; invalidate(); return
+        }
+        if (fingerGesture == 4 && fingers.isEmpty()) {
+            fingerGesture = 0; handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged(); return
+        }
         if (fingers.isNotEmpty()) {
             resetPinchBaseline()
             if (fingerGesture == 2 && fingers.size == 1) {
@@ -964,7 +1368,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        removeCallbacks(holdRunnable); stopAutoScroll()
+        timer.removeCallbacks(holdRunnable); stopAutoScroll()
         chunks.forEach { it.discardDisplayList() }
     }
 
@@ -973,5 +1377,6 @@ class InkCanvasView(context: Context) : View(context) {
         const val MAX_SCALE = 100f
         const val HOLD_MS = 550L
         const val TAP_MS = 280L
+        const val EYEDROP_MS = 450L
     }
 }

@@ -103,6 +103,33 @@ class UiSmokeTest {
             rule.waitForIdle()
         }
 
+        // Pen options: custom colour via the HSV picker, pressure curve
+        rule.onNodeWithContentDescription("Chọn").performClick() // lasso tool, so the pen button opens fresh
+        rule.onNodeWithContentDescription("Bút").performClick()
+        rule.onNodeWithContentDescription("Bút").performClick()
+        waitText("Thon đầu & cuối nét")
+        rule.onNodeWithText("Mạnh tay", useUnmergedTree = true).performClick()
+        rule.onNodeWithText("+", useUnmergedTree = true).performClick()
+        waitText("Chọn màu")
+        rule.onNodeWithText("Chọn", useUnmergedTree = true).performClick()
+        rule.onNodeWithText("Xong", useUnmergedTree = true).performClick()
+
+        // Drawing aids dialog
+        rule.onNodeWithContentDescription("Menu").performClick()
+        rule.onNodeWithText("Trợ vẽ: đối xứng, phối cảnh…", useUnmergedTree = true).performClick()
+        waitText("Đối xứng")
+        rule.onNodeWithText("Dọc", useUnmergedTree = true).performClick()
+        rule.onNodeWithText("2 điểm tụ", useUnmergedTree = true).performClick()
+        waitText("Bắt nét theo phối cảnh")
+        rule.onNodeWithText("Xong", useUnmergedTree = true).performClick()
+
+        // Flip the canvas, then reset with the chip
+        rule.onNodeWithContentDescription("Menu").performClick()
+        rule.onNodeWithText("Lật canvas ngang", useUnmergedTree = true).performClick()
+        waitText("⇋ lật  ✕")
+        rule.onNodeWithText("⇋ lật  ✕", useUnmergedTree = true).performClick()
+        rule.waitForIdle()
+
         // Back to home: the document is listed
         rule.onNodeWithContentDescription("Quay lại").performClick()
         rule.waitUntil(10000) { rule.onAllNodes(hasText("Bản vẽ", substring = true)).fetchSemanticsNodes().isNotEmpty() }

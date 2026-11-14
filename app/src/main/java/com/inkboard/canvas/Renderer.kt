@@ -105,32 +105,24 @@ class Renderer {
     // ----------------------------------------------------------------- strokes
 
     fun drawStroke(c: Canvas, s: Stroke) {
-        val path = (s.cache as? Path) ?: buildStrokePath(s.pts, s.width, s.pen).also { s.cache = it }
-        when (s.pen) {
-            PenType.PEN -> { fill.color = s.color; c.drawPath(path, fill) }
-            PenType.HIGHLIGHTER -> {
-                line.color = s.color; line.alpha = 90; line.strokeWidth = s.width
-                line.strokeCap = Paint.Cap.SQUARE
-                c.drawPath(path, line)
-                line.strokeCap = Paint.Cap.ROUND; line.alpha = 255
-            }
-            PenType.PENCIL -> {
-                line.color = s.color; line.alpha = 200; line.strokeWidth = s.width
-                c.drawPath(path, line)
-                line.alpha = 255
-            }
-        }
+        val path = (s.cache as? Path) ?: buildStrokePath(s.pts, s.width, s.pen, taper = s.taper).also { s.cache = it }
+        paintStroke(c, path, s.color, s.width, s.pen)
     }
 
     /** Live (in-progress) stroke; [n] = number of valid triples in [pts]. */
-    fun drawLiveStroke(c: Canvas, pts: FloatArray, n: Int, color: Int, width: Float, pen: PenType) {
-        val path = buildStrokePath(pts, width, pen, n)
+    fun drawLiveStroke(c: Canvas, pts: FloatArray, n: Int, color: Int, width: Float, pen: PenType, taper: Boolean = false) {
+        paintStroke(c, buildStrokePath(pts, width, pen, n, taper), color, width, pen)
+    }
+
+    /** The colour's alpha is the pen opacity; highlighter and pencil are further lightened. */
+    private fun paintStroke(c: Canvas, path: Path, color: Int, width: Float, pen: PenType) {
+        val a = Color.alpha(color)
         when (pen) {
             PenType.PEN -> { fill.color = color; c.drawPath(path, fill) }
-            else -> {
-                line.color = color; line.alpha = if (pen == PenType.HIGHLIGHTER) 90 else 200
-                line.strokeWidth = width
-                if (pen == PenType.HIGHLIGHTER) line.strokeCap = Paint.Cap.SQUARE
+            PenType.PENCIL -> { fill.color = color; fill.alpha = a * 190 / 255; c.drawPath(path, fill); fill.alpha = 255 }
+            PenType.HIGHLIGHTER -> {
+                line.color = color; line.alpha = a * 90 / 255; line.strokeWidth = width
+                line.strokeCap = Paint.Cap.SQUARE
                 c.drawPath(path, line)
                 line.strokeCap = Paint.Cap.ROUND; line.alpha = 255
             }
@@ -278,32 +270,34 @@ class Renderer {
     // -------------------------------------------------------------- background
 
     /** Screen-space background pattern for camera (scale, tx, ty). */
-    fun drawBackground(c: Canvas, bg: Background, w: Int, h: Int, scale: Float, tx: Float, ty: Float, dark: Boolean) {
+    /** Background pattern over the region (x0, y0)–(x1, y1) of the (unrotated) view, for camera (scale, tx, ty). */
+    fun drawBackground(c: Canvas, bg: Background, x0: Float, y0: Float, x1: Float, y1: Float, scale: Float, tx: Float, ty: Float, dark: Boolean) {
         c.drawColor(if (dark) 0xFF1E1F22.toInt() else 0xFFFBFBF9.toInt())
         if (bg == Background.PLAIN) return
         var step = 32f * scale
         while (step < 18f) step *= 4f
         while (step > 18f * 4f) step /= 4f
-        val ox = ((tx % step) + step) % step
-        val oy = ((ty % step) + step) % step
+        val sx0 = tx + Math.floor(((x0 - tx) / step).toDouble()).toFloat() * step
+        val sy0 = ty + Math.floor(((y0 - ty) / step).toDouble()).toFloat() * step
         bgPaint.color = if (dark) 0x33FFFFFF else 0x22000000
         when (bg) {
             Background.DOTS -> {
                 bgPaint.strokeWidth = 2.6f; bgPaint.strokeCap = Paint.Cap.ROUND
-                val cols = (w / step).toInt() + 2; val rows = (h / step).toInt() + 2
+                val cols = ((x1 - sx0) / step).toInt() + 2; val rows = ((y1 - sy0) / step).toInt() + 2
+                if (cols.toLong() * rows > 400_000) return
                 val pts = FloatArray(cols * rows * 2)
                 var k = 0
-                for (i in 0 until cols) for (j in 0 until rows) { pts[k++] = ox + i * step; pts[k++] = oy + j * step }
+                for (i in 0 until cols) for (j in 0 until rows) { pts[k++] = sx0 + i * step; pts[k++] = sy0 + j * step }
                 c.drawPoints(pts, bgPaint)
             }
             Background.GRID -> {
                 bgPaint.strokeWidth = 1f
-                var x = ox; while (x < w) { c.drawLine(x, 0f, x, h.toFloat(), bgPaint); x += step }
-                var y = oy; while (y < h) { c.drawLine(0f, y, w.toFloat(), y, bgPaint); y += step }
+                var x = sx0; while (x < x1) { c.drawLine(x, y0, x, y1, bgPaint); x += step }
+                var y = sy0; while (y < y1) { c.drawLine(x0, y, x1, y, bgPaint); y += step }
             }
             Background.LINES -> {
                 bgPaint.strokeWidth = 1f
-                var y = oy; while (y < h) { c.drawLine(0f, y, w.toFloat(), y, bgPaint); y += step }
+                var y = sy0; while (y < y1) { c.drawLine(x0, y, x1, y, bgPaint); y += step }
             }
             Background.PLAIN -> Unit
         }
@@ -330,11 +324,11 @@ class Renderer {
          * Builds the outline of a stroke. PEN strokes become a filled,
          * pressure-modulated polygon; other pens become a smoothed centre line.
          */
-        fun buildStrokePath(pts: FloatArray, width: Float, pen: PenType, count: Int = pts.size / 3): Path {
+        fun buildStrokePath(pts: FloatArray, width: Float, pen: PenType, count: Int = pts.size / 3, taper: Boolean = false): Path {
             val path = Path()
             val n = count
             if (n == 0) return path
-            if (pen != PenType.PEN) {
+            if (pen == PenType.HIGHLIGHTER) {
                 path.moveTo(pts[0], pts[1])
                 if (n == 1) { path.lineTo(pts[0] + 0.01f, pts[1]); return path }
                 for (i in 1 until n - 1) {
@@ -344,7 +338,24 @@ class Renderer {
                 path.lineTo(pts[3 * (n - 1)], pts[3 * (n - 1) + 1])
                 return path
             }
-            fun half(i: Int) = width / 2f * (0.3f + 0.7f * pts[3 * i + 2].coerceIn(0f, 1f))
+            // Taper: thin the first/last part of the stroke by arc length.
+            val ramp = FloatArray(n) { 1f }
+            if (taper && n > 2) {
+                val dist = FloatArray(n)
+                for (i in 1 until n) dist[i] = dist[i - 1] + hypot(pts[3 * i] - pts[3 * i - 3], pts[3 * i + 1] - pts[3 * i - 2])
+                val total = dist[n - 1]
+                val tl = min(total * 0.2f, width * 8f)
+                if (tl > 0f) for (i in 0 until n) {
+                    val e = min(dist[i], total - dist[i]) / tl
+                    ramp[i] = e.coerceIn(0f, 1f).let { 0.15f + 0.85f * Math.sqrt(it.toDouble()).toFloat() }
+                }
+            }
+            // PEN: pressure → width. PENCIL: the channel carries pressure + tilt, wider when tilted.
+            fun half(i: Int): Float {
+                val p = pts[3 * i + 2].coerceIn(0f, 1f)
+                val base = if (pen == PenType.PENCIL) width / 2f * (0.35f + 1.65f * p) else width / 2f * (0.3f + 0.7f * p)
+                return base * ramp[i]
+            }
             if (n == 1) { path.addCircle(pts[0], pts[1], half(0), Path.Direction.CW); return path }
             // Light smoothing of positions (3-tap) to remove sensor jitter.
             val xs = FloatArray(n); val ys = FloatArray(n); val hs = FloatArray(n)

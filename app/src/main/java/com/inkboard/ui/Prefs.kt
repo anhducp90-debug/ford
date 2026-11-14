@@ -41,4 +41,35 @@ class Prefs(context: Context) {
     var showMinimap: Boolean
         get() = sp.getBoolean("showMinimap", true)
         set(v) = sp.edit().putBoolean("showMinimap", v).apply()
+
+    var penOpacity: Float
+        get() = sp.getFloat("penOpacity", 1f)
+        set(v) = sp.edit().putFloat("penOpacity", v).apply()
+
+    var stabilizer: Int
+        get() = sp.getInt("stabilizer", 2)
+        set(v) = sp.edit().putInt("stabilizer", v).apply()
+
+    var pressureCurve: Int
+        get() = sp.getInt("pressureCurve", 1)
+        set(v) = sp.edit().putInt("pressureCurve", v).apply()
+
+    var taper: Boolean
+        get() = sp.getBoolean("taper", true)
+        set(v) = sp.edit().putBoolean("taper", v).apply()
+
+    var rotateCanvas: Boolean
+        get() = sp.getBoolean("rotateCanvas", true)
+        set(v) = sp.edit().putBoolean("rotateCanvas", v).apply()
+
+    /** Most recent first, opaque ARGB. */
+    var recentColors: List<Int>
+        get() = (sp.getString("recentColors", "") ?: "").split(',').mapNotNull { it.toLongOrNull()?.toInt() }
+        set(v) = sp.edit().putString("recentColors", v.take(12).joinToString(",") { (it.toLong() and 0xFFFFFFFFL).toString() }).apply()
+
+    fun pushRecent(c: Int) { recentColors = (listOf(c) + recentColors.filter { it != c }).take(12) }
+
+    var refImageVisible: Boolean
+        get() = sp.getBoolean("refImageVisible", false)
+        set(v) = sp.edit().putBoolean("refImageVisible", v).apply()
 }

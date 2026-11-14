@@ -53,6 +53,15 @@ Quy tắc liên quan:
 - **Chạm đúp** vào hình để sửa nhãn, vào ô bảng để sửa chữ trong ô.
 - Không tạo vòng lặp gắn (A trong B trong A).
 
+### 2.1d Gói phác thảo cho hoạ sĩ (lõi vector, không raster)
+Định hướng đã chốt: phục vụ giai đoạn phác thảo, concept, lineart, storyboard; **không** làm cọ raster (vân, trộn màu, nhoè, chế độ hoà trộn).
+- **Cảm giác bút:** chống rung nét (0–10, kiểu "dây kéo"), đường cong lực nhấn (Nhẹ tay / Vừa / Mạnh tay), thon đầu & cuối nét, độ đậm (opacity) riêng, bút chì tô bóng khi nghiêng (nếu bút có cảm biến nghiêng).
+- **Màu:** bảng HSV (ô bão hoà/độ sáng + thanh sắc độ + mã hex), lịch sử 12 màu gần đây, **giữ 1 ngón tay ~0,5 s để hút màu** (có kính lúp màu), hút màu từ ảnh tham khảo bằng nhấn giữ.
+- **Xoay / lật canvas:** xoay bằng 2 ngón (bắt đầu khi xoay quá 12°, tự hút về 0/90/180/270°), lật ngang trong Menu; chip "↻ 30° ⇋ lật ✕" để về mặc định. Thước toạ độ ẩn khi đang xoay/lật.
+- **Trợ vẽ (Menu → Trợ vẽ):** đối xứng dọc / ngang / 4 phía / toả 4–12 nhánh (kéo chấm hồng dời tâm); phối cảnh 1 hoặc 2 điểm tụ với đường chân trời, nét tự thẳng theo hướng tới điểm tụ / ngang / dọc (tắt được), kéo điểm tụ để chỉnh. Lưu cùng tài liệu.
+- **Ảnh tham khảo nổi:** cửa sổ ghim trên màn hình (không thuộc bản vẽ, không xuất), kéo thanh trên để dời, kéo góc để đổi cỡ, nhấn giữ để lấy màu.
+- Tất cả nằm trong popover Bút hoặc Menu — thanh công cụ vẫn 6 nút.
+
 ### 2.2 Cử chỉ đơn giản, nhất quán
 | Hành động | Cách làm |
 |---|---|

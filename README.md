@@ -4,7 +4,10 @@ Không gian sáng tạo vô hạn cho S Pen: phác thảo, sơ đồ, mindmap, n
 
 Thiết kế: [docs/DESIGN.md](docs/DESIGN.md)
 
-## Bản 0.3 có gì
+## Bản 0.4 có gì
+- **Gói phác thảo (mới):** chống rung nét, đường cong lực nhấn, thon nét, độ đậm, bút chì nghiêng tô bóng; bảng màu HSV + màu gần đây + giữ ngón tay để hút màu; xoay canvas bằng 2 ngón, lật ngang; đối xứng (dọc/ngang/4 phía/toả), phối cảnh 1–2 điểm tụ có bắt nét; ảnh tham khảo nổi. Chi tiết: docs/DESIGN.md §2.1d.
+
+### Từ bản 0.3
 - **Logic kết hợp (mới):** kéo chữ vào hình → chữ nằm gọn, tự vừa hình; chữ vào khối / ghi chú / ô bảng; chữ hoặc ghi chú lên nút mindmap → nhánh con; kéo nhánh sang nút khác → chuyển nhánh; nét vẽ, hình, ảnh thả vào hình / khối / ghi chú / bảng → gắn vào và đi theo; kéo ra ngoài → tách. Gợi ý "Thả để…" hiện khi kéo; một bước hoàn tác. Chi tiết: docs/DESIGN.md §2.1c.
 
 ### Từ bản 0.2
@@ -24,7 +27,7 @@ Thiết kế: [docs/DESIGN.md](docs/DESIGN.md)
 Chưa có (bản sau): chú thích PDF, quét tài liệu, xuất SVG, tìm kiếm chữ viết tay.
 
 ## Cài trên điện thoại
-Tải `InkBoard-0.3.0.apk`, mở và cho phép "Cài ứng dụng không rõ nguồn gốc". APK chỉ dành cho máy ARM64 (Galaxy S25 Ultra…), Android 10+.
+Tải `InkBoard-0.4.0.apk`, mở và cho phép "Cài ứng dụng không rõ nguồn gốc". APK chỉ dành cho máy ARM64 (Galaxy S25 Ultra…), Android 10+.
 
 ## Build
 Yêu cầu: JDK 17+, Android SDK 35, NDK 27.2.12479018, Rust + `rustup target add aarch64-linux-android` + `cargo install cargo-ndk`.
