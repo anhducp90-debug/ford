@@ -37,6 +37,11 @@ sealed class Element {
     /** Render cache slot (not part of identity). */
     @Transient
     var cache: Any? = null
+
+    /** Encoded bytes cache for fast saves (elements are immutable, so it never goes stale). */
+    @Transient
+    @Volatile
+    var enc: ByteArray? = null
 }
 
 class Stroke(
@@ -305,10 +310,10 @@ class TableEl(
         return TableEl(id, x, y, w, h, rows, cols, color, width, m)
     }
 
-    @Transient
-    var cellFits: HashMap<Int, TextFit.Fit>? = null
+    /** Thread-safe: thumbnails render on a background thread. */
+    private val cellFits = java.util.concurrent.ConcurrentHashMap<Int, TextFit.Fit>()
     fun cellFit(i: Int): TextFit.Fit {
-        val m = cellFits ?: HashMap<Int, TextFit.Fit>().also { cellFits = it }
+        val m = cellFits
         return m.getOrPut(i) {
             val b = cellBox(i).inset(minOf(w / cols, h / rows) * 0.08f)
             TextFit.fit(cells[i].orEmpty(), b.w, b.h, maxSize = (h / rows) * 0.45f)

@@ -27,6 +27,8 @@ class PerfAuditTest {
             val snap = ms { d.snapshot() }
             val w = ms { bytes = ByteArrayOutputStream().also { DocCodec.write(d, it) }.toByteArray() }
             val r = ms { DocCodec.read(ByteArrayInputStream(bytes)) }
+            d.add(Stroke(d.nextId(), floatArrayOf(1f, 1f, 0.5f, 2f, 2f, 0.5f), 0, 3f, PenType.PEN))
+            val w2 = ms { ByteArrayOutputStream().also { DocCodec.write(d.snapshot(), it) } }
             val hit = ms { repeat(100) { d.hitTop(5000f + it, 5000f, 6f) } } / 100
             val drop = ms { repeat(100) { DropRules.resolve(d, setOf(text.id), text.id, 50f, 20f) } } / 100
             val comp = ms { Components.collect(d) }
@@ -34,7 +36,7 @@ class PerfAuditTest {
             val one = Stroke(d.nextId(), floatArrayOf(0f, 0f, 0.5f, 5f, 5f, 0.5f), 0, 3f, PenType.PEN)
             val add = ms { d.add(one) }
             val rem = ms { d.remove(listOf(one.id)) }
-            println("PERF n=$n file=${bytes.size / 1024}KB snapshot=%.1f write=%.0f read=%.0f hitTop=%.2f dropResolve=%.2f components=%.0f contentBounds=%.1f add=%.2f remove=%.1f (ms)".format(snap, w, r, hit, drop, comp, bounds, add, rem))
+            println("PERF n=$n file=${bytes.size / 1024}KB snapshot=%.1f write=%.0f autosaveAfterEdit=%.0f read=%.0f hitTop=%.2f dropResolve=%.2f components=%.0f contentBounds=%.1f add=%.2f remove=%.1f (ms)".format(snap, w, w2, r, hit, drop, comp, bounds, add, rem))
         }
     }
 }

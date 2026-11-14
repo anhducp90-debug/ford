@@ -170,7 +170,10 @@ class DocumentTest {
         assertEquals(d.elements.map { it.id to it::class }, r.elements.map { it.id to it::class })
         assertEquals("Tiếng Việt có dấu ✓\nDòng 2", (r.byId(t.id) as TextEl).text)
         assertEquals(n1.id, (r.byId(n2.id) as Node).parentId)
-        assertTrue((r.byId(s.id) as Stroke).pts.contentEquals(s.pts))
+        // v4 quantizes positions to 1/64 unit and pressure to 1/255 (compact files)
+        val rp = (r.byId(s.id) as Stroke).pts
+        assertEquals(s.pts.size, rp.size)
+        for (i in rp.indices) assertEquals(s.pts[i], rp[i], if (i % 3 == 2) 1f / 255 else 1f / 64)
         assertTrue(r.images["img1"]!!.contentEquals(byteArrayOf(1, 2, 3, 4)))
         assertFalse(r.images.containsKey("unused"))
         assertEquals(4, (r.byId(tab.id) as TableEl).cols)

@@ -107,26 +107,42 @@ class EditorActions(private val view: InkCanvasView) {
         doc.add(t); committed(listOf(t.id))
     }
 
-    fun insertImage(context: Context, uri: Uri): Boolean {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-        var sample = 1
-        while (max(opts.outWidth, opts.outHeight) / sample > 4096) sample *= 2
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return false
-        val maxSide = 2048f
-        val f = min(1f, maxSide / max(bmp.width, bmp.height))
-        val scaled = if (f < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true) else bmp
-        val out = ByteArrayOutputStream()
-        scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
+    /** Decoded, compressed picture ready to insert (built off the UI thread). */
+    class PreparedImage(val bytes: ByteArray, val w: Int, val h: Int)
+
+    companion object Img {
+        /** Read, downscale (≤ 2048 px) and JPEG-compress a picture. Call on a background thread. */
+        fun prepareImage(context: Context, uri: Uri, maxSide: Int = 2048): PreparedImage? {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            return prepareBytes(bytes, maxSide)
+        }
+
+        fun prepareBytes(bytes: ByteArray, maxSide: Int = 2048): PreparedImage? {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            var sample = 1
+            while (max(opts.outWidth, opts.outHeight) / sample > maxSide * 2) sample *= 2
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+            val f = min(1f, maxSide.toFloat() / max(bmp.width, bmp.height))
+            val scaled = if (f < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt().coerceAtLeast(1), (bmp.height * f).toInt().coerceAtLeast(1), true) else bmp
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
+            return PreparedImage(out.toByteArray(), scaled.width, scaled.height)
+        }
+
+        val STICKY_COLORS = intArrayOf(0xFFFFF59D.toInt(), 0xFFFFCC80.toInt(), 0xFFA5D6A7.toInt(), 0xFF90CAF9.toInt(), 0xFFF48FB1.toInt(), 0xFFCE93D8.toInt())
+    }
+
+    /** Insert a prepared picture at the centre of the view (UI thread, cheap). */
+    fun insertPrepared(img: PreparedImage, widthFraction: Float = 0.6f): Long {
         val key = UUID.randomUUID().toString()
-        doc.images[key] = out.toByteArray()
+        doc.images[key] = img.bytes
         val (cx, cy) = view.centerWorld()
-        val ww = view.width * 0.6f / view.scale
-        val hh = ww * scaled.height / scaled.width
+        val ww = view.width * widthFraction / view.scale
+        val hh = ww * img.h / img.w
         val e = ImageEl(doc.nextId(), cx - ww / 2, cy - hh / 2, ww, hh, key)
         doc.add(e); committed(listOf(e.id))
-        return true
+        return e.id
     }
 
     // ------------------------------------------------------- selection edits
@@ -254,7 +270,4 @@ class EditorActions(private val view: InkCanvasView) {
         return text
     }
 
-    companion object {
-        val STICKY_COLORS = intArrayOf(0xFFFFF59D.toInt(), 0xFFFFCC80.toInt(), 0xFFA5D6A7.toInt(), 0xFF90CAF9.toInt(), 0xFFF48FB1.toInt(), 0xFFCE93D8.toInt())
-    }
 }

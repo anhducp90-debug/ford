@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower: back up drawings and settings to the user's own Google account. -->
+<full-backup-content>
+    <include domain="file" path="docs/" />
+    <include domain="sharedpref" path="inkboard.xml" />
+</full-backup-content>

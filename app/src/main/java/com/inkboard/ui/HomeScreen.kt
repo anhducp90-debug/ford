@@ -93,6 +93,7 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
     var showOnboarding by remember { mutableStateOf(!prefs.onboarded) }
     var renameTarget by remember { mutableStateOf<DocMeta?>(null) }
     var moveTarget by remember { mutableStateOf<DocMeta?>(null) }
+    var deleteTarget by remember { mutableStateOf<DocMeta?>(null) }
     val scope = rememberCoroutineScope()
 
     val all by produceState(initialValue = emptyList<DocMeta>(), refresh) {
@@ -163,10 +164,11 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
                                                 "duplicate" -> store.duplicate(meta.id)
                                                 "trash" -> store.trash(meta.id)
                                                 "restore" -> store.restore(meta.id)
-                                                "delete" -> store.deleteForever(meta.id)
+                                                "delete" -> Unit
                                             }
                                         }
                                         if (action == "rename") renameTarget = meta
+                                        if (action == "delete") deleteTarget = meta
                                         if (action == "move") moveTarget = meta
                                         refresh++
                                     }
@@ -225,6 +227,20 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
             moveTarget = null
             scope.launch { withContext(Dispatchers.IO) { store.move(m.id, f) }; refresh++ }
         }
+    }
+    deleteTarget?.let { m ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Xoá vĩnh viễn?") },
+            text = { Text("\"${m.name}\" sẽ bị xoá hẳn và không khôi phục được.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    scope.launch { withContext(Dispatchers.IO) { store.deleteForever(m.id) }; refresh++ }
+                }) { Text("Xoá vĩnh viễn", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Huỷ") } }
+        )
     }
     if (showSettings) SettingsDialog(prefs) { showSettings = false }
     if (showOnboarding) OnboardingDialog(prefs) { prefs.onboarded = true; showOnboarding = false }
@@ -392,7 +408,10 @@ fun SettingsDialog(prefs: Prefs, onDismiss: () -> Unit) {
                     }
                 }) { Text("Tải / cập nhật gói nhận dạng") }
                 Spacer(Modifier.height(8.dp))
-                Text("InkBoard 0.1 · offline, không tài khoản, không thu thập dữ liệu.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
+                Text("InkBoard $ver · Không tài khoản, không quảng cáo. Bản vẽ chỉ lưu trên máy (và bản sao lưu Google của chính bạn nếu bật). Nhận dạng chữ dùng ML Kit của Google, chạy trên máy.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Xong") } }

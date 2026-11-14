@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.inkboard"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.inkboard.app"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 4
         versionName = "0.4.0"
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -78,6 +78,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
+    implementation("androidx.input:input-motionprediction:1.0.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")

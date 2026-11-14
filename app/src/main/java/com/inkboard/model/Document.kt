@@ -28,6 +28,8 @@ class Document {
     val attach = HashMap<Long, Long>()
     /** Drawing aids (symmetry / perspective). View state, not part of undo history. */
     var guides = Guides()
+    /** Locked elements cannot be selected, erased or moved (e.g. PDF pages, backgrounds). */
+    val locked = HashSet<Long>()
     var background = Background.DOTS
     /** Saved camera: world→screen scale and translation. */
     var camScale = 1f
@@ -43,6 +45,8 @@ class Document {
     private val redoStack = ArrayDeque<Change>()
     private var indexCache: HashMap<Long, Int>? = null
     private var batchOps: ArrayList<Op>? = null
+    private var spatial: SpatialIndex? = null
+    private var edgeCount = 0
 
     val canUndo get() = undoStack.isNotEmpty()
     val canRedo get() = redoStack.isNotEmpty()
@@ -118,20 +122,55 @@ class Document {
 
     private fun applyOp(op: Op) {
         when (op) {
-            is Op.Insert -> { elements.add(op.index.coerceIn(0, elements.size), op.el); indexCache = null }
+            is Op.Insert -> {
+                val at = op.index.coerceIn(0, elements.size)
+                elements.add(at, op.el)
+                // Appending keeps every existing index valid.
+                if (at == elements.size - 1) indexCache?.set(op.el.id, at) else indexCache = null
+                indexEl(op.el)
+            }
             is Op.Delete -> {
                 val i = if (op.index in elements.indices && elements[op.index].id == op.el.id) op.index else indexOf(op.el.id)
-                if (i >= 0) elements.removeAt(i)
-                indexCache = null
+                if (i >= 0) {
+                    elements.removeAt(i)
+                    if (i == elements.size) indexCache?.remove(op.el.id) else indexCache = null
+                    unindexEl(op.el)
+                }
             }
             is Op.Update -> {
                 val i = if (op.index in elements.indices && elements[op.index].id == op.old.id) op.index else indexOf(op.old.id)
-                if (i >= 0) elements[i] = op.new
-                indexCache?.set(op.new.id, i)
+                if (i >= 0) {
+                    elements[i] = op.new
+                    indexCache?.set(op.new.id, i)
+                    unindexEl(op.old); indexEl(op.new)
+                }
             }
             is Op.Attach -> if (op.new == 0L) attach.remove(op.child) else attach[op.child] = op.new
         }
     }
+
+    private fun indexEl(e: Element) {
+        if (e is Edge) edgeCount++ else spatial?.insert(e.id, e.bounds)
+    }
+
+    private fun unindexEl(e: Element) {
+        if (e is Edge) edgeCount-- else spatial?.remove(e.id)
+    }
+
+    private fun spatialIndex(): SpatialIndex = spatial ?: SpatialIndex().also { si ->
+        edgeCount = 0
+        for (e in elements) if (e is Edge) edgeCount++ else si.insert(e.id, e.bounds)
+        spatial = si
+    }
+
+    /** Non-edge elements whose bounds intersect [b], in z-order (bottom → top). */
+    fun query(b: Box): List<Element> {
+        val ids = spatialIndex().query(b)
+        if (ids.isEmpty()) return emptyList()
+        return ids.mapNotNull { id -> indexOf(id).takeIf { it >= 0 } }.sorted().map { elements[it] }
+    }
+
+    val hasEdges get() = spatialIndex().let { edgeCount > 0 }
 
     // ---------------------------------------------------------- edit helpers
 
@@ -243,15 +282,22 @@ class Document {
     fun boundsOf(ids: Collection<Long>): Box = ids.fold(Box.EMPTY) { acc, id -> byId(id)?.let { acc.union(boundsOf(it)) } ?: acc }
 
     /** Topmost element hit at (x, y). */
-    fun hitTop(x: Float, y: Float, tol: Float): Element? {
-        for (i in elements.indices.reversed()) {
-            val e = elements[i]
-            if (e is Edge) {
+    fun hitTop(x: Float, y: Float, tol: Float, includeLocked: Boolean = false): Element? {
+        var best: Element? = null
+        var bestIdx = -1
+        for (e in query(Box(x - tol, y - tol, x + tol, y + tol)).asReversed()) {
+            if (!includeLocked && e.id in locked) continue
+            if (e.hit(x, y, tol, solid = true)) { best = e; bestIdx = indexOf(e.id); break }
+        }
+        if (hasEdges) {
+            for (i in elements.indices.reversed()) {
+                if (i <= bestIdx) break
+                val e = elements[i] as? Edge ?: continue
                 val ends = edgeEnds(e) ?: continue
                 if (Geo.distToSegment(x, y, ends[0], ends[1], ends[2], ends[3]) <= tol + e.width) return e
-            } else if (e.hit(x, y, tol, solid = true)) return e
+            }
         }
-        return null
+        return best
     }
 
     fun children(id: Long): List<Node> = elements.filterIsInstance<Node>().filter { it.parentId == id }
@@ -337,6 +383,7 @@ class Document {
         for ((c, p) in attach) if (byId(c) != null && byId(p) != null) d.attach[c] = p
         d.background = background
         d.guides = guides
+        d.locked.addAll(locked)
         d.camScale = camScale; d.camX = camX; d.camY = camY
         return d
     }

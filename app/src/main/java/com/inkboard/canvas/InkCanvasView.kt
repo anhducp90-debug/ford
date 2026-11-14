@@ -148,8 +148,6 @@ class InkCanvasView(context: Context) : View(context) {
 
     // Render caches (RenderNode chunks of committed content, recorded in world space)
     private val chunkSize = 1500
-    private val chunks = ArrayList<RenderNode>()
-    private val chunkKeys = ArrayList<Array<Any?>>()
     private var contentDirty = true
     private val hidden = HashSet<Long>()
 
@@ -363,8 +361,10 @@ class InkCanvasView(context: Context) : View(context) {
         saveCamera(); notifySelection(); invalidate()
     }
 
-    private fun insets(): android.graphics.Insets? =
-        rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+    private fun insets(): androidx.core.graphics.Insets? =
+        androidx.core.view.ViewCompat.getRootWindowInsets(this)?.getInsets(
+            androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+        )
 
     /** Minimap rectangle on screen (valid after the first draw). */
     fun minimapRect(): RectF = RectF(nav.mapRect)
@@ -481,9 +481,8 @@ class InkCanvasView(context: Context) : View(context) {
             drawChunks(c, previewing)
         } else {
             val vb = viewBox().inset(-50f / scale)
-            for (e in doc.elements) {
+            for (e in doc.query(vb)) {
                 if (e.id in hidden || (previewing && e.id in selection)) continue
-                if (!doc.boundsOf(e).intersects(vb)) continue
                 renderer.draw(c, doc, e)
             }
         }
@@ -509,7 +508,17 @@ class InkCanvasView(context: Context) : View(context) {
                 for (cp in symmetricShapes(snapped!!)) renderer.drawShape(c, cp)
             }
             penMode == PenMode.DRAW && liveN > 0 -> {
-                renderer.drawLiveStroke(c, livePts, liveN, penColor, liveWidth, penType, taper)
+                // Draw a predicted point ahead of the pen (not committed).
+                val pe = if (stabilizer.radius == 0f) runCatching { predictor?.predict() }.getOrNull() else null
+                if (pe != null && penPointer >= 0) {
+                    val pi = pe.findPointerIndex(penPointer)
+                    if (pi >= 0) {
+                        val ext = livePts.copyOf((liveN + 1) * 3)
+                        ext[liveN * 3] = wx(pe.getX(pi)); ext[liveN * 3 + 1] = wy(pe.getY(pi)); ext[liveN * 3 + 2] = livePts[liveN * 3 - 1]
+                        renderer.drawLiveStroke(c, ext, liveN + 1, penColor, liveWidth, penType, taper)
+                    } else renderer.drawLiveStroke(c, livePts, liveN, penColor, liveWidth, penType, taper)
+                    pe.recycle()
+                } else renderer.drawLiveStroke(c, livePts, liveN, penColor, liveWidth, penType, taper)
                 if (doc.guides.symmetry != SymmetryMode.OFF) {
                     for (cp in Symmetry.copies(livePts.copyOf(liveN * 3), doc.guides)) renderer.drawLiveStroke(c, cp, liveN, penColor, liveWidth, penType, taper)
                 }
@@ -640,51 +649,91 @@ class InkCanvasView(context: Context) : View(context) {
         // Holding on the selection (to drag it) or on a guide handle is not an eyedropper.
         if (planeSelRect()?.apply { inset(-6f * density, -6f * density) }?.contains(f.sx, f.sy) == true) return
         if (hitGuideHandle(f.sx, f.sy) != 0) return
+        // Only over drawn content: holding on empty paper never changes the pen colour.
+        if (doc.hitTop(wx(f.x), wy(f.y), 4f * density / scale, includeLocked = true) == null) return
         eyedropping = true
         fingerGesture = 5
         sampleAt(f.x, f.y)
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
-    /** Read the rendered colour at a point of the view plane. */
+    /** True while the loupe is over drawn content (colour will be applied on release). */
+    private var eyeValid = false
+
+    /** Read the rendered colour at a point of the view plane (preview only; applied on release). */
     fun sampleAt(px: Float, py: Float): Int {
         val bc = Canvas(eyeBmp)
         bc.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR)
         bc.translate(-px, -py)
         drawWorld(bc)
-        eyeColor = eyeBmp.getPixel(0, 0) or 0xFF000000.toInt()
-        listener?.onColorPicked(eyeColor)
+        val over = doc.hitTop(wx(px), wy(py), 4f * density / scale, includeLocked = true) != null
+        if (over) { eyeColor = eyeBmp.getPixel(0, 0) or 0xFF000000.toInt(); eyeValid = true }
         invalidate()
         return eyeColor
     }
 
+    private fun finishEyedrop() {
+        if (eyeValid) listener?.onColorPicked(eyeColor)
+        eyedropping = false; eyeValid = false; fingerGesture = 0
+        invalidate()
+    }
+
     /** Committed content is recorded into world-space RenderNodes and replayed. */
+    /** A slice of the z-ordered element list recorded into one RenderNode. */
+    private class Chunk(val node: RenderNode) {
+        var key: Array<Any?> = emptyArray()
+        var bounds: Box = Box.EMPTY
+        var dirty = true
+    }
+    private val chunkList = ArrayList<Chunk>()
+    private var chunkSignature = Long.MIN_VALUE
+
+    /**
+     * Committed content is recorded per chunk (world space) and replayed. Chunks
+     * are only re-keyed when the document/selection state changes, only
+     * re-recorded when their content changed, and skipped when off screen.
+     */
     private fun drawChunks(c: Canvas, previewing: Boolean) {
         val els = doc.elements
         val need = (els.size + chunkSize - 1) / chunkSize
-        while (chunks.size < need) { chunks.add(RenderNode("ink${chunks.size}")); chunkKeys.add(arrayOf()) }
-        for (k in 0 until need) {
-            val from = k * chunkSize
-            val to = min(els.size, from + chunkSize)
-            // Key: element identities + hidden/preview flags. Re-record only on change.
-            val key = arrayOfNulls<Any?>(to - from)
-            for (i in from until to) {
-                val e = els[i]
-                key[i - from] = if (e.id in hidden || (previewing && e.id in selection)) null else e
+        while (chunkList.size < need) chunkList += Chunk(RenderNode("ink${chunkList.size}"))
+        val sig = doc.version * 31 + hidden.size * 7 + (if (previewing) 1 else 0) + selection.size * 131L
+        if (contentDirty || sig != chunkSignature) {
+            for (k in 0 until need) {
+                val from = k * chunkSize
+                val to = min(els.size, from + chunkSize)
+                val key = arrayOfNulls<Any?>(to - from)
+                for (i in from until to) {
+                    val e = els[i]
+                    key[i - from] = if (e is Edge || e.id in hidden || (previewing && e.id in selection)) null else e
+                }
+                val ch = chunkList[k]
+                if (contentDirty || !key.contentEquals(ch.key)) {
+                    ch.key = key
+                    var b = Box.EMPTY
+                    for (e in key) if (e != null) b = b.union((e as Element).bounds)
+                    ch.bounds = b
+                    ch.dirty = true
+                }
             }
-            val node = chunks[k]
-            if (contentDirty || !key.contentEquals(chunkKeys[k])) {
-                node.setPosition(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
-                node.setClipToBounds(false)
-                val rc: RecordingCanvas = node.beginRecording()
-                rc.translate(1_000_000f, 1_000_000f)
-                for (e in key) if (e != null && e !is Edge) renderer.draw(rc, doc, e as Element)
-                node.endRecording()
-                chunkKeys[k] = key
-            }
-            c.drawRenderNode(node)
+            chunkSignature = sig
+            contentDirty = false
         }
-        contentDirty = false
+        val vb = viewBox().inset(-64f / scale)
+        for (k in 0 until need) {
+            val ch = chunkList[k]
+            if (!ch.bounds.intersects(vb)) continue
+            if (ch.dirty) {
+                ch.node.setPosition(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
+                ch.node.setClipToBounds(false)
+                val rc: RecordingCanvas = ch.node.beginRecording()
+                rc.translate(1_000_000f, 1_000_000f)
+                for (e in ch.key) if (e != null) renderer.draw(rc, doc, e as Element)
+                ch.node.endRecording()
+                ch.dirty = false
+            }
+            c.drawRenderNode(ch.node)
+        }
     }
 
     private fun drawInnerOverlays(c: Canvas) {
@@ -810,7 +859,11 @@ class InkCanvasView(context: Context) : View(context) {
         try { return handleTouch(ve) } finally { ve.recycle() }
     }
 
+    /** Predicts where the pen is going so the live stroke runs ahead of input latency. */
+    private val predictor by lazy { runCatching { androidx.input.motionprediction.MotionEventPredictor.newInstance(this) }.getOrNull() }
+
     private fun handleTouch(e: MotionEvent): Boolean {
+        if (penPointer >= 0 || e.actionMasked == MotionEvent.ACTION_DOWN) runCatching { predictor?.record(e) }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val idx = e.actionIndex
@@ -901,7 +954,11 @@ class InkCanvasView(context: Context) : View(context) {
                 if (modifierHeld() || perspectiveAssist()) penMode = PenMode.LINE
                 scheduleHold()
             }
-            PenMode.ERASE -> { hidden.clear(); eraseAt(wx(x), wy(y)) }
+            PenMode.ERASE -> {
+                hidden.clear()
+                eraseEdges = if (doc.hasEdges) doc.elements.filterIsInstance<Edge>() else emptyList()
+                eraseAt(wx(x), wy(y))
+            }
             PenMode.LASSO -> { lasso.clear(); lasso += wx(x); lasso += wy(y) }
             PenMode.DRAG, PenMode.SCALE -> Unit
             else -> Unit
@@ -1089,17 +1146,18 @@ class InkCanvasView(context: Context) : View(context) {
         invalidate()
     }
 
+    private var eraseEdges: List<Edge> = emptyList()
+
     private fun eraseAt(x: Float, y: Float) {
         val r = eraserR
         var changed = false
-        for (el in doc.elements) {
+        for (el in doc.query(Box(x - r, y - r, x + r, y + r))) {
+            if (el.id in hidden || el.id in doc.locked) continue
+            if (el.hit(x, y, r, solid = false)) { hidden += el.id; changed = true }
+        }
+        for (el in eraseEdges) {
             if (el.id in hidden) continue
-            val hit = if (el is Edge) {
-                doc.edgeEnds(el)?.let { Geo.distToSegment(x, y, it[0], it[1], it[2], it[3]) <= r + el.width } ?: false
-            } else {
-                val b = el.bounds
-                x >= b.l - r && x <= b.r + r && y >= b.t - r && y <= b.b + r && el.hit(x, y, r, solid = false)
-            }
+            val hit = doc.edgeEnds(el)?.let { Geo.distToSegment(x, y, it[0], it[1], it[2], it[3]) <= r + el.width } ?: false
             if (hit) { hidden += el.id; changed = true }
         }
         if (changed) invalidate()
@@ -1203,7 +1261,8 @@ class InkCanvasView(context: Context) : View(context) {
             tapSelect(pts[0], pts[1])
             return
         }
-        val ids = doc.elements.filter { it.inLasso(pts) }.map { it.id }
+        val bb = Box.of(pts)
+        val ids = doc.query(bb).filter { it.id !in doc.locked && it.inLasso(pts) }.map { it.id }
         if (ids.isEmpty()) clearSelection() else select(ids)
     }
 
@@ -1332,7 +1391,8 @@ class InkCanvasView(context: Context) : View(context) {
         val f = fingers.remove(pid) ?: return
         timer.removeCallbacks(eyedropRunnable)
         if (eyedropping && fingers.isEmpty()) {
-            eyedropping = false; fingerGesture = 0; invalidate(); return
+            if (canceled) { eyedropping = false; eyeValid = false; fingerGesture = 0; invalidate() } else finishEyedrop()
+            return
         }
         if (fingerGesture == 4 && fingers.isEmpty()) {
             fingerGesture = 0; handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged(); return
@@ -1369,7 +1429,7 @@ class InkCanvasView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         timer.removeCallbacks(holdRunnable); stopAutoScroll()
-        chunks.forEach { it.discardDisplayList() }
+        chunkList.forEach { it.node.discardDisplayList() }
     }
 
     companion object {
@@ -1377,6 +1437,6 @@ class InkCanvasView(context: Context) : View(context) {
         const val MAX_SCALE = 100f
         const val HOLD_MS = 550L
         const val TAP_MS = 280L
-        const val EYEDROP_MS = 450L
+        const val EYEDROP_MS = 600L
     }
 }

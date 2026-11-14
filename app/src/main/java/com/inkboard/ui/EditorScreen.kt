@@ -249,6 +249,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     }
     BackHandler { if (selIds.isNotEmpty()) view.clearSelection() else close() }
 
+    fun setTool(t: Tool) { tool = t; view.tool = t }
+    fun setToolSelect() = setTool(Tool.SELECT)
+
     val pickReference = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) AppScope.launch {
             val f = runCatching { saveReferenceImage(context, uri) }.getOrNull()
@@ -259,14 +262,18 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) scope.launch {
-            val ok = runCatching { actions.insertImage(context, uri) }.getOrDefault(false)
-            if (!ok) toast("Không đọc được ảnh")
-            tick++
+        if (uri != null) {
+            busy = "Đang chèn ảnh…"
+            AppScope.launch {
+                val img = runCatching { EditorActions.prepareImage(context, uri) }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    busy = ""
+                    if (img == null) toast("Không đọc được ảnh") else { actions.insertPrepared(img); setToolSelect(); tick++ }
+                }
+            }
         }
     }
 
-    fun setTool(t: Tool) { tool = t; view.tool = t }
 
     fun runInkToText() {
         busy = "Đang nhận dạng chữ…"

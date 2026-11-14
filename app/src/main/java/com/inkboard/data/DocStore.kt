@@ -46,7 +46,12 @@ class DocStore(context: Context) {
     fun load(id: String): Document = File(dir, "$id.inkb").inputStream().buffered().use { DocCodec.read(it) }
 
     /** Atomic save (write temp then rename) so a crash never corrupts a document. */
-    fun save(id: String, doc: Document) {
+    private val saveLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+    /** Atomic save (write temp then rename); saves of the same document never overlap. */
+    fun save(id: String, doc: Document) = synchronized(saveLocks.getOrPut(id) { Any() }) { saveLocked(id, doc) }
+
+    private fun saveLocked(id: String, doc: Document) {
         val tmp = File(dir, "$id.inkb.tmp")
         tmp.outputStream().buffered().use { DocCodec.write(doc, it) }
         if (!tmp.renameTo(File(dir, "$id.inkb"))) {

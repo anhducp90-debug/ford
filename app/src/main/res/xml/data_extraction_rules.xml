@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: drawings and settings go to the user's own Google backup and to a new phone. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="docs/" />
+        <include domain="sharedpref" path="inkboard.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="docs/" />
+        <include domain="file" path="reference.jpg" />
+        <include domain="sharedpref" path="inkboard.xml" />
+    </device-transfer>
+</data-extraction-rules>
