@@ -184,6 +184,10 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var showBookmarks by remember { mutableStateOf(false) }
     var newBookmark by remember { mutableStateOf(false) }
     var laser by remember { mutableStateOf(false) }
+    val clipboard = remember { com.inkboard.data.ClipboardStore(context.filesDir) }
+    var showEraserOptions by remember { mutableStateOf(false) }
+    var eraserPartial by remember { mutableStateOf(prefs.eraserPartial) }
+    var eraserSize by remember { mutableFloatStateOf(prefs.eraserSize) }
 
     val view = remember {
         InkCanvasView(context).apply {
@@ -196,6 +200,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             penButton = InkCanvasView.PenButton.entries.getOrElse(prefs.penButton) { InkCanvasView.PenButton.PAN }
             smartInk = prefs.smartInk
             snapGuides = prefs.snapGuides
+            eraserPartial = prefs.eraserPartial
+            eraserSizeDp = prefs.eraserSize
             fingerDraws = prefs.fingerDraws
             autoShape = prefs.autoShape
             showRulers = prefs.showRulers
@@ -206,13 +212,14 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
 
     fun toast(s: String) = Toast.makeText(context, s, Toast.LENGTH_SHORT).show()
 
-    fun saveNow(after: (() -> Unit)? = null) {
+    /** Autosave; the thumbnail (whole-drawing render) is only refreshed when leaving or backgrounding. */
+    fun saveNow(withThumbnail: Boolean = false, after: (() -> Unit)? = null) {
         val snap = document.snapshot()
         val ver = document.version
         AppScope.launch {
             runCatching {
                 store.save(meta.id, snap)
-                store.saveThumbnail(meta.id, snap)
+                if (withThumbnail) store.saveThumbnail(meta.id, snap)
             }.onFailure { withContext(Dispatchers.Main) { toast("Lỗi lưu: ${it.message}") } }
             withContext(Dispatchers.Main) {
                 savedVersion = ver
@@ -221,7 +228,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
         }
     }
 
-    fun close() = saveNow { onClose() }
+    fun close() = saveNow(withThumbnail = true) { onClose() }
 
     fun undo() { if (document.undo() != null) { view.onDocMutated(); tick++ } }
     fun redo() { if (document.redo() != null) { view.onDocMutated(); tick++ } }
@@ -254,7 +261,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     // Save when the app goes to background.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP && document.version != savedVersion) saveNow() }
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) saveNow(withThumbnail = true) }
         lifecycle.addObserver(obs)
         onDispose { lifecycle.removeObserver(obs) }
     }
@@ -322,7 +329,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                     ToolButton(InkIcons.Pen, "Bút", tool == Tool.PEN, tint = Color(penColor)) {
                         if (tool == Tool.PEN) showPenOptions = !showPenOptions else setTool(Tool.PEN)
                     }
-                    ToolButton(InkIcons.Eraser, "Tẩy", tool == Tool.ERASER) { setTool(Tool.ERASER) }
+                    ToolButton(InkIcons.Eraser, "Tẩy", tool == Tool.ERASER) { if (tool == Tool.ERASER) showEraserOptions = !showEraserOptions else { setTool(Tool.ERASER); showPenOptions = false } }
                     ToolButton(InkIcons.Lasso, "Chọn", tool == Tool.SELECT) { setTool(Tool.SELECT) }
                     Box {
                         ToolButton(Icons.Outlined.Add, "Chèn", false) { showInsert = true }
@@ -330,6 +337,12 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                             showInsert = false
                             when (item) {
                                 "library" -> showLibrary = true
+                                "paste" -> {
+                                    AppScope.launch {
+                                        val clip = clipboard.load()
+                                        withContext(Dispatchers.Main) { if (clip == null) toast("Chưa sao chép gì") else { actions.paste(clip); setTool(Tool.SELECT); tick++ } }
+                                    }
+                                }
                                 "text" -> newText = true
                                 "sticky" -> actions.insertSticky()
                                 "image" -> pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -340,7 +353,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                                 "terminal" -> actions.insertNode(NodeKind.ELLIPSE, "Bắt đầu")
                                 else -> actions.insertShape(item, penColor)
                             }
-                            if (item != "text" && item != "image" && item != "library") { setTool(Tool.SELECT); tick++ }
+                            if (item != "text" && item != "image" && item != "library" && item != "paste") { setTool(Tool.SELECT); tick++ }
                         }
                     }
                     ToolButton(Icons.AutoMirrored.Outlined.Undo, "Hoàn tác", false, enabled = tick >= 0 && document.canUndo) { undo() }
@@ -373,6 +386,21 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         }
                     }
                 } }
+                if (showEraserOptions && tool == Tool.ERASER) {
+                    Surface(Modifier.align(Alignment.TopCenter).offset(y = 60.dp).shadow(8.dp, RoundedCornerShape(20.dp)).widthIn(max = 360.dp),
+                        shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row {
+                                for ((partial, label) in listOf(false to "Tẩy cả nét", true to "Tẩy một phần")) {
+                                    FilterChip(selected = eraserPartial == partial, onClick = { eraserPartial = partial; view.eraserPartial = partial; prefs.eraserPartial = partial },
+                                        label = { Text(label) }, modifier = Modifier.padding(end = 6.dp))
+                                }
+                            }
+                            LabeledSlider("Cỡ tẩy ${eraserSize.roundToInt()}", eraserSize, 6f..48f) { eraserSize = it; view.eraserSizeDp = it; prefs.eraserSize = it }
+                            Row { Spacer(Modifier.weight(1f)); TextButton(onClick = { showEraserOptions = false }) { Text("Xong") } }
+                        }
+                    }
+                }
                 if (showPenOptions && tool == Tool.PEN) {
                     PenOptions(
                         Modifier.align(Alignment.TopCenter).offset(y = 60.dp),
@@ -435,10 +463,11 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 singleStroke = remember(selIds, tick) { actions.selected().let { it.size == 1 && it[0] is Stroke } },
                 editable = remember(selIds, tick) { actions.selected().singleOrNull { isEditable(it) && it !is TableEl } },
                 mindmapNode = remember(selIds, tick) { (document.byId(view.primaryId) as? Node)?.takeIf { it.mindmap } },
-                twoNodes = remember(selIds, tick) { actions.selectedNodes().size == 2 && actions.selectedNodes().none { it.mindmap } },
+                twoNodes = remember(selIds, tick) { actions.connectPair() != null },
                 table = remember(selIds, tick) { actions.selected().singleOrNull() as? TableEl },
                 foldable = remember(selIds, tick) { (document.byId(view.primaryId) as? Node)?.takeIf { it.mindmap && document.children(it.id).isNotEmpty() }?.let { it.id in document.collapsed } },
                 closedShapes = remember(selIds, tick) { actions.selected().any { it is ShapeEl && it.closed } },
+                singleEdge = remember(selIds, tick) { actions.selected().singleOrNull() is com.inkboard.model.Edge },
                 onAction = { a ->
                     when (a) {
                         "text" -> runInkToText()
@@ -460,6 +489,11 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         "fold" -> actions.toggleCollapse()
                         "tonode" -> actions.shapesToNodes()
                         "savelib" -> saveTemplate = true
+                        "copy" -> {
+                            val ids = selIds.toList(); val snap = document.snapshot()
+                            AppScope.launch { runCatching { clipboard.copy(snap, ids) }; withContext(Dispatchers.Main) { toast("Đã sao chép. Dán ở bất kỳ tài liệu nào: Chèn → Dán") } }
+                        }
+                        "reverse" -> actions.reverseEdge()
                     }
                     tick++
                 }
@@ -567,7 +601,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
         }
     }
     if (showColor) {
-        ColorDialog(onDismiss = { showColor = false }) { i ->
+        ColorDialog(onDismiss = { showColor = false }, onFill = { f -> showColor = false; actions.setFill(f); tick++ }) { i ->
             showColor = false
             actions.recolor(PEN_COLORS[i], EditorActions.STICKY_COLORS[i % EditorActions.STICKY_COLORS.size], NODE_FILLS[i])
             tick++
@@ -750,6 +784,7 @@ fun withAlpha(color: Int, opacity: Float): Int = (color and 0x00FFFFFF) or ((opa
 private fun InsertMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         MenuItem("Thư viện hình…", Icons.Outlined.Category) { onPick("library") }
+        MenuItem("Dán", Icons.Outlined.ContentCopy) { onPick("paste") }
         HorizontalDivider()
         MenuItem("Chữ", Icons.Outlined.TextFields) { onPick("text") }
         MenuItem("Ghi chú dán", Icons.Outlined.Edit) { onPick("sticky") }
@@ -808,7 +843,7 @@ private fun MenuItem(label: String, icon: ImageVector?, onClick: () -> Unit) {
 private fun ContextBar(
     rect: RectF, tick: Int,
     hasStrokes: Boolean, singleStroke: Boolean, editable: Element?, mindmapNode: Node?, twoNodes: Boolean, table: TableEl?,
-    foldable: Boolean?, closedShapes: Boolean,
+    foldable: Boolean?, closedShapes: Boolean, singleEdge: Boolean,
     onAction: (String) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -838,7 +873,9 @@ private fun ContextBar(
                     if (foldable != null) CtxButton(if (foldable) "Mở nhánh" else "Thu gọn", null, if (foldable) "⊕" else "⊖") { onAction("fold") }
                     if (closedShapes) CtxButton("Thành khối", Icons.Outlined.AccountTree) { onAction("tonode") }
                     CtxButton("Màu", Icons.Outlined.Palette) { onAction("color") }
+                    CtxButton("Sao chép", null, "⧉") { onAction("copy") }
                     CtxButton("Nhân đôi", Icons.Outlined.ContentCopy) { onAction("dup") }
+                    if (singleEdge) CtxButton("Đổi chiều", null, "⇄") { onAction("reverse") }
                     CtxButton("Lên trên", Icons.Outlined.FlipToFront) { onAction("front") }
                     CtxButton("Xuống dưới", Icons.Outlined.FlipToBack) { onAction("back") }
                     CtxButton("Lưu mẫu", Icons.Outlined.Category) { onAction("savelib") }
@@ -863,15 +900,22 @@ private fun CtxButton(label: String, icon: ImageVector?, glyph: String = "", onC
 }
 
 @Composable
-private fun ColorDialog(onDismiss: () -> Unit, onPick: (Int) -> Unit) {
+private fun ColorDialog(onDismiss: () -> Unit, onFill: (Int) -> Unit, onPick: (Int) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Đổi màu") },
+        title = { Text("Màu") },
         text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PEN_COLORS.forEachIndexed { i, c ->
-                    Box(Modifier.size(32.dp).clip(CircleShape).background(Color(c)).clickable { onPick(i) })
+            Column {
+                Text("Màu nét / chữ", style = MaterialTheme.typography.labelMedium)
+                for (row in PEN_COLORS.indices.chunked(4)) Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (i in row) Box(Modifier.size(34.dp).clip(CircleShape).background(Color(PEN_COLORS[i])).clickable { onPick(i) })
                 }
+                Spacer(Modifier.height(10.dp))
+                Text("Màu nền (hình, khối, ghi chú)", style = MaterialTheme.typography.labelMedium)
+                for (row in NODE_FILLS.chunked(4)) Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (c in row) Box(Modifier.size(34.dp).clip(CircleShape).background(Color(c)).border(1.dp, Color(0x33000000), CircleShape).clickable { onFill(c) })
+                }
+                TextButton(onClick = { onFill(0) }) { Text("Bỏ màu nền") }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Đóng") } }

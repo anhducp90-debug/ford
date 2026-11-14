@@ -14,8 +14,8 @@ android {
         applicationId = "com.inkboard.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.0.0"
+        versionCode = 11
+        versionName = "1.0.1"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -67,7 +67,11 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-    testOptions { unitTests.isIncludeAndroidResources = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        // JVM tests load the real Rust core built for the host (see buildRustCoreHost).
+        unitTests.all { it.systemProperty("java.library.path", rootProject.file("core/target/release").absolutePath) }
+    }
 }
 
 // Build the Rust core (libinkcore.so) with cargo-ndk before packaging.
@@ -86,6 +90,15 @@ val buildRustCore by tasks.registering(Exec::class) {
     outputs.dir(project.file("src/main/jniLibs"))
 }
 tasks.named("preBuild") { dependsOn(buildRustCore) }
+
+// Host build of the Rust core so unit tests exercise the real recognizer over JNI.
+val buildRustCoreHost by tasks.registering(Exec::class) {
+    workingDir = rootProject.file("core")
+    commandLine(System.getProperty("user.home") + "/.cargo/bin/cargo", "build", "--release")
+    inputs.dir(rootProject.file("core/src"))
+    outputs.dir(rootProject.file("core/target/release"))
+}
+tasks.withType<Test>().configureEach { dependsOn(buildRustCoreHost) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")

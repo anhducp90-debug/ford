@@ -59,23 +59,45 @@ object InkGestures {
         return out
     }
 
+    /** Connectable element under (x, y): the smallest one, so lines inside a frame hit the inner boxes. */
+    fun targetAt(doc: Document, x: Float, y: Float, tol: Float, exclude: Set<Long> = emptySet()): Element? =
+        doc.query(Box(x - tol, y - tol, x + tol, y + tol))
+            .filter { it.id !in exclude && it.id !in doc.hiddenIds() && it.id !in doc.locked && Anchors.connectable(it) && Anchors.contains(it, x, y, tol) }
+            .minByOrNull { it.bounds.w * it.bounds.h }
+
     /**
-     * Hand-drawn connector: a stroke that starts on one node and ends on
-     * another (drawn roughly straight or curved) becomes an arrow between them.
+     * Hand-drawn connector: a stroke (or a straight line) that starts on one
+     * element and ends on another becomes an arrow between them.
      */
-    fun connectorFor(doc: Document, xy: FloatArray, tol: Float): Pair<Node, Node>? {
+    fun connectorFor(doc: Document, xy: FloatArray, tol: Float, exclude: Set<Long> = emptySet()): Pair<Element, Element>? {
         val n = xy.size / 2
         if (n < 2) return null
-        fun nodeAt(x: Float, y: Float): Node? = doc.query(Box(x - tol, y - tol, x + tol, y + tol)).asReversed()
-            .firstOrNull { it is Node && it.id !in doc.hiddenIds() && it.bounds.inset(-tol).contains(x, y) } as? Node
-        val a = nodeAt(xy[0], xy[1]) ?: return null
-        val b = nodeAt(xy[2 * n - 2], xy[2 * n - 1]) ?: return null
+        val a = targetAt(doc, xy[0], xy[1], tol, exclude) ?: return null
+        val b = targetAt(doc, xy[2 * n - 2], xy[2 * n - 1], tol, exclude) ?: return null
         if (a.id == b.id) return null
-        // Reject scribbles: path should not be much longer than the gap between the nodes.
+        // One end must not contain the other (a line drawn inside a frame to a box in it is not a connector).
+        if (a.bounds.inset(-tol).let { it.l <= b.bounds.l && it.r >= b.bounds.r && it.t <= b.bounds.t && it.b >= b.bounds.b }) return null
+        if (b.bounds.inset(-tol).let { it.l <= a.bounds.l && it.r >= a.bounds.r && it.t <= a.bounds.t && it.b >= a.bounds.b }) return null
+        // Reject scribbles: the path should not be much longer than the gap it bridges.
         var len = 0f
         for (i in 1 until n) len += hypot(xy[2 * i] - xy[2 * i - 2], xy[2 * i + 1] - xy[2 * i - 1])
         val chord = hypot(xy[2 * n - 2] - xy[0], xy[2 * n - 1] - xy[1])
         if (len > chord * 2.2f + tol * 4) return null
         return a to b
+    }
+
+    /** Connectors crossed by a scratch-out stroke. */
+    fun scratchEdges(doc: Document, xy: FloatArray, tol: Float): List<Long> {
+        val out = ArrayList<Long>()
+        for (e in doc.connections()) {
+            if (e !is Edge) continue
+            val ends = doc.edgeEnds(e) ?: continue
+            var i = 0
+            while (i + 1 < xy.size) {
+                if (Geo.distToSegment(xy[i], xy[i + 1], ends[0], ends[1], ends[2], ends[3]) <= tol + e.width) { out += e.id; break }
+                i += 2
+            }
+        }
+        return out
     }
 }

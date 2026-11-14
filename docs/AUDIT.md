@@ -1,4 +1,40 @@
-# InkBoard 1.0.0 — Báo cáo audit (14/11/2026)
+# InkBoard 1.0.1 — Audit lõi theo kịch bản người dùng (14/11/2026)
+
+## Vì sao audit 1.0.0 bỏ sót lỗi
+1. **Test chạy không có lõi nhận diện hình.** Lõi Rust chỉ được build cho ARM64; trên máy build, `InkCore` âm thầm không tải được nên *mọi* luồng "vẽ tay → giữ bút → thành hình" chưa từng được kiểm tra. Nay test tải lõi Rust thật (bản build cho máy chủ) qua JNI.
+2. **Test kiểm từng hàm, không kiểm luồng của người dùng.** Ví dụ đường nối chỉ được test giữa hai *khối sơ đồ*, trong khi người dùng nối hai *hình chữ nhật vẽ tay*. Nay có bộ 41 kịch bản thao tác thật trên canvas (`ScenarioAuditTest`).
+
+## Lỗi lõi tìm thấy và đã sửa
+| # | Lỗi | Nguyên nhân gốc | Sửa |
+|---|---|---|---|
+| C1 | **Vẽ đường nối 2 hình chữ nhật không thành connector** | Connector chỉ hỗ trợ khối sơ đồ (Node); hình vẽ tay/thư viện là ShapeEl | Connector nối **mọi đối tượng**: hình kín, khối, ghi chú, ảnh, bảng, chữ, khung vẽ tay khép kín; điểm bám tính theo đúng viền (elip, đa giác, thoi…) |
+| C2 | Nét nối bị nắn thẳng (giữ bút) hoặc vẽ thẳng bằng ngón giữ → thành đường kẻ thường | Hai nhánh tạo nét này không đi qua kiểm tra connector | Mọi nhánh (nét tự do, nét được nắn, nét thẳng bằng ngón giữ) đều được xét |
+| C3 | Nối bên trong một khung lớn bị nối nhầm vào khung | Chọn đối tượng trên cùng | Chọn đối tượng nhỏ nhất chứa đầu nét; không nối khung với vật nằm trong nó |
+| C4 | Gạch để xoá không xoá được đường nối | Chỉ quét phần tử thường | Quét cả connector |
+| C5 | Nút "Nối" chỉ hiện khi chọn 2 khối sơ đồ | Điều kiện hẹp | Hai đối tượng bất kỳ có thể nối |
+| C6 | Chữ viết chậm (vd. "o") có thể bị biến thành hình tròn | Giữ bút áp dụng cho mọi cỡ nét | Nét nhỏ hơn 48 dp không bao giờ bị nắn |
+| C7 | Ngón tay vẽ + đặt ngón thứ hai để zoom để lại nét | Nét đang vẽ không bị huỷ | Ngón thứ hai huỷ nét, chuyển sang zoom |
+| C8 | Thêm nhánh mindmap / sửa chữ nút cần 2 lần hoàn tác | Hai thay đổi riêng | Gộp thành một bước |
+| C9 | **Nguy cơ hết bộ nhớ** với PDF nhiều trang / nhiều ảnh | Ảnh giải mã đủ độ phân giải, bị giữ trong bộ đệm vẽ | Giải mã theo cỡ đang hiển thị (1/2/4…/64), chạy nền, ngân sách 96 MB, khối ngoài màn hình nhả ảnh |
+| C10 | Bản đồ thu nhỏ vẽ lại toàn bộ tài liệu trên luồng giao diện sau mỗi nét | Vẽ đồng bộ | Vẽ ở luồng nền từ bản chụp |
+| C11 | Kéo vùng chọn lớn bị giật | Vẽ lại từng phần tử mỗi khung | Ghi một lần, mỗi khung chỉ dịch chuyển |
+| C12 | Ảnh thu nhỏ tài liệu vẽ lại mỗi lần tự lưu | — | Chỉ khi rời tài liệu / ứng dụng vào nền |
+| C13 | Cập nhật vùng chặn cử chỉ mép ~120 lần/giây | — | Chỉ khi bút dời > 40 dp |
+| C14 | `select()` quét toàn bộ tài liệu | — | Dùng danh sách connector đã lưu |
+
+## Bổ sung thiếu sót lõi
+Tẩy **một phần** (tách nét) + cỡ tẩy · **Tô màu nền** cho hình/khối/ghi chú · **Đổi chiều** mũi tên · **Sao chép / Dán** giữa các tài liệu.
+
+## Ma trận kịch bản (41/41 đạt)
+Vẽ: nét tự do · chữ nhật/tròn/đường thẳng khi giữ bút · chữ nhỏ không bị nắn.
+Nối: giữa hình vẽ tay (có/không nắn) · nét được nắn · nét thẳng bằng ngón giữ · khung vẽ tay chưa nắn · hình thư viện · ghi chú↔ảnh · khối↔hình · trong khung lớn · nét ra chỗ trống vẫn là mực · nét trong một hình vẫn là mực · đi theo khi kéo · xoá hình xoá cả nối, hoàn tác khôi phục · một bước hoàn tác · điểm bám đúng viền elip/thoi · nút Nối cho 2 vật bất kỳ · nối khi canvas xoay · đổi chiều.
+Chữ & sửa: thả chữ vào hình vẽ tay · thả chữ lên đường nối thành nhãn · chạm đúp đường nối mở sửa nhãn.
+Tẩy & chọn: tẩy cả nét xoá connector · gạch xoá connector · tẩy một phần tách nét (hoàn tác 1 bước) · chạm chọn + kéo + hoàn tác · nét viết trong hình đi theo hình · lasso chọn 2 hình + nối · kéo 2.000 nét · trang PDF khoá: chú thích gắn trang, tẩy/lasso không động vào trang.
+Khác: lưu/mở giữ connector · SVG/PNG có connector · tô nền · sao chép/dán sang tài liệu khác · ảnh giải mã theo cỡ hiển thị · zoom cực nhỏ/cực lớn · ngón tay vẽ + pinch · thêm nhánh hoàn tác 1 bước.
+
+---
+
+# Phụ lục: Báo cáo audit 1.0.0
 
 Phiên bản trước: [audit 0.4.0](#phụ-lục-đối-chiếu-với-audit-040). Phạm vi: toàn bộ mã nguồn nhánh `ccr-acb2d1e8-5fdjtx`, `InkBoard-1.0.0.aab` (Play) và `InkBoard-1.0.0.apk` (cài thử).
 

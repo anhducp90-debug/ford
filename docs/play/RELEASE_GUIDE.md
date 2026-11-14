@@ -3,8 +3,8 @@
 ## Tệp cần dùng (trong `dist/`, không đưa lên git)
 | Tệp | Dùng để |
 |---|---|
-| `InkBoard-1.0.0.aab` | **Tải lên Google Play** (đã ký bằng khoá upload) |
-| `InkBoard-1.0.0.apk` | Cài thử trực tiếp trên máy (ký bằng khoá sideload) |
+| `InkBoard-1.0.1.aab` | **Tải lên Google Play** (đã ký bằng khoá upload) |
+| `InkBoard-1.0.1.apk` | Cài thử trực tiếp trên máy (ký bằng khoá sideload) |
 | `play-signing/inkboard-upload.jks` + `keystore.properties` | **Khoá upload** – cất giữ an toàn (password manager + bản sao ngoại tuyến). Mất khoá vẫn có thể xin Google đặt lại khoá upload, nhưng mất thời gian. |
 | `play-assets/icon-512.png` | Biểu tượng cửa hàng 512×512 |
 | `play-assets/feature-graphic-1024x500.png` | Ảnh nổi bật 1024×500 |
@@ -18,7 +18,7 @@
 4. **Đăng chính sách quyền riêng tư** ở một URL công khai, ví dụ: bật GitHub Pages cho repo (nếu repo công khai) với tệp `docs/play/privacy-policy.html`, hoặc dán nội dung vào Google Sites. Điền email hỗ trợ vào tệp trước khi đăng.
 5. **Trang cửa hàng chính**: chép tên, mô tả ngắn, mô tả đầy đủ từ `docs/play/store-listing.md`; tải icon, ảnh nổi bật, ≥ 2 ảnh chụp màn hình. (Nên chụp thêm ảnh thật trên S25 Ultra/Tab.)
 6. **Play App Signing**: khi tạo bản phát hành đầu tiên, chọn để Google quản lý khoá ký ứng dụng (mặc định). Tệp `.aab` đã ký bằng khoá upload.
-7. **Thử nghiệm kín (Closed testing)** → tạo track → tải `InkBoard-1.0.0.aab` → thêm người thử → phát hành. Thu thập phản hồi 14 ngày.
+7. **Thử nghiệm kín (Closed testing)** → tạo track → tải `InkBoard-1.0.1.aab` → thêm người thử → phát hành. Thu thập phản hồi 14 ngày.
 8. **Phát hành chính thức (Production)**: sau khi đủ điều kiện, nâng bản lên Production, chọn quốc gia (Việt Nam + các nước khác), gửi xét duyệt (thường vài ngày).
 
 ## Build lại bản mới

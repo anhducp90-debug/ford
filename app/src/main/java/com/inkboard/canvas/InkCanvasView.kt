@@ -29,6 +29,7 @@ import com.inkboard.model.PressureCurve
 import com.inkboard.model.Stabilizer
 import com.inkboard.model.Symmetry
 import com.inkboard.model.SymmetryMode
+import com.inkboard.model.ImageEl
 import com.inkboard.model.Node
 import com.inkboard.model.PenType
 import com.inkboard.model.ShapeEl
@@ -94,7 +95,7 @@ class InkCanvasView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var showMinimap = true
         set(v) { field = v; invalidate() }
-    private val nav = NavOverlay(resources.displayMetrics.density)
+    private val nav = NavOverlay(resources.displayMetrics.density).also { it.onThumbReady = { invalidate() } }
 
     /** What the S Pen side button does while held. */
     enum class PenButton { PAN, ERASE, SELECT }
@@ -152,7 +153,9 @@ class InkCanvasView(context: Context) : View(context) {
     var ty = 0f; private set
     private val density = resources.displayMetrics.density
 
-    private val renderer = Renderer()
+    /** Pictures decode in background at the resolution they are shown. */
+    private val imageCache = ImageCache { invalidate() }
+    private val renderer = Renderer(imageCache)
 
     // Selection
     val selection = LinkedHashSet<Long>()
@@ -168,6 +171,8 @@ class InkCanvasView(context: Context) : View(context) {
     private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE }
 
     private var penPointer = -1
+    /** The current "pen" is a finger (finger-drawing mode). */
+    private var penIsFinger = false
     private var penMode = PenMode.NONE
     private var livePts = FloatArray(3 * 512)
     private var liveN = 0
@@ -208,7 +213,12 @@ class InkCanvasView(context: Context) : View(context) {
 
     private val touchSlop = 8f * density
     private val handleR = 16f * density
-    private val eraserR get() = 12f * density / scale
+    /** Eraser radius on screen (dp) and whether it removes only the touched part of strokes. */
+    var eraserSizeDp = 12f
+    var eraserPartial = false
+    private val eraserR get() = eraserSizeDp * density / scale
+    /** Partial erase in progress: original stroke id → remaining pieces (x, y, p triples). */
+    private val eraseWork = LinkedHashMap<Long, List<FloatArray>>()
 
     /** Main-thread timer (works even before the view is attached). */
     private val timer = android.os.Handler(android.os.Looper.getMainLooper())
@@ -405,7 +415,7 @@ class InkCanvasView(context: Context) : View(context) {
         // Items attached to a selected container travel with it.
         selection += doc.attachedTree(selection)
         // Edges whose both ends are selected travel with them.
-        for (e in doc.elements) if (e is Edge && e.from in selection && e.to in selection) selection += e.id
+        for (e in doc.connections()) if (e is Edge && e.from in selection && e.to in selection) selection += e.id
         primaryId = if (primary in selection) primary else selection.firstOrNull() ?: 0L
         if (selection.isNotEmpty() && tool != Tool.SELECT) {
             // keep the current tool, selection is still usable via the context bar
@@ -486,8 +496,8 @@ class InkCanvasView(context: Context) : View(context) {
 
         // Connections (edges + mind-map branches) follow moving nodes live.
         renderer.drawConnections(c, doc) { id ->
-            val n = doc.byId(id) as? Node
-            if (n != null && previewing && id in selection) n.transformed(selPreview) as Node else n
+            val n = doc.byId(id)
+            if (n != null && previewing && id in selection) n.transformed(selPreview) else n
         }
 
         if (c.isHardwareAccelerated) {
@@ -495,6 +505,7 @@ class InkCanvasView(context: Context) : View(context) {
         } else {
             val vb = viewBox().inset(-50f / scale)
             val folded = doc.hiddenIds()
+            renderer.viewScale = scale
             for (e in doc.query(vb)) {
                 if (e.id in hidden || e.id in folded || (previewing && e.id in selection)) continue
                 renderer.draw(c, doc, e)
@@ -505,8 +516,25 @@ class InkCanvasView(context: Context) : View(context) {
             c.save()
             c.translate(selPreview.tx, selPreview.ty)
             c.scale(selPreview.s, selPreview.s)
-            for (id in selection) doc.byId(id)?.let { renderer.draw(c, doc, it) }
+            if (c.isHardwareAccelerated) {
+                // Record the moving selection once, then only transform it each frame.
+                val sig = doc.version * 31 + selection.hashCode()
+                if (sig != previewSig) {
+                    previewNode.setPosition(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
+                    previewNode.setClipToBounds(false)
+                    val rc = previewNode.beginRecording()
+                    rc.translate(1_000_000f, 1_000_000f)
+                    for (id in selection) doc.byId(id)?.let { if (it !is Edge) renderer.draw(rc, doc, it) }
+                    previewNode.endRecording()
+                    previewSig = sig
+                }
+                c.drawRenderNode(previewNode)
+            } else {
+                for (id in selection) doc.byId(id)?.let { renderer.draw(c, doc, it) }
+            }
             c.restore()
+        } else if (previewSig != Long.MIN_VALUE) {
+            previewNode.discardDisplayList(); previewSig = Long.MIN_VALUE
         }
 
         // Live input (+ symmetric copies)
@@ -537,6 +565,10 @@ class InkCanvasView(context: Context) : View(context) {
                     for (cp in Symmetry.copies(livePts.copyOf(liveN * 3), doc.guides)) renderer.drawLiveStroke(c, cp, liveN, penColor, liveWidth, penType, taper)
                 }
             }
+        }
+        if (eraseWork.isNotEmpty()) for ((id, parts) in eraseWork) {
+            val o = doc.byId(id) as? Stroke ?: continue
+            for (p in parts) renderer.drawLiveStroke(c, p, p.size / 3, o.color, o.width, o.pen, o.taper)
         }
         if (laserTrails.isNotEmpty() || (laser && penMode == PenMode.DRAW && liveN > 0)) drawLasers(c)
         if (!selPreview.isIdentity && snapLines.isNotEmpty()) {
@@ -716,8 +748,14 @@ class InkCanvasView(context: Context) : View(context) {
         var key: Array<Any?> = emptyArray()
         var bounds: Box = Box.EMPTY
         var dirty = true
+        var hasImages = false
+        /** Zoom bucket and picture-cache version the chunk was recorded with. */
+        var recBucket = Int.MIN_VALUE
+        var recImgVer = -1
     }
     private val chunkList = ArrayList<Chunk>()
+    private val previewNode = RenderNode("preview")
+    private var previewSig = Long.MIN_VALUE
     private var chunkSignature = Long.MIN_VALUE
 
     /**
@@ -746,6 +784,7 @@ class InkCanvasView(context: Context) : View(context) {
                     var b = Box.EMPTY
                     for (e in key) if (e != null) b = b.union((e as Element).bounds)
                     ch.bounds = b
+                    ch.hasImages = key.any { it is ImageEl }
                     ch.dirty = true
                 }
             }
@@ -753,10 +792,18 @@ class InkCanvasView(context: Context) : View(context) {
             contentDirty = false
         }
         val vb = viewBox().inset(-64f / scale)
+        val bucket = Math.floor(Math.log(scale.toDouble()) / Math.log(2.0)).toInt()
+        renderer.viewScale = scale
         for (k in 0 until need) {
             val ch = chunkList[k]
-            if (!ch.bounds.intersects(vb)) continue
+            if (!ch.bounds.intersects(vb)) {
+                // Off-screen chunks with pictures drop their display list so the bitmaps can be freed.
+                if (ch.hasImages && !ch.dirty) { ch.node.discardDisplayList(); ch.dirty = true }
+                continue
+            }
+            if (ch.hasImages && (ch.recBucket != bucket || ch.recImgVer != imageCache.version)) ch.dirty = true
             if (ch.dirty) {
+                ch.recBucket = bucket; ch.recImgVer = imageCache.version
                 ch.node.setPosition(-1_000_000, -1_000_000, 1_000_000, 1_000_000)
                 ch.node.setClipToBounds(false)
                 val rc: RecordingCanvas = ch.node.beginRecording()
@@ -818,7 +865,7 @@ class InkCanvasView(context: Context) : View(context) {
             val x = if (penMode == PenMode.ERASE) lastPenSX else hoverX
             val y = if (penMode == PenMode.ERASE) lastPenSY else hoverY
             overlay.color = 0x99000000.toInt()
-            c.drawCircle(x, y, 12f * density, overlay)
+            c.drawCircle(x, y, eraserSizeDp * density, overlay)
         } else if (hoverX >= 0 && tool == Tool.PEN && penPointer < 0) {
             overlayFill.color = penColor
             c.drawCircle(hoverX, hoverY, max(1.5f * density, penWidthDp * density / 2), overlayFill)
@@ -880,7 +927,12 @@ class InkCanvasView(context: Context) : View(context) {
      * While the pen is near the screen edge, opt that stretch of the edge out of
      * the system back gesture so writing close to the edge is not taken as "back".
      */
+    private var lastExclusionY = Float.NaN
+
     private fun excludeEdgesAround(rawY: Float) {
+        // Only refresh when the pen moved noticeably (hover events arrive at ~120 Hz).
+        if (!lastExclusionY.isNaN() && abs(rawY - lastExclusionY) < 40f * density) return
+        lastExclusionY = rawY
         val band = (200f * density).toInt()
         val edgeW = (40f * density).toInt()
         val top = (rawY - band / 2).toInt().coerceIn(0, max(0, height - band))
@@ -921,8 +973,16 @@ class InkCanvasView(context: Context) : View(context) {
                 if (asPen && penPointer < 0) {
                     requestUnbufferedDispatch(e)
                     penPointer = pid
+                    penIsFinger = !isPenTool(e, idx)
                     penDown(e, idx)
                 } else if (!isPenTool(e, idx)) {
+                    if (penPointer >= 0 && penIsFinger) {
+                        // Finger-drawing mode: a second finger means navigation, not ink.
+                        val fi = e.findPointerIndex(penPointer)
+                        val first = penPointer
+                        penCancel(); penPointer = -1; penIsFinger = false
+                        if (fi >= 0) fingerDown(e, fi, first)
+                    }
                     fingerDown(e, idx, pid)
                 }
             }
@@ -1006,7 +1066,7 @@ class InkCanvasView(context: Context) : View(context) {
                 scheduleHold()
             }
             PenMode.ERASE -> {
-                hidden.clear()
+                hidden.clear(); eraseWork.clear()
                 eraseEdges = if (doc.hasEdges) doc.elements.filterIsInstance<Edge>() else emptyList()
                 eraseAt(wx(x), wy(y))
             }
@@ -1211,6 +1271,9 @@ class InkCanvasView(context: Context) : View(context) {
     private fun onPenHold() {
         if (penMode != PenMode.DRAW || snapped != null || liveN < 4) return
         val xy = FloatArray(liveN * 2) { k -> livePts[(k / 2) * 3 + (k % 2)] }
+        // Small marks (letters, dots) are handwriting, never shapes.
+        val bb = Box.of(xy)
+        if (maxOf(bb.w, bb.h) * scale < MIN_SHAPE_DP * density) return
         val shape = InkCore.recognize(xy, modifierHeld()) ?: return
         val w = strokeWidthForShapes()
         snapped = when (shape) {
@@ -1228,7 +1291,12 @@ class InkCanvasView(context: Context) : View(context) {
         val r = eraserR
         var changed = false
         for (el in doc.query(Box(x - r, y - r, x + r, y + r))) {
-            if (el.id in hidden || el.id in doc.locked || el.id in doc.hiddenIds()) continue
+            if (el.id in doc.locked || el.id in doc.hiddenIds()) continue
+            if (eraserPartial && el is Stroke) {
+                if (splitStroke(el, x, y, r)) changed = true
+                continue
+            }
+            if (el.id in hidden) continue
             if (el.hit(x, y, r, solid = false)) { hidden += el.id; changed = true }
         }
         for (el in eraseEdges) {
@@ -1237,6 +1305,31 @@ class InkCanvasView(context: Context) : View(context) {
             if (hit) { hidden += el.id; changed = true }
         }
         if (changed) invalidate()
+    }
+
+    /** Remove the points of [s] within [r] of (x, y); keeps the remaining runs as pieces. */
+    private fun splitStroke(s: Stroke, x: Float, y: Float, r: Float): Boolean {
+        val pieces = eraseWork[s.id] ?: listOf(s.pts)
+        val rr = r + s.width / 2
+        var touched = false
+        val out = ArrayList<FloatArray>()
+        for (p in pieces) {
+            var run = ArrayList<Float>()
+            val n = p.size / 3
+            for (i in 0 until n) {
+                val inside = hypot(p[3 * i] - x, p[3 * i + 1] - y) <= rr
+                if (inside) {
+                    touched = true
+                    if (run.size >= 6) out += run.toFloatArray()
+                    run = ArrayList()
+                } else { run += p[3 * i]; run += p[3 * i + 1]; run += p[3 * i + 2] }
+            }
+            if (run.size >= 6) out += run.toFloatArray()
+        }
+        if (!touched) return false
+        eraseWork[s.id] = out
+        hidden += s.id
+        return true
     }
 
     private fun penUp() {
@@ -1255,6 +1348,8 @@ class InkCanvasView(context: Context) : View(context) {
                         els += Stroke(doc.nextId(), pts, penColor, liveWidth, penType, useTaper)
                         for (cp in Symmetry.copies(pts, doc.guides)) els += Stroke(doc.nextId(), cp, penColor, liveWidth, penType, useTaper)
                     }
+                    shape != null && smartInk && !laser && (shape.kind == ShapeKind.LINE || shape.kind == ShapeKind.ARROW) &&
+                        doc.guides.symmetry == SymmetryMode.OFF && tryConnector(shape.geo) -> Unit
                     shape != null -> {
                         els += ShapeEl(doc.nextId(), shape.kind, shape.geo, shape.color, shape.width, shape.fill)
                         for (cp in symmetricShapes(shape)) els += ShapeEl(doc.nextId(), cp.kind, cp.geo, cp.color, cp.width, cp.fill)
@@ -1281,8 +1376,21 @@ class InkCanvasView(context: Context) : View(context) {
             PenMode.ERASE -> {
                 if (hidden.isNotEmpty()) {
                     val ids = hidden.toList()
-                    hidden.clear()
-                    doc.remove(ids)
+                    val work = LinkedHashMap(eraseWork)
+                    hidden.clear(); eraseWork.clear()
+                    doc.batch {
+                        val pieces = ArrayList<Pair<Long, Stroke>>()
+                        for ((id, parts) in work) {
+                            val orig = doc.byId(id) as? Stroke ?: continue
+                            for (pp in parts) pieces += id to Stroke(doc.nextId(), pp, orig.color, orig.width, orig.pen, orig.taper)
+                        }
+                        val containers = work.keys.associateWith { doc.containerOf(it) }
+                        doc.remove(ids)
+                        if (pieces.isNotEmpty()) {
+                            doc.add(pieces.map { it.second })
+                            for ((orig, piece) in pieces) containers[orig]?.takeIf { it != 0L && doc.byId(it) != null }?.let { doc.setContainer(piece.id, it) }
+                        }
+                    }
                     changed()
                 }
             }
@@ -1303,13 +1411,19 @@ class InkCanvasView(context: Context) : View(context) {
         val xy = FloatArray(liveN * 2) { k -> livePts[(k / 2) * 3 + (k % 2)] }
         val tol = 8f * density / scale
         if (com.inkboard.model.InkGestures.isScratch(xy)) {
-            val targets = com.inkboard.model.InkGestures.scratchTargets(doc, xy, tol)
+            val targets = com.inkboard.model.InkGestures.scratchTargets(doc, xy, tol) + com.inkboard.model.InkGestures.scratchEdges(doc, xy, tol)
             if (targets.isNotEmpty()) {
                 doc.remove(targets)
                 performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                 return true
             }
         }
+        return tryConnector(xy)
+    }
+
+    /** If [xy] runs from one element to another, add a connector instead of ink. */
+    private fun tryConnector(xy: FloatArray): Boolean {
+        val tol = 10f * density / scale
         val pair = com.inkboard.model.InkGestures.connectorFor(doc, xy, tol) ?: return false
         doc.add(Edge(doc.nextId(), pair.first.id, pair.second.id, penColor or 0xFF000000.toInt(), max(liveWidth, 1.5f * density / scale)))
         performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -1326,7 +1440,7 @@ class InkCanvasView(context: Context) : View(context) {
     private fun penCancel() {
         timer.removeCallbacks(holdRunnable)
         stopAutoScroll()
-        liveN = 0; snapped = null; perspLine = null; hidden.clear(); lasso.clear()
+        liveN = 0; snapped = null; perspLine = null; hidden.clear(); eraseWork.clear(); lasso.clear()
         selPreview = Affine.IDENTITY
         penMode = PenMode.NONE
         invalidateContent()
@@ -1546,6 +1660,8 @@ class InkCanvasView(context: Context) : View(context) {
         const val HOLD_MS = 550L
         const val TAP_MS = 280L
         const val EYEDROP_MS = 600L
+        /** Strokes smaller than this on screen are never snapped to shapes. */
+        const val MIN_SHAPE_DP = 48f
         const val LASER_MS = 1200L
     }
 }

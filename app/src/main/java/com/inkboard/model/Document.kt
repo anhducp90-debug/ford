@@ -296,11 +296,9 @@ class Document {
     // --------------------------------------------------------------- queries
 
     fun edgeEnds(e: Edge): FloatArray? {
-        val a = byId(e.from) as? Node ?: return null
-        val b = byId(e.to) as? Node ?: return null
-        val (x0, y0) = a.borderToward(b.x + b.w / 2, b.y + b.h / 2)
-        val (x1, y1) = b.borderToward(a.x + a.w / 2, a.y + a.h / 2)
-        return floatArrayOf(x0, y0, x1, y1)
+        val a = byId(e.from)?.takeIf { it !is Edge } ?: return null
+        val b = byId(e.to)?.takeIf { it !is Edge } ?: return null
+        return Anchors.ends(a, b)
     }
 
     fun boundsOf(e: Element): Box = when (e) {

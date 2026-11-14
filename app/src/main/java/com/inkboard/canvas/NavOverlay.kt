@@ -152,14 +152,23 @@ class NavOverlay(private val density: Float) {
         return Affine(s, ox, oy)
     }
 
+    /** Background renderer for the minimap thumbnail (never blocks drawing). */
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "minimap").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+    private val workerRenderer by lazy { Renderer() }
+    @Volatile private var pending = false
+    private var requested = Box.EMPTY
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Called on the main thread when a new thumbnail is ready. */
+    var onThumbReady: (() -> Unit)? = null
+
     fun drawMinimap(c: Canvas, doc: Document, view: Box, renderer: Renderer, dark: Boolean, now: Long) {
         val world = mapWorldFor(doc, view)
         // Re-render the thumbnail only when content changed (throttled) or the framing changed a lot.
         val framingChanged = mapWorld.isEmpty || abs(world.w - mapWorld.w) > mapWorld.w * 0.15f ||
             abs(world.h - mapWorld.h) > mapWorld.h * 0.15f || !mapWorld.inset(-mapWorld.w * 0.05f).let { it.l <= world.l && it.r >= world.r && it.t <= world.t && it.b >= world.b }
         val contentChanged = doc.version != mapVersion
-        if (framingChanged || (contentChanged && now - mapRenderedAt > 400)) {
-            renderThumb(doc, world, renderer)
+        if (!pending && (framingChanged || (contentChanged && now - mapRenderedAt > 600))) {
+            renderThumbAsync(doc.snapshot(), world)
             mapVersion = doc.version; mapRenderedAt = now
         }
         fill.color = if (dark) 0xE62A2B2F.toInt() else 0xF2FFFFFF.toInt()
@@ -177,19 +186,29 @@ class NavOverlay(private val density: Float) {
         c.drawRect(vr, frame)
     }
 
-    private fun renderThumb(doc: Document, world: Box, renderer: Renderer) {
-        mapWorld = world
+    private fun renderThumbAsync(snap: Document, world: Box) {
         val bw = max(1, mapRect.width().toInt()); val bh = max(1, mapRect.height().toInt())
-        val bmp = mapBmp?.takeIf { it.width == bw && it.height == bh } ?: Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { mapBmp = it }
-        bmp.eraseColor(0)
-        val a = fitAffine(world)
-        // Draw into the bitmap's own coordinate space.
-        renderer.drawAll(Canvas(bmp), doc, Affine(a.s, a.tx - mapRect.left, a.ty - mapRect.top))
+        val rect = android.graphics.RectF(mapRect)
+        val s = min(rect.width() / max(world.w, 1e-3f), rect.height() / max(world.h, 1e-3f))
+        val ox = (rect.width() - world.w * s) / 2 - world.l * s
+        val oy = (rect.height() - world.h * s) / 2 - world.t * s
+        pending = true
+        requested = world
+        worker.execute {
+            val bmp = runCatching {
+                Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { workerRenderer.drawAll(Canvas(it), snap, Affine(s, ox, oy)) }
+            }.getOrNull()
+            main.post {
+                pending = false
+                if (bmp != null) { mapBmp = bmp; mapWorld = world }
+                onThumbReady?.invoke()
+            }
+        }
     }
 
     /** World point under a screen point inside the minimap. */
     fun mapToWorld(sx: Float, sy: Float): Pair<Float, Float> {
-        val a = fitAffine(mapWorld)
+        val a = fitAffine(if (mapWorld.isEmpty) requested else mapWorld)
         return (sx - a.tx) / a.s to (sy - a.ty) / a.s
     }
 }

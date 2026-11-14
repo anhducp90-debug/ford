@@ -33,7 +33,7 @@ Thiết kế: [docs/DESIGN.md](docs/DESIGN.md)
 Chưa có (bản sau): chú thích PDF, quét tài liệu, xuất SVG, tìm kiếm chữ viết tay.
 
 ## Cài trên điện thoại
-Tải `InkBoard-1.0.0.apk`, mở và cho phép "Cài ứng dụng không rõ nguồn gốc". APK chỉ dành cho máy ARM64 (Galaxy S25 Ultra…), Android 10+.
+Tải `InkBoard-1.0.1.apk`, mở và cho phép "Cài ứng dụng không rõ nguồn gốc". APK chỉ dành cho máy ARM64 (Galaxy S25 Ultra…), Android 10+.
 
 ## Build
 Yêu cầu: JDK 17+, Android SDK 35, NDK 27.2.12479018, Rust + `rustup target add aarch64-linux-android` + `cargo install cargo-ndk`.

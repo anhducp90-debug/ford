@@ -36,7 +36,13 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /** Draws document elements onto an Android (Skia) canvas in world coordinates. */
-class Renderer {
+class Renderer(
+    /** Async picture decoding for the live canvas; null = decode synchronously (exports, thumbnails). */
+    private val imageCache: ImageCache? = null,
+) {
+    /** World → device pixel scale of the current drawing (chooses picture resolution). */
+    var viewScale = 1f
+    private val syncImages by lazy { ImageCache(48 * 1024 * 1024) }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
@@ -46,9 +52,6 @@ class Renderer {
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val tmpRect = RectF()
     private val tmpPath = Path()
-    private val images = object : LruCache<String, Bitmap>(64 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
-    }
 
     init {
         // Real text measurement for the model layer.
@@ -70,20 +73,20 @@ class Renderer {
     }
 
     /** Edges and mind-map branches. [lookup] lets callers substitute moving nodes. */
-    fun drawConnections(c: Canvas, doc: Document, lookup: (Long) -> Node?) {
+    fun drawConnections(c: Canvas, doc: Document, lookup: (Long) -> Element?) {
         val hidden = doc.hiddenIds()
         for (e in doc.connections()) {
             if (e is Node) {
                 if (e.id in hidden) continue
-                val p = lookup(e.parentId) ?: continue
-                val n = lookup(e.id) ?: continue
+                val p = lookup(e.parentId) as? Node ?: continue
+                val n = lookup(e.id) as? Node ?: continue
                 drawBranch(c, p, n)
             } else if (e is Edge) {
                 if (e.from in hidden || e.to in hidden) continue
-                val a = lookup(e.from) ?: continue
-                val b = lookup(e.to) ?: continue
-                val (x0, y0) = a.borderToward(b.x + b.w / 2, b.y + b.h / 2)
-                val (x1, y1) = b.borderToward(a.x + a.w / 2, a.y + a.h / 2)
+                val a = lookup(e.from)?.takeIf { it !is Edge } ?: continue
+                val b = lookup(e.to)?.takeIf { it !is Edge } ?: continue
+                val ends = com.inkboard.model.Anchors.ends(a, b)
+                val x0 = ends[0]; val y0 = ends[1]; val x1 = ends[2]; val y1 = ends[3]
                 line.color = e.color; line.strokeWidth = e.width; line.alpha = 255
                 c.drawLine(x0, y0, x1, y1, line)
                 arrowHead(c, x0, y0, x1, y1, e.width, e.color)
@@ -101,7 +104,7 @@ class Renderer {
         }
         // "+N" badge on folded mind-map nodes
         for (id in doc.collapsed) {
-            val n = lookup(id) ?: continue
+            val n = lookup(id) as? Node ?: continue
             if (n.id in hidden) continue
             val count = doc.descendants(id).size
             if (count == 0) continue
@@ -286,9 +289,9 @@ class Renderer {
     // ------------------------------------------------------------------ images
 
     private fun drawImage(c: Canvas, doc: Document, e: ImageEl) {
-        val bmp = images.get(e.key) ?: doc.images[e.key]?.let { bytes ->
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { images.put(e.key, it) }
-        }
+        val bytes = doc.images[e.key]
+        val cache = imageCache ?: syncImages
+        val bmp = bytes?.let { cache.get(e.key, it, cache.sampleFor(e.key, it, e.w * viewScale), sync = imageCache == null) }
         tmpRect.set(e.x, e.y, e.x + e.w, e.y + e.h)
         if (bmp != null) c.drawBitmap(bmp, null, tmpRect, bmpPaint)
         else { fill.color = Color.LTGRAY; c.drawRect(tmpRect, fill) }
@@ -332,10 +335,11 @@ class Renderer {
 
     /** Render a whole document (exports, thumbnails). [a] maps world → output. */
     fun drawAll(c: Canvas, doc: Document, a: Affine, onlyIds: Set<Long>? = null) {
+        viewScale = a.s
         c.save()
         c.translate(a.tx, a.ty); c.scale(a.s, a.s)
         val hidden = doc.hiddenIds()
-        drawConnections(c, doc) { id -> (doc.byId(id) as? Node)?.takeIf { onlyIds == null || it.id in onlyIds } }
+        drawConnections(c, doc) { id -> doc.byId(id)?.takeIf { onlyIds == null || it.id in onlyIds } }
         for (e in doc.elements) if (e.id !in hidden && (onlyIds == null || e.id in onlyIds)) draw(c, doc, e)
         c.restore()
     }

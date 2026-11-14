@@ -220,27 +220,37 @@ class EditorActions(private val view: InkCanvasView) {
             else -> return
         }
         if (updated == null) { doc.remove(listOf(el.id)); committed(); return }
-        doc.replace(listOf(updated))
-        if (el is Node && el.mindmap) doc.layoutMindmap(el.id)
+        doc.batch {
+            doc.replace(listOf(updated))
+            if (el is Node && el.mindmap) doc.layoutMindmap(el.id)
+        }
         committed(listOf(el.id))
     }
 
     fun addBranch() {
         val parent = doc.byId(view.primaryId) as? Node ?: return
-        val child = doc.addMindmapChild(parent)
-        doc.layoutMindmap(parent.id)
-        committed(listOf(child.id))
-        view.listener?.onEditRequest(doc.byId(child.id)!!)
+        var child: Node? = null
+        doc.batch { child = doc.addMindmapChild(parent); doc.layoutMindmap(parent.id) }
+        val c = child ?: return
+        committed(listOf(c.id))
+        view.listener?.onEditRequest(doc.byId(c.id)!!)
     }
 
     fun tidyMindmap() {
         doc.layoutMindmap(view.primaryId); committed(view.selection.toList())
     }
 
+    /** The two top-level connectable items of the selection (attachments and edges excluded), if exactly two. */
+    fun connectPair(): Pair<Element, Element>? {
+        val sel = view.selection
+        val tops = selected().filter { com.inkboard.model.Anchors.connectable(it) && doc.containerOf(it.id).let { c -> c == 0L || c !in sel } }
+            .filter { !(it is Node && it.mindmap && it.parentId in sel) }
+        return if (tops.size == 2) tops[0] to tops[1] else null
+    }
+
     fun connect() {
-        val nodes = selectedNodes()
-        if (nodes.size != 2) return
-        val e = Edge(doc.nextId(), nodes[0].id, nodes[1].id, 0xFF455A64.toInt(), max(1f, nodes[0].size * 0.1f))
+        val (a, b) = connectPair() ?: return
+        val e = Edge(doc.nextId(), a.id, b.id, 0xFF455A64.toInt(), w(2f))
         doc.add(e); committed(view.selection.toList())
     }
 
@@ -281,8 +291,10 @@ class EditorActions(private val view: InkCanvasView) {
                 committed(listOf(container.id)); return text
             }
             is Node -> {
-                doc.batch { doc.remove(strokes.map { it.id }); doc.replace(listOf(container.fitText(if (container.text.isBlank() || container.text in PLACEHOLDERS) text else container.text + "\n" + text))) }
-                if (container.mindmap) doc.layoutMindmap(container.id)
+                doc.batch {
+                    doc.remove(strokes.map { it.id }); doc.replace(listOf(container.fitText(if (container.text.isBlank() || container.text in PLACEHOLDERS) text else container.text + "\n" + text)))
+                    if (container.mindmap) doc.layoutMindmap(container.id)
+                }
                 committed(listOf(container.id)); return text
             }
             is StickyEl -> {
@@ -349,6 +361,31 @@ class EditorActions(private val view: InkCanvasView) {
     fun insertFromLibraryDoc(lib: Document) {
         val (cx, cy) = view.centerWorld()
         val els = com.inkboard.data.LibraryStore.instantiate(lib, doc, cx, cy)
+        committed(els.map { it.id })
+    }
+
+    /** Fill colour for closed shapes / blocks / notes (0 = no fill for shapes). */
+    fun setFill(color: Int) {
+        val updated = selected().mapNotNull { e ->
+            when (e) {
+                is ShapeEl -> if (e.closed) e.withStyle(fill = color) else null
+                is Node -> e.copy(fill = if (color == 0) 0xFFFFFFFF.toInt() else color)
+                is StickyEl -> if (color != 0) e.withColor(color) else null
+                else -> null
+            }
+        }
+        if (updated.isEmpty()) return
+        doc.replace(updated); committed(view.selection.toList())
+    }
+
+    fun reverseEdge() {
+        val e = selected().singleOrNull { it is Edge } as? Edge ?: return
+        doc.replace(listOf(Edge(e.id, e.to, e.from, e.color, e.width, e.label))); committed(listOf(e.id))
+    }
+
+    fun paste(clip: Document) {
+        val (cx, cy) = view.centerWorld()
+        val els = com.inkboard.data.LibraryStore.instantiate(clip, doc, cx, cy)
         committed(els.map { it.id })
     }
 

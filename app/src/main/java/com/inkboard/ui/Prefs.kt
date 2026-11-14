@@ -85,4 +85,12 @@ class Prefs(context: Context) {
     var snapGuides: Boolean
         get() = sp.getBoolean("snapGuides", true)
         set(v) = sp.edit().putBoolean("snapGuides", v).apply()
+
+    var eraserPartial: Boolean
+        get() = sp.getBoolean("eraserPartial", false)
+        set(v) = sp.edit().putBoolean("eraserPartial", v).apply()
+
+    var eraserSize: Float
+        get() = sp.getFloat("eraserSize", 12f)
+        set(v) = sp.edit().putFloat("eraserSize", v).apply()
 }
