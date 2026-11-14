@@ -1,0 +1,11 @@
+{
+  "cap": 16,
+  "nodes": [
+    {"name": "n1", "host": "NODE1_IP_OR_DOMAIN", "port": 443, "sni": "www.example.com", "dest": "www.example.com:443",
+     "private_key": "XRAY_X25519_PRIVATE", "public_key": "XRAY_X25519_PUBLIC", "short_id": "0123456789abcdef"},
+    {"name": "n2", "host": "NODE2_IP_OR_DOMAIN", "port": 443, "sni": "www.example.com", "dest": "www.example.com:443",
+     "private_key": "XRAY_X25519_PRIVATE", "public_key": "XRAY_X25519_PUBLIC", "short_id": "0123456789abcdef"},
+    {"name": "n3", "host": "NODE3_IP_OR_DOMAIN", "port": 443, "sni": "www.example.com", "dest": "www.example.com:443",
+     "private_key": "XRAY_X25519_PRIVATE", "public_key": "XRAY_X25519_PUBLIC", "short_id": "0123456789abcdef"}
+  ]
+}
