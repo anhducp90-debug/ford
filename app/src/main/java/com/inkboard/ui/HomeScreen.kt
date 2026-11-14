@@ -228,7 +228,7 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
                     }
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(170.dp),
+                        columns = GridCells.Adaptive(150.dp),
                         contentPadding = PaddingValues(bottom = 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),

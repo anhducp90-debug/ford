@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,14 +14,24 @@ android {
         applicationId = "com.inkboard.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 10
+        versionName = "1.0.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     signingConfigs {
+        // Google Play upload key: read from keystore.properties (never committed).
+        val ksFile = rootProject.file("keystore.properties")
+        if (ksFile.exists()) {
+            val ks = Properties().apply { ksFile.inputStream().use { load(it) } }
+            create("upload") {
+                storeFile = rootProject.file("app").resolve(ks.getProperty("storeFile")).canonicalFile
+                storePassword = ks.getProperty("storePassword")
+                keyAlias = ks.getProperty("keyAlias")
+                keyPassword = ks.getProperty("keyPassword")
+            }
+        }
         // Sideload key for personal testing only (lets new APKs install over old ones).
-        // Google Play releases will use a separate private upload key.
         create("sideload") {
             storeFile = file("inkboard-sideload.jks")
             storePassword = "inkboard-sideload"
@@ -33,10 +45,18 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("sideload")
+            // Play bundle uses the upload key when present; otherwise the sideload key (testing only).
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("sideload")
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
         }
         debug {
             signingConfig = signingConfigs.getByName("sideload")
+        }
+        // Optimised build signed with the sideload key: installs over earlier test APKs.
+        create("sideload") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("sideload")
+            matchingFallbacks += "release"
         }
     }
 

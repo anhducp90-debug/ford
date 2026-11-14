@@ -148,3 +148,8 @@ core/target/
 app/src/main/jniLibs/
 *.apk
 *.aab
+
+# Signing secrets
+keystore.properties
+*.jks
+!app/inkboard-sideload.jks

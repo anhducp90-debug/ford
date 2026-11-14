@@ -305,8 +305,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
 
         val rulerPad = if (rulers) 22.dp else 0.dp
         Box(Modifier.fillMaxSize().safeDrawingPadding().padding(start = rulerPad, top = rulerPad)) {
-            // ----- Top-left: back + name
-            Row(Modifier.align(Alignment.TopStart).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Phones: back button joins the toolbar; tablets: separate pill with the document name.
+            val compact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+            if (!compact) Row(Modifier.align(Alignment.TopStart).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Pill {
                     IconButton(onClick = { close() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Quay lại") }
                     Text(meta.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 140.dp).padding(end = 12.dp),
@@ -314,9 +315,10 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 }
             }
 
-            // ----- Top-center: main toolbar (6 items)
-            Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) {
-                Pill {
+            // ----- Top-center: main toolbar (6 tools + menu)
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp, start = 6.dp, end = 6.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState())) { Pill {
+                    if (compact) ToolButton(Icons.AutoMirrored.Outlined.ArrowBack, "Quay lại", false) { close() }
                     ToolButton(InkIcons.Pen, "Bút", tool == Tool.PEN, tint = Color(penColor)) {
                         if (tool == Tool.PEN) showPenOptions = !showPenOptions else setTool(Tool.PEN)
                     }
@@ -370,7 +372,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                             }
                         }
                     }
-                }
+                } }
                 if (showPenOptions && tool == Tool.PEN) {
                     PenOptions(
                         Modifier.align(Alignment.TopCenter).offset(y = 60.dp),
@@ -648,7 +650,9 @@ private fun Pill(modifier: Modifier = Modifier, content: @Composable () -> Unit)
 @Composable
 private fun ToolButton(icon: ImageVector, label: String, active: Boolean, tint: Color? = null, enabled: Boolean = true, onClick: () -> Unit) {
     val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.padding(2.dp).clip(CircleShape).background(bg)) {
+    val w = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val size = when { w < 380 -> 38.dp; w < 600 -> 42.dp; else -> 48.dp }
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.padding(1.dp).size(size).clip(CircleShape).background(bg)) {
         Icon(icon, label, tint = if (!enabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f) else tint ?: MaterialTheme.colorScheme.onSurface)
     }
 }
