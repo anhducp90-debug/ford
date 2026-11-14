@@ -42,6 +42,24 @@ Quy tắc ra quyết định: nếu một tính năng làm giao diện rối hơ
 
 Mọi chuyển đổi tự động đều **hoàn tác được ngay một chạm** và giữ lại nét gốc.
 
+### 2.2b Đa chạm (multi-touch) và phối hợp hai tay
+Canvas **không giới hạn một chạm**: lõi theo dõi từng điểm chạm độc lập (tối đa 10), phân biệt **bút** và **ngón tay** qua loại công cụ (`TOOL_TYPE_STYLUS` / `FINGER`). Quy tắc nền: **bút = làm việc, ngón tay = điều hướng và bổ trợ.**
+
+| Tổ hợp | Kết quả |
+|---|---|
+| Bút chạm + di chuyển | Vẽ / tẩy / khoanh lasso theo công cụ đang chọn |
+| 1 ngón kéo | Di chuyển canvas (nếu đang chọn vùng và ngón đặt trên vùng chọn: kéo vùng chọn) |
+| 2 ngón chụm / mở / xoay | Zoom, xoay góc nhìn, kéo canvas cùng lúc |
+| 2 ngón chạm nhanh | Hoàn tác; 3 ngón chạm nhanh: làm lại |
+| **1 ngón giữ yên + bút di chuyển** | Ngón giữ = phím bổ trợ (như giữ Shift): bút vẽ đường thẳng / hình đều, khoá góc 15°, vuông, tròn chuẩn; hoặc khi đang kéo vùng chọn thì khoá hướng ngang/dọc |
+| **2 ngón giữ yên + bút di chuyển** | Canvas được "ghim" cố định: bút vẽ thoải mái ở mức zoom chính xác mà không bị trượt; thả ngón để tiếp tục kéo |
+| Bút đang vẽ + ngón kéo/zoom bằng tay kia | Vẫn hoạt động đồng thời: nét tiếp tục vẽ trong khi canvas di chuyển, nên vẽ được nét dài vượt màn hình |
+| Ngón giữ lên một đối tượng + bút chạm đối tượng khác | Thêm vào vùng chọn (chọn nhiều không cần khoanh) |
+
+- Có thể đổi trong Cài đặt: "Ngón tay cũng vẽ được" (cho máy không có bút), "Bút kéo canvas khi giữ nút".
+- Palm rejection: lòng bàn tay (vùng chạm lớn) bị bỏ qua khi bút đang gần màn hình hoặc đang vẽ.
+- Các tổ hợp trên được kiểm thử bằng bộ test sự kiện chạm giả lập từ Giai đoạn 1; những tổ hợp gây nhầm lẫn khi thử với người dùng thật sẽ bị đơn giản hoá.
+
 ### 2.3 Bắt đầu nhanh
 - Onboarding tối đa 3 màn hình, mỗi màn một cử chỉ, có thể bỏ qua. Lần mở đầu tải gói nhận dạng chữ (xem §5).
 - Màn hình chính là danh sách tài liệu dạng lưới thumbnail, nút "+" tạo mới với **4 điểm bắt đầu:** Trống · Mindmap · Sơ đồ (flowchart) · Chú thích PDF.
