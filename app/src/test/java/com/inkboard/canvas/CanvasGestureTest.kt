@@ -230,4 +230,43 @@ class CanvasGestureTest {
         val vb = view.viewBox()
         assertTrue(vb.l <= b.l && vb.r >= b.r && vb.t <= b.t && vb.b >= b.b)
     }
+
+    @Test
+    fun minimapTapJumpsToContent() {
+        doc.add(StickyEl(doc.nextId(), 8000f, 8000f, 200f, 200f, "", 0xFFFFF59D.toInt(), 16f))
+        view.onDocMutated()
+        render() // lays out the minimap
+        val map = view.minimapRect()
+        assertTrue(map.width() > 0)
+        val before = view.viewBox()
+        val f = MotionEvent.TOOL_TYPE_FINGER
+        // Content is bottom-right of the current view, so tap the minimap's bottom-right area.
+        val x = map.right - map.width() * 0.12f; val y = map.bottom - map.height() * 0.12f
+        send(ev(MotionEvent.ACTION_DOWN, listOf(P(0, x, y, f))))
+        send(ev(MotionEvent.ACTION_UP, listOf(P(0, x, y, f))))
+        val after = view.viewBox()
+        val d0 = Math.hypot((before.cx - 8100f).toDouble(), (before.cy - 8100f).toDouble())
+        val d1 = Math.hypot((after.cx - 8100f).toDouble(), (after.cy - 8100f).toDouble())
+        assertTrue("moved closer: $d0 -> $d1", d1 < d0 * 0.3)
+        assertEquals(0, view.selection.size) // tapping the map must not select or draw
+        assertEquals(1, doc.elements.size)
+    }
+
+    @Test
+    fun rulerStepsAreNice() {
+        val nav = NavOverlay(1f)
+        assertEquals(100f, nav.niceStep(1f, 80f), 1e-3f)
+        assertEquals(50f, nav.niceStep(2f, 80f), 1e-3f)
+        assertEquals(0.5f, nav.niceStep(200f, 80f), 1e-4f)
+        assertEquals("0", nav.fmt(0.00001f, 1f))
+        assertEquals("-250", nav.fmt(-250f, 50f))
+    }
+
+    @Test
+    fun focusOnShowsBox() {
+        val b = com.inkboard.model.Box(10000f, -3000f, 10400f, -2800f)
+        view.focusOn(b)
+        val vb = view.viewBox()
+        assertTrue(vb.l <= b.l && vb.r >= b.r && vb.t <= b.t && vb.b >= b.b)
+    }
 }

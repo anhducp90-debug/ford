@@ -90,6 +90,19 @@ class UiSmokeTest {
         rule.onNodeWithText("Nền lưới", useUnmergedTree = true).performClick()
         rule.onNodeWithContentDescription("Về nội dung").performClick()
 
+        // Components panel lists the sticky note; tapping it jumps there and closes the panel
+        rule.onNodeWithContentDescription("Thành phần").performClick()
+        waitText("Ý tưởng 1")
+        rule.onAllNodesWithText("Ý tưởng 1", useUnmergedTree = true)[0].performClick()
+        rule.waitForIdle()
+
+        // Toggle rulers and minimap off and on again
+        for (item in listOf("Thước toạ độ  ✓", "Bản đồ thu nhỏ  ✓", "Thước toạ độ", "Bản đồ thu nhỏ")) {
+            rule.onNodeWithContentDescription("Menu").performClick()
+            rule.onNodeWithText(item, useUnmergedTree = true).performClick()
+            rule.waitForIdle()
+        }
+
         // Back to home: the document is listed
         rule.onNodeWithContentDescription("Quay lại").performClick()
         rule.waitUntil(10000) { rule.onAllNodes(hasText("Bản vẽ", substring = true)).fetchSemanticsNodes().isNotEmpty() }

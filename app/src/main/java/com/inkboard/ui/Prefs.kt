@@ -33,4 +33,12 @@ class Prefs(context: Context) {
     var penType: Int
         get() = sp.getInt("penType", 0)
         set(v) = sp.edit().putInt("penType", v).apply()
+
+    var showRulers: Boolean
+        get() = sp.getBoolean("showRulers", true)
+        set(v) = sp.edit().putBoolean("showRulers", v).apply()
+
+    var showMinimap: Boolean
+        get() = sp.getBoolean("showMinimap", true)
+        set(v) = sp.edit().putBoolean("showMinimap", v).apply()
 }

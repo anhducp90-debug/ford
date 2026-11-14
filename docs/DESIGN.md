@@ -25,6 +25,13 @@ Quy tắc ra quyết định: nếu một tính năng làm giao diện rối hơ
 - **Thanh ngữ cảnh:** khi chọn đối tượng, một thanh nhỏ hiện ngay cạnh nó với đúng những việc cần làm (màu, chuyển thành chữ/hình, nhân đôi, xoá). Không có menu lồng nhiều tầng.
 - Các thanh có thể ẩn bằng một chạm; nút "về nội dung" luôn ở góc để không bao giờ bị lạc trong canvas vô hạn; minimap nhỏ chỉ hiện khi đang kéo xa.
 
+### 2.1b Định vị trên canvas vô hạn
+- **Thước toạ độ** dọc mép trên (X) và mép trái (Y, dương hướng lên như CAD), bước chia tự co giãn theo mức zoom, có vạch đánh dấu vị trí bút; dấu gốc (0,0) nằm dưới nội dung.
+- **Dòng toạ độ** góc dưới: X/Y của bút (khi di bút hoặc vẽ); khi đang chọn thì hiện X, Y, rộng × cao của vùng chọn.
+- **Bản đồ thu nhỏ** góc dưới phải: toàn bộ bản vẽ + khung vùng đang xem; chạm hoặc kéo trên bản đồ để nhảy tới.
+- **Thành phần**: danh sách mindmap, khối, chữ, ghi chú dán, bảng, ảnh, hình và các cụm nét vẽ (gom theo vị trí) kèm toạ độ, lọc theo loại; chạm để đưa vào giữa màn hình.
+- Thước và bản đồ bật/tắt trong Menu (mặc định bật).
+
 ### 2.2 Cử chỉ đơn giản, nhất quán
 | Hành động | Cách làm |
 |---|---|

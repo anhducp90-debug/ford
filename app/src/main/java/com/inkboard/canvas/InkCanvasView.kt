@@ -54,6 +54,8 @@ class InkCanvasView(context: Context) : View(context) {
         fun onDocChanged()
         fun onCameraChanged(scale: Float)
         fun onEditRequest(el: Element)
+        /** World position under the pen / last touch (for the coordinate bar). */
+        fun onPointer(wx: Float, wy: Float) {}
     }
 
     var listener: Listener? = null
@@ -74,6 +76,14 @@ class InkCanvasView(context: Context) : View(context) {
     var fingerDraws = false
     var autoShape = true
     var dark = false
+    var showRulers = true
+        set(v) { field = v; invalidate() }
+    var showMinimap = true
+        set(v) { field = v; invalidate() }
+    private val nav = NavOverlay(resources.displayMetrics.density)
+    private var pointerSX = -1f
+    private var pointerSY = -1f
+    private var mapNavigating = false
 
     // Camera
     var scale = 1f; private set
@@ -205,6 +215,38 @@ class InkCanvasView(context: Context) : View(context) {
         saveCamera(); notifySelection(); invalidate()
     }
 
+    /** Bring a world box into view (used by the components panel). */
+    fun focusOn(b: Box) {
+        if (b.isEmpty || width == 0) return
+        val pad = 64f * density
+        val s = min((width - 2 * pad) / max(b.w, 1f), (height - 2 * pad) / max(b.h, 1f)).coerceIn(MIN_SCALE, 1.5f)
+        scale = s
+        tx = width / 2f - b.cx * s
+        ty = height / 2f - b.cy * s
+        saveCamera(); notifySelection(); invalidate()
+    }
+
+    /** Centre the view on a world point, keeping the zoom. */
+    fun centerOn(x: Float, y: Float) {
+        tx = width / 2f - x * scale
+        ty = height / 2f - y * scale
+        saveCamera(); notifySelection(); invalidate()
+    }
+
+    private fun insets(): android.graphics.Insets? =
+        rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+
+    /** Minimap rectangle on screen (valid after the first draw). */
+    fun minimapRect(): RectF = RectF(nav.mapRect)
+
+    /** Height reserved at the top by the ruler (px), 0 when hidden. */
+    val rulerSizePx get() = nav.rulerSize
+
+    private fun reportPointer(sx: Float, sy: Float) {
+        pointerSX = sx; pointerSY = sy
+        listener?.onPointer(wx(sx), wy(sy))
+    }
+
     /** World point at the centre of the screen. */
     fun centerWorld(): Pair<Float, Float> = wx(width / 2f) to wy(height / 2f)
 
@@ -270,6 +312,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     override fun onDraw(c: Canvas) {
         renderer.drawBackground(c, doc.background, width, height, scale, tx, ty, dark)
+        if (showRulers) nav.drawOrigin(c, scale, tx, ty, dark) // under the content
         val previewing = !selPreview.isIdentity
         c.save()
         c.translate(tx, ty)
@@ -372,6 +415,14 @@ class InkCanvasView(context: Context) : View(context) {
             overlayFill.color = penColor
             c.drawCircle(hoverX, hoverY, max(1.5f * density, penWidthDp * density / 2), overlayFill)
         }
+        val ins = insets()
+        if (showRulers) {
+            nav.drawRulers(c, width, height, (ins?.left ?: 0).toFloat(), (ins?.top ?: 0).toFloat(), scale, tx, ty, pointerSX, pointerSY, dark)
+        }
+        if (showMinimap) {
+            nav.layoutMap(width, height, (ins?.right ?: 0).toFloat(), (ins?.bottom ?: 0).toFloat())
+            nav.drawMinimap(c, doc, viewBox(), renderer, dark, SystemClock.uptimeMillis())
+        }
     }
 
     private fun corners(r: RectF) = listOf(r.left to r.top, r.right to r.top, r.right to r.bottom, r.left to r.bottom)
@@ -381,7 +432,7 @@ class InkCanvasView(context: Context) : View(context) {
     override fun onHoverEvent(e: MotionEvent): Boolean {
         if (e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS || e.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) {
             lastHoverTime = SystemClock.uptimeMillis()
-            if (e.actionMasked == MotionEvent.ACTION_HOVER_EXIT) { hoverX = -1f; hoverY = -1f } else { hoverX = e.x; hoverY = e.y }
+            if (e.actionMasked == MotionEvent.ACTION_HOVER_EXIT) { hoverX = -1f; hoverY = -1f } else { hoverX = e.x; hoverY = e.y; reportPointer(e.x, e.y) }
             invalidate()
             return true
         }
@@ -399,6 +450,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (handleMinimapTouch(e)) return true
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val idx = e.actionIndex
@@ -437,6 +489,18 @@ class InkCanvasView(context: Context) : View(context) {
                 invalidate()
             }
         }
+        return true
+    }
+
+    /** Tap or drag inside the minimap to move the view there. */
+    private fun handleMinimapTouch(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && showMinimap && nav.mapRect.contains(e.x, e.y) && penPointer < 0 && fingers.isEmpty()) {
+            mapNavigating = true
+        }
+        if (!mapNavigating) return false
+        val (x, y) = nav.mapToWorld(e.x.coerceIn(nav.mapRect.left, nav.mapRect.right), e.y.coerceIn(nav.mapRect.top, nav.mapRect.bottom))
+        centerOn(x, y)
+        if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) mapNavigating = false
         return true
     }
 
@@ -558,6 +622,7 @@ class InkCanvasView(context: Context) : View(context) {
             }
             lastPenSX = x; lastPenSY = y
         }
+        reportPointer(lastPenSX, lastPenSY)
         if (penMode == PenMode.LINE) updateLinePreview()
         if (penMode == PenMode.DRAG || penMode == PenMode.SCALE) notifySelection()
         invalidate()

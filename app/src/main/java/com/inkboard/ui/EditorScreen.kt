@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.AccountTree
@@ -149,6 +150,10 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var exportFormat by remember { mutableStateOf<ExportFormat?>(null) }
     var busy by remember { mutableStateOf("") }
     var askDownload by remember { mutableStateOf(false) }
+    var rulers by remember { mutableStateOf(prefs.showRulers) }
+    var minimap by remember { mutableStateOf(prefs.showMinimap) }
+    var showComponents by remember { mutableStateOf(false) }
+    var pointer by remember { mutableStateOf<Pair<Float, Float>?>(null) }
 
     val view = remember {
         InkCanvasView(context).apply {
@@ -158,6 +163,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             this.penColor = penColor; this.penWidthDp = penWidth; this.penType = penType
             fingerDraws = prefs.fingerDraws
             autoShape = prefs.autoShape
+            showRulers = prefs.showRulers
+            showMinimap = prefs.showMinimap
         }
     }
     val actions = remember { EditorActions(view) }
@@ -190,6 +197,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             override fun onDocChanged() { tick++ }
             override fun onCameraChanged(scale: Float) { zoom = scale }
             override fun onEditRequest(el: Element) { if (el is TextEl || el is StickyEl || el is Node) editing = el }
+            override fun onPointer(wx: Float, wy: Float) { pointer = wx to wy }
         }
         view.onUndoGesture = { undo() }
         view.onRedoGesture = { redo() }
@@ -237,7 +245,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
 
-        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+        val rulerPad = if (rulers) 22.dp else 0.dp
+        Box(Modifier.fillMaxSize().safeDrawingPadding().padding(start = rulerPad, top = rulerPad)) {
             // ----- Top-left: back + name
             Row(Modifier.align(Alignment.TopStart).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Pill {
@@ -277,7 +286,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                     ToolButton(Icons.AutoMirrored.Outlined.Redo, "Làm lại", false, enabled = tick >= 0 && document.canRedo) { redo() }
                     Box {
                         ToolButton(Icons.Outlined.MoreVert, "Menu", false) { showMenu = true }
-                        MainMenu(showMenu, document.background, onDismiss = { showMenu = false }) { item ->
+                        MainMenu(showMenu, document.background, rulers, minimap, onDismiss = { showMenu = false }) { item ->
                             showMenu = false
                             when (item) {
                                 "png" -> exportFormat = ExportFormat.PNG
@@ -287,6 +296,9 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                                 "bg_grid" -> { document.background = Background.GRID; view.invalidate(); tick++ }
                                 "bg_lines" -> { document.background = Background.LINES; view.invalidate(); tick++ }
                                 "fit" -> view.zoomToContent()
+                                "rulers" -> { rulers = !rulers; view.showRulers = rulers; prefs.showRulers = rulers }
+                                "minimap" -> { minimap = !minimap; view.showMinimap = minimap; prefs.showMinimap = minimap }
+                                "components" -> showComponents = true
                             }
                         }
                     }
@@ -304,12 +316,22 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             }
 
             // ----- Bottom: zoom + fit
-            Row(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+            Row(Modifier.align(Alignment.BottomStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Pill(Modifier.clickable { view.setZoom(1f) }) {
                     Text("${(zoom * 100).roundToInt()}%", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge)
                 }
+                if (rulers) {
+                    val selBox = remember(selIds, tick) { if (selIds.isEmpty()) null else document.boundsOf(selIds).takeUnless { it.isEmpty } }
+                    val label = if (selBox != null) {
+                        "Chọn  X ${selBox.l.roundToInt()}  Y ${(-selBox.t).roundToInt()}  ·  ${selBox.w.roundToInt()} × ${selBox.h.roundToInt()}"
+                    } else {
+                        pointer?.let { (x, y) -> "X ${x.roundToInt()}   Y ${(-y).roundToInt()}" } ?: "X —   Y —"
+                    }
+                    Pill { Text(label, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge) }
+                }
             }
-            Row(Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
+            Row(Modifier.align(Alignment.BottomEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill { IconButton(onClick = { showComponents = true }) { Icon(Icons.AutoMirrored.Outlined.List, "Thành phần") } }
                 Pill { IconButton(onClick = { view.zoomToContent() }) { Icon(Icons.Outlined.ZoomOutMap, "Về nội dung") } }
             }
 
@@ -352,6 +374,13 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                     tick++
                 }
             )
+        }
+    }
+
+    if (showComponents) {
+        ComponentsPanel(document, tick, onDismiss = { showComponents = false }) { c ->
+            showComponents = false
+            view.focusOn(c.box)
         }
     }
 
@@ -518,8 +547,12 @@ private fun InsertMenu(expanded: Boolean, onDismiss: () -> Unit, onPick: (String
 }
 
 @Composable
-private fun MainMenu(expanded: Boolean, bg: Background, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+private fun MainMenu(expanded: Boolean, bg: Background, rulers: Boolean, minimap: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        MenuItem("Thành phần trên bảng vẽ", null) { onPick("components") }
+        MenuItem("Thước toạ độ" + if (rulers) "  ✓" else "", null) { onPick("rulers") }
+        MenuItem("Bản đồ thu nhỏ" + if (minimap) "  ✓" else "", null) { onPick("minimap") }
+        HorizontalDivider()
         MenuItem("Xuất PNG", null) { onPick("png") }
         MenuItem("Xuất PDF", null) { onPick("pdf") }
         HorizontalDivider()
