@@ -53,7 +53,7 @@ Canvas **không giới hạn một chạm**: lõi theo dõi từng điểm chạ
 | 2 ngón chạm nhanh | Hoàn tác; 3 ngón chạm nhanh: làm lại |
 | **1 ngón giữ yên + bút di chuyển** | Ngón giữ = phím bổ trợ (như giữ Shift): bút vẽ đường thẳng / hình đều, khoá góc 15°, vuông, tròn chuẩn; hoặc khi đang kéo vùng chọn thì khoá hướng ngang/dọc |
 | **2 ngón giữ yên + bút di chuyển** | Canvas được "ghim" cố định: bút vẽ thoải mái ở mức zoom chính xác mà không bị trượt; thả ngón để tiếp tục kéo |
-| Bút đang vẽ + ngón kéo/zoom bằng tay kia | Vẫn hoạt động đồng thời: nét tiếp tục vẽ trong khi canvas di chuyển, nên vẽ được nét dài vượt màn hình |
+| Bút đang vẽ + **2 ngón** kéo/zoom bằng tay kia | Vẫn hoạt động đồng thời: nét tiếp tục vẽ trong khi canvas di chuyển, nên vẽ được nét dài vượt màn hình. (Một ngón đơn lẻ bị bỏ qua khi bút đang gần/đang vẽ để chống chạm nhầm lòng bàn tay.) |
 | Ngón giữ lên một đối tượng + bút chạm đối tượng khác | Thêm vào vùng chọn (chọn nhiều không cần khoanh) |
 
 - Có thể đổi trong Cài đặt: "Ngón tay cũng vẽ được" (cho máy không có bút), "Bút kéo canvas khi giữ nút".

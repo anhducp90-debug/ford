@@ -137,3 +137,14 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Android / Gradle / Rust
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+core/target/
+app/src/main/jniLibs/
+*.apk
+*.aab
