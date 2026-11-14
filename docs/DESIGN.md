@@ -62,7 +62,7 @@ Canvas **không giới hạn một chạm**: lõi theo dõi từng điểm chạ
 
 ### 2.3 Bắt đầu nhanh
 - Onboarding tối đa 3 màn hình, mỗi màn một cử chỉ, có thể bỏ qua. Lần mở đầu tải gói nhận dạng chữ (xem §5).
-- Màn hình chính là danh sách tài liệu dạng lưới thumbnail, nút "+" tạo mới với **4 điểm bắt đầu:** Trống · Mindmap · Sơ đồ (flowchart) · Chú thích PDF.
+- Màn hình chính là danh sách tài liệu dạng lưới thumbnail, có **thư mục** (kéo thả tài liệu vào thư mục) và **ô tìm kiếm theo tên tài liệu / thư mục**; nút "+" tạo mới với **5 điểm bắt đầu:** Trống · Mindmap · Sơ đồ (flowchart) · Chú thích PDF · Quét tài liệu.
 - Tự lưu liên tục; không có nút "Lưu", không có hộp thoại hỏi lưu.
 - Giao diện Việt / Anh, chế độ sáng/tối theo hệ thống, nút to đủ cho bút lẫn ngón tay.
 
@@ -76,6 +76,10 @@ Canvas **không giới hạn một chạm**: lõi theo dõi từng điểm chạ
 - **Sơ đồ (flowchart + hình cơ bản):** hộp và đường nối thông minh bám theo node, snap/căn chỉnh tự động (không có bảng thuộc tính phức tạp).
 - Thư viện shape **gọn, tuyển chọn** (~100 hình thường dùng, có tìm kiếm) + "Lưu vào thư viện của tôi" cho nhóm đối tượng.
 - Chữ (text box), ảnh, **PDF làm nền để chú thích**.
+- **Thư mục + tìm kiếm tên tài liệu:** tổ chức tài liệu trên màn hình chính; sắp xếp theo ngày sửa / tên; thùng rác 30 ngày. Hoàn toàn cục bộ.
+- **Quét tài liệu bằng camera:** chụp giấy tờ/bảng trắng, tự cắt viền, nắn thẳng, tăng độ rõ rồi đặt làm ảnh nền hoặc PDF nền để vẽ chú thích lên. Dùng ML Kit Document Scanner (chạy trên máy); nếu không khả dụng thì dùng bộ quét tự dựng đơn giản (cắt + nắn phối cảnh).
+- **Bảng đơn giản:** chèn bảng kẻ ô (chọn số hàng/cột), viết tay hoặc gõ trong từng ô, kéo cạnh để đổi kích thước, thêm/xoá hàng cột bằng thanh ngữ cảnh. Không có công thức; nét viết tay trong ô có thể chuyển thành chữ.
+- **Sticky note:** ghi chú dán nhiều màu (hình chữ nhật có chữ/nét), kéo thả như mọi đối tượng, tự bám vào mindmap/sơ đồ nếu thả lên node.
 - Xuất **PNG, PDF** (vùng chọn / toàn bộ / khung nhìn), **SVG** (rẻ vì đã là vector). Nhập ảnh và PDF.
 - Chế độ tối, chia màn hình, tự lưu, file `.inkb`.
 
@@ -83,7 +87,9 @@ Canvas **không giới hạn một chạm**: lõi theo dõi từng điểm chạ
 - Nền canvas (trơn / lưới / chấm / dòng), snap lưới, màu tuỳ chỉnh, độ nhạy áp lực, tuỳ chỉnh nút bút, bookmark vị trí.
 
 ### HOÃN (sau v1, chỉ khi có nhu cầu thực)
-- Công thức toán, Air Actions, DeX, khoá tài liệu (vân tay), tìm kiếm chữ viết tay, chế độ trình chiếu.
+- **v1.5 (ngay sau v1): tìm kiếm chữ viết tay.** Nhận dạng ngầm khi viết và lập chỉ mục cục bộ để tìm trong nội dung tài liệu (cả nét chưa chuyển thành chữ); chạy nền, tiết kiệm pin, có thể tắt.
+- Sau đó, chỉ khi có nhu cầu thực: công thức toán, Air Actions, DeX, khoá tài liệu (vân tay), chế độ trình chiếu, làm đẹp chữ viết tay (kiểu Smart Script).
+- Không làm theo hướng: AI cần mạng (tóm tắt/sinh nội dung), ghi âm gắn nét viết.
 
 ### LOẠI (không làm, để app nhẹ và dễ dùng)
 - Layer nhiều tầng (thay bằng "đưa lên trên / xuống dưới" và "khoá" trên thanh ngữ cảnh), UML/ER chuyên sâu, boolean ops và sửa điểm neo thủ công, component/style hệ thống kiểu Figma, thước đo / DXF, auto layout CSS, Dev Mode, plugin, cộng tác thời gian thực, cloud/đồng bộ, hệ cọ hội hoạ (hàng chục loại cọ), nhập SVG.
@@ -132,10 +138,11 @@ Chính sách quyền riêng tư, Data safety "không thu thập", AAB + App Sign
 |---|---|---|
 | 0 | Khung dự án (Gradle + cargo-ndk), JNI, Skia, prototype canvas + benchmark | 100k nét mượt 120 fps; đo được độ trễ bút |
 | 1 | Canvas vô hạn, pan/zoom, bút, tẩy, hoàn tác, lưu/mở, thanh công cụ tối giản | Người mới vẽ được ngay |
-| 2 | Lasso chọn + kéo thả/phóng/xoay, shape, chữ, ảnh, xuất PNG/PDF/SVG | Kéo cụm 10k đối tượng vẫn mượt; xuất đúng, vector |
+| 2 | Lasso chọn + kéo thả/phóng/xoay, shape, chữ, ảnh, sticky note, bảng đơn giản, xuất PNG/PDF/SVG | Kéo cụm 10k đối tượng vẫn mượt; xuất đúng, vector |
 | 3 | Nét → chữ (vi/en), nét → hình, scratch-out | Độ chính xác đo trên bộ mẫu |
 | 4 | Mindmap, sơ đồ + connector, thư viện shape | Dựng mindmap/flowchart không cần hướng dẫn |
-| 5 | PDF nền + chú thích, 4 điểm bắt đầu, onboarding | Chú thích và xuất PDF |
+| 5 | PDF nền + chú thích, quét tài liệu bằng camera, thư mục + tìm tên tài liệu, 5 điểm bắt đầu, onboarding | Quét giấy → chú thích → xuất PDF; tìm và sắp xếp được tài liệu |
+| 7 (v1.5) | Tìm kiếm chữ viết tay (nhận dạng ngầm + chỉ mục cục bộ) | Tìm được từ khoá trong nét viết tay; không làm chậm bút |
 | 6 | Tối ưu, thử đa thiết bị, đưa lên Play | Closed test → release |
 
 ## 9. Rủi ro
