@@ -378,6 +378,14 @@ class EditorActions(private val view: InkCanvasView) {
         doc.replace(updated); committed(view.selection.toList())
     }
 
+    /** Toggle straight / right-angle routing for the selected connectors. */
+    fun toggleElbow() {
+        val edges = selected().filterIsInstance<Edge>()
+        if (edges.isEmpty()) return
+        val to = !edges.first().elbow
+        doc.replace(edges.map { it.withElbow(to) }); committed(view.selection.toList())
+    }
+
     fun reverseEdge() {
         val e = selected().singleOrNull { it is Edge } as? Edge ?: return
         doc.replace(listOf(Edge(e.id, e.to, e.from, e.color, e.width, e.label))); committed(listOf(e.id))

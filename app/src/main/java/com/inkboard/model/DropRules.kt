@@ -68,8 +68,7 @@ object DropRules {
             val tol = 12f
             for (e in doc.connections()) {
                 if (e !is Edge || e.id in doc.hiddenIds()) continue
-                val ends = doc.edgeEnds(e) ?: continue
-                if (Geo.distToSegment(x, y, ends[0], ends[1], ends[2], ends[3]) <= tol + e.width * 2) return Action.EdgeLabel(singleText.id, e.id)
+                if (doc.edgeDistance(e, x, y) <= tol + e.width * 2) return Action.EdgeLabel(singleText.id, e.id)
             }
         }
         if (target == null) {

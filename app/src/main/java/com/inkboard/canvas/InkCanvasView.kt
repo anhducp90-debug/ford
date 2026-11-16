@@ -168,7 +168,47 @@ class InkCanvasView(context: Context) : View(context) {
     private val hidden = HashSet<Long>()
 
     // ------------------------------------------------------------------ input
-    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE }
+    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE, EDGE_END }
+
+    // Dragging one end of a selected connector to re-attach it.
+    private var edgeEnd = -1 // 0 = start (from), 1 = end (to)
+    private var edgeDragX = 0f
+    private var edgeDragY = 0f
+    private var edgeTarget: Element? = null
+
+    /** The selection is a single connector. */
+    private fun selectedEdge(): Edge? = selection.singleOrNull()?.let { doc.byId(it) as? Edge }
+
+    /** Which end handle of the selected connector is under (px, py) in the view plane, or -1. */
+    private fun edgeEndAt(px: Float, py: Float): Int {
+        val e = selectedEdge() ?: return -1
+        val p = doc.edgePath(e) ?: return -1
+        val n = p.size
+        return when {
+            hypot(sx(p[0]) - px, sy(p[1]) - py) <= handleR * 1.4f -> 0
+            hypot(sx(p[n - 2]) - px, sy(p[n - 1]) - py) <= handleR * 1.4f -> 1
+            else -> -1
+        }
+    }
+
+    private fun moveEdgeEnd(px: Float, py: Float) {
+        val e = selectedEdge() ?: return
+        edgeDragX = wx(px); edgeDragY = wy(py)
+        val other = if (edgeEnd == 0) e.to else e.from
+        edgeTarget = com.inkboard.model.InkGestures.targetAt(doc, edgeDragX, edgeDragY, 8f * density / scale, setOf(other, e.id))
+        invalidate()
+    }
+
+    private fun finishEdgeEnd() {
+        val e = selectedEdge()
+        val t = edgeTarget
+        if (e != null && t != null) {
+            val ne = if (edgeEnd == 0) e.withEnds(t.id, e.to) else e.withEnds(e.from, t.id)
+            if (ne.from != ne.to) { doc.replace(listOf(ne)); changed(); select(listOf(e.id)) }
+        }
+        edgeEnd = -1; edgeTarget = null
+        invalidate()
+    }
 
     private var penPointer = -1
     /** The current "pen" is a finger (finger-drawing mode). */
@@ -846,7 +886,31 @@ class InkCanvasView(context: Context) : View(context) {
             c.drawText(act.hint, bx + pad, by + 20f * density, hintPaint)
         }
         // Selection frame + corner handles
-        planeSelRect()?.let { r ->
+        val se = selectedEdge()
+        if (se != null) {
+            // Connector: a handle on each end (drag onto another item to re-attach).
+            doc.edgePath(se)?.let { p ->
+                val n = p.size
+                overlay.color = 0xFF2F80ED.toInt(); overlayFill.color = Color.WHITE
+                for ((hx, hy) in listOf(sx(p[0]) to sy(p[1]), sx(p[n - 2]) to sy(p[n - 1]))) {
+                    c.drawCircle(hx, hy, 9f * density, overlayFill)
+                    c.drawCircle(hx, hy, 9f * density, overlay)
+                }
+                if (edgeEnd >= 0) {
+                    val fx = if (edgeEnd == 0) sx(p[n - 2]) else sx(p[0])
+                    val fy = if (edgeEnd == 0) sy(p[n - 1]) else sy(p[1])
+                    overlay.pathEffect = Renderer.dash
+                    c.drawLine(fx, fy, sx(edgeDragX), sy(edgeDragY), overlay)
+                    overlay.pathEffect = null
+                    edgeTarget?.let { t ->
+                        val b = doc.boundsOf(t)
+                        overlay.strokeWidth = 3f * density
+                        c.drawRoundRect(sx(b.l) - 4 * density, sy(b.t) - 4 * density, sx(b.r) + 4 * density, sy(b.b) + 4 * density, 8f * density, 8f * density, overlay)
+                        overlay.strokeWidth = 1.5f * density
+                    }
+                }
+            }
+        } else planeSelRect()?.let { r ->
             r.inset(-6f * density, -6f * density)
             overlay.color = 0xFF2F80ED.toInt(); overlay.pathEffect = Renderer.dash
             c.drawRect(r, overlay)
@@ -1087,6 +1151,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     /** SELECT tool: decide between scaling, dragging and a new lasso. */
     private fun selectModeAt(x: Float, y: Float): PenMode {
+        edgeEndAt(x, y).takeIf { it >= 0 }?.let { edgeEnd = it; moveEdgeEnd(x, y); return PenMode.EDGE_END }
         val r = planeSelRect()
         if (r != null) {
             r.inset(-6f * density, -6f * density)
@@ -1175,6 +1240,7 @@ class InkCanvasView(context: Context) : View(context) {
                 }
                 PenMode.DRAG -> updateDrag(x, y)
                 PenMode.HANDLE -> moveGuideHandle(handleDrag, x, y)
+                PenMode.EDGE_END -> moveEdgeEnd(x, y)
                 PenMode.SCALE -> {
                     val f = (hypot(wx(x) - anchorWX, wy(y) - anchorWY) / scaleStartDist).coerceIn(0.05f, 50f)
                     selPreview = Affine.scaleAround(f, anchorWX, anchorWY)
@@ -1310,7 +1376,7 @@ class InkCanvasView(context: Context) : View(context) {
         }
         for (el in eraseEdges) {
             if (el.id in hidden) continue
-            val hit = doc.edgeEnds(el)?.let { Geo.distToSegment(x, y, it[0], it[1], it[2], it[3]) <= r + el.width } ?: false
+            val hit = doc.edgeDistance(el, x, y) <= r + el.width
             if (hit) { hidden += el.id; changed = true }
         }
         if (changed) invalidate()
@@ -1413,6 +1479,7 @@ class InkCanvasView(context: Context) : View(context) {
             PenMode.SCALE -> commitPreview()
             PenMode.PAN -> Unit
             PenMode.HANDLE -> { handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged() }
+            PenMode.EDGE_END -> finishEdgeEnd()
             PenMode.NONE -> Unit
         }
         penMode = PenMode.NONE
@@ -1602,7 +1669,11 @@ class InkCanvasView(context: Context) : View(context) {
         if (fingerGesture == 0) {
             val r = planeSelRect()?.apply { inset(-6f * density, -6f * density) }
             handleDrag = hitGuideHandle(f.sx, f.sy)
-            if (handleDrag != 0) {
+            val endAt = edgeEndAt(f.sx, f.sy)
+            if (endAt >= 0) {
+                edgeEnd = endAt
+                fingerGesture = 6
+            } else if (handleDrag != 0) {
                 fingerGesture = 4
             } else if (r != null && r.contains(f.sx, f.sy)) {
                 fingerGesture = 3
@@ -1614,6 +1685,7 @@ class InkCanvasView(context: Context) : View(context) {
         }
         when (fingerGesture) {
             4 -> moveGuideHandle(handleDrag, f.x, f.y)
+            6 -> moveEdgeEnd(f.x, f.y)
             1 -> {
                 tx += f.x - gestureCX; ty += f.y - gestureCY
                 gestureCX = f.x; gestureCY = f.y
@@ -1637,6 +1709,9 @@ class InkCanvasView(context: Context) : View(context) {
         if (eyedropping && fingers.isEmpty()) {
             if (canceled) { eyedropping = false; eyeValid = false; fingerGesture = 0; invalidate() } else finishEyedrop()
             return
+        }
+        if (fingerGesture == 6 && fingers.isEmpty()) {
+            fingerGesture = 0; finishEdgeEnd(); return
         }
         if (fingerGesture == 4 && fingers.isEmpty()) {
             fingerGesture = 0; handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged(); return

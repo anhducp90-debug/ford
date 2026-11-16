@@ -171,6 +171,9 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
     val all by produceState(initialValue = emptyList<DocMeta>(), refresh) {
         value = withContext(Dispatchers.IO) { store.list() }
     }
+    val content by produceState(initialValue = emptyMap<String, String>(), refresh) {
+        value = withContext(Dispatchers.IO) { runCatching { store.contentIndex().mapValues { com.inkboard.model.ShapeLibrary.fold(it.value) } }.getOrDefault(emptyMap()) }
+    }
     val folders = remember(all) { all.filter { it.trashedAt == 0L && it.folder.isNotEmpty() }.map { it.folder }.distinct().sorted() }
     val shown = all.filter {
         val inScope = when (folder) {
@@ -178,7 +181,9 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
             "" -> it.trashedAt == 0L
             else -> it.trashedAt == 0L && it.folder == folder
         }
-        inScope && (query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) || it.folder.contains(query.trim(), ignoreCase = true))
+        val q = com.inkboard.model.ShapeLibrary.fold(query.trim())
+        inScope && (q.isEmpty() || com.inkboard.model.ShapeLibrary.fold(it.name).contains(q) || com.inkboard.model.ShapeLibrary.fold(it.folder).contains(q) ||
+            content[it.id]?.contains(q) == true)
     }.sortedByDescending { it.modified }
 
     fun create(name: String, template: (Document) -> Unit) {
@@ -209,7 +214,7 @@ fun HomeScreen(store: DocStore, prefs: Prefs, onOpen: (DocMeta) -> Unit) {
                 OutlinedTextField(
                     value = query, onValueChange = { query = it },
                     leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                    placeholder = { Text("Tìm tài liệu, thư mục…") },
+                    placeholder = { Text("Tìm tên, thư mục hoặc nội dung…") },
                     singleLine = true, shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                 )
@@ -462,6 +467,7 @@ fun SettingsDialog(prefs: Prefs, onDismiss: () -> Unit) {
     var status by remember { mutableStateOf("") }
     var smart by remember { mutableStateOf(prefs.smartInk) }
     var snap by remember { mutableStateOf(prefs.snapGuides) }
+    var inkSearchOn by remember { mutableStateOf(prefs.inkSearch) }
     var button by remember { mutableStateOf(prefs.penButton) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
@@ -479,6 +485,7 @@ fun SettingsDialog(prefs: Prefs, onDismiss: () -> Unit) {
                 ToggleRow("Ngón tay cũng vẽ được", "Dành cho máy không có bút", finger) { finger = it; prefs.fingerDraws = it }
                 ToggleRow("Giữ bút để thành hình", "Tự làm đẹp hình khi giữ bút cuối nét", auto) { auto = it; prefs.autoShape = it }
                 ToggleRow("Nét thông minh", "Gạch ngoằn ngoèo để xoá; vẽ nét nối hai khối thành mũi tên", smart) { smart = it; prefs.smartInk = it }
+                ToggleRow("Tìm trong chữ viết tay", "Nhận dạng ngầm trên máy để tìm kiếm (cần gói nhận dạng)", inkSearchOn) { inkSearchOn = it; prefs.inkSearch = it }
                 ToggleRow("Bắt dính khi kéo", "Hiện đường gióng, căn theo cạnh/tâm vật gần", snap) { snap = it; prefs.snapGuides = it }
                 Text("Giữ nút bên S Pen để", fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
                 Row {

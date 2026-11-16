@@ -91,10 +91,9 @@ object InkGestures {
         val out = ArrayList<Long>()
         for (e in doc.connections()) {
             if (e !is Edge) continue
-            val ends = doc.edgeEnds(e) ?: continue
             var i = 0
             while (i + 1 < xy.size) {
-                if (Geo.distToSegment(xy[i], xy[i + 1], ends[0], ends[1], ends[2], ends[3]) <= tol + e.width) { out += e.id; break }
+                if (doc.edgeDistance(e, xy[i], xy[i + 1]) <= tol + e.width) { out += e.id; break }
                 i += 2
             }
         }

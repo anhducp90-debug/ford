@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.FlipToFront
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.ZoomOutMap
 import androidx.compose.material3.AlertDialog
@@ -162,6 +163,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var rulers by remember { mutableStateOf(prefs.showRulers) }
     var minimap by remember { mutableStateOf(prefs.showMinimap) }
     var showComponents by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    val indexer = remember { com.inkboard.recog.InkIndexer(AppScope, document, { prefs.recogLang }, { prefs.inkSearch }) { tick++ } }
     var pointer by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     var penOpacity by remember { mutableFloatStateOf(prefs.penOpacity) }
     var stabilizer by remember { mutableIntStateOf(prefs.stabilizer) }
@@ -236,7 +239,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     DisposableEffect(view) {
         view.listener = object : InkCanvasView.Listener {
             override fun onSelectionChanged(screenRect: RectF?, ids: Set<Long>) { selRect = screenRect; selIds = ids }
-            override fun onDocChanged() { tick++ }
+            override fun onDocChanged() { tick++; indexer.schedule() }
             override fun onCameraChanged(scale: Float) { zoom = scale }
             override fun onEditRequest(el: Element, wx: Float, wy: Float) {
                 if (isEditable(el)) { editPoint = wx to wy; editing = el }
@@ -250,7 +253,8 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
         }
         view.onUndoGesture = { undo() }
         view.onRedoGesture = { redo() }
-        onDispose { view.listener = null }
+        indexer.schedule(1500)
+        onDispose { view.listener = null; indexer.cancel() }
     }
 
     // Autosave 1.2 s after the last change.
@@ -453,6 +457,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                 }
             }
             Row(Modifier.align(Alignment.BottomEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill { IconButton(onClick = { showSearch = true }) { Icon(Icons.Outlined.Search, "Tìm") } }
                 Pill { IconButton(onClick = { showComponents = true }) { Icon(Icons.AutoMirrored.Outlined.List, "Thành phần") } }
                 Pill { IconButton(onClick = { view.zoomToContent() }) { Icon(Icons.Outlined.ZoomOutMap, "Về nội dung") } }
             }
@@ -504,6 +509,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                             AppScope.launch { runCatching { clipboard.copy(snap, ids) }; withContext(Dispatchers.Main) { toast("Đã sao chép. Dán ở bất kỳ tài liệu nào: Chèn → Dán") } }
                         }
                         "reverse" -> actions.reverseEdge()
+                        "elbow" -> actions.toggleElbow()
                     }
                     tick++
                 }
@@ -581,6 +587,13 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             },
             confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Đóng") } }
         )
+    }
+    if (showSearch) {
+        SearchPanel(document, tick, prefs.inkSearch, onDismiss = { showSearch = false }) { h ->
+            showSearch = false
+            view.focusOn(h.box)
+            view.select(h.ids)
+        }
     }
     if (showComponents) {
         ComponentsPanel(document, tick, onDismiss = { showComponents = false }) { c ->
@@ -886,6 +899,7 @@ private fun ContextBar(
                     CtxButton("Sao chép", null, "⧉") { onAction("copy") }
                     CtxButton("Nhân đôi", Icons.Outlined.ContentCopy) { onAction("dup") }
                     if (singleEdge) CtxButton("Đổi chiều", null, "⇄") { onAction("reverse") }
+                    if (singleEdge) CtxButton("Gấp khúc", null, "⌐") { onAction("elbow") }
                     CtxButton("Lên trên", Icons.Outlined.FlipToFront) { onAction("front") }
                     CtxButton("Xuống dưới", Icons.Outlined.FlipToBack) { onAction("back") }
                     CtxButton("Lưu mẫu", Icons.Outlined.Category) { onAction("savelib") }

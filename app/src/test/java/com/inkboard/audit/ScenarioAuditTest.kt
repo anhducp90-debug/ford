@@ -315,7 +315,7 @@ class ScenarioAuditTest {
     @Test fun s26_svgAndPngIncludeShapeConnectors() {
         twoHandRects(); pen(seg(390f, 400f, 660f, 405f))
         val svg = SvgExport.export(doc, doc.contentBounds())
-        assertTrue(svg.contains("<line"))
+        assertTrue(svg.contains("<polyline")) // connectors are exported as polylines (straight or elbow)
         val bmp = Bitmap.createBitmap(400, 200, Bitmap.Config.ARGB_8888)
         com.inkboard.canvas.Renderer().drawAll(Canvas(bmp), doc, Affine(0.3f, 0f, 0f))
     }
@@ -607,5 +607,83 @@ class ScenarioAuditTest {
             assertEquals("end cap filled (dir $dir)", 0xFF000000.toInt(), bmp.getPixel(ex, 100))
             assertEquals("start cap filled (dir $dir)", 0xFF000000.toInt(), bmp.getPixel(sxp, 100))
         }
+    }
+
+    // ------------------------------------------------------- connector editing
+
+    private fun threeBlocks(): Triple<Node, Node, Node> {
+        val a = Node(doc.nextId(), -100f, -300f, 200f, 80f, "A", NodeKind.ROUND, 0, 18f)
+        val b = Node(doc.nextId(), 200f, 100f, 200f, 80f, "B", NodeKind.ROUND, 0, 18f)
+        val c = Node(doc.nextId(), -500f, 100f, 200f, 80f, "C", NodeKind.ROUND, 0, 18f)
+        doc.add(a, b, c); view.onDocMutated()
+        return Triple(a, b, c)
+    }
+
+    @Test fun c01_blocksConnectAtSidePorts() {
+        val (a, b, _) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f))
+        val p = doc.edgePath(edges().single())!!
+        assertEquals(a.x + a.w / 2, p[0], 0.01f); assertEquals(a.y + a.h, p[1], 0.01f) // bottom middle of A
+        assertEquals(b.x + b.w / 2, p[p.size - 2], 0.01f); assertEquals(b.y, p[p.size - 1], 0.01f) // top middle of B
+    }
+
+    @Test fun c02_elbowConnectorRoutesAtRightAngles() {
+        val (a, b, _) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f, elbow = true))
+        val p = doc.edgePath(edges().single())!!
+        assertEquals(8, p.size)
+        for (i in 0 until 3) assertTrue("segment $i is axis-aligned", p[2 * i] == p[2 * i + 2] || p[2 * i + 1] == p[2 * i + 3])
+        render()
+        assertTrue(SvgExport.export(doc, doc.contentBounds()).contains("<polyline"))
+    }
+
+    @Test fun c03_toggleElbowFromContextAction() {
+        val (a, b, _) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f)); view.onDocMutated()
+        view.select(listOf(edges().single().id))
+        com.inkboard.ui.EditorActions(view).toggleElbow()
+        assertTrue(edges().single().elbow)
+        doc.undo(); assertTrue(!edges().single().elbow)
+    }
+
+    @Test fun c04_dragArrowEndOntoAnotherBlockWithPen() {
+        val (a, b, c) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f)); view.onDocMutated()
+        view.tool = Tool.SELECT
+        view.select(listOf(edges().single().id))
+        val p = doc.edgePath(edges().single())!!
+        val ex = sx(p[p.size - 2]); val ey = sy(p[p.size - 1])
+        pen(listOf(ex to ey) + seg(ex, ey, sx(c.x + c.w / 2), sy(c.y + c.h / 2), wobble = 0f).drop(1))
+        val e = edges().single()
+        assertEquals(a.id, e.from); assertEquals(c.id, e.to)
+        doc.undo(); assertEquals(b.id, edges().single().to)
+    }
+
+    @Test fun c05_dragArrowStartWithFinger() {
+        val (a, b, c) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f)); view.onDocMutated()
+        view.select(listOf(edges().single().id))
+        val p = doc.edgePath(edges().single())!!
+        fingerDrag(sx(p[0]), sy(p[1]), sx(c.x + c.w / 2), sy(c.y + c.h / 2))
+        assertEquals(c.id, edges().single().from)
+    }
+
+    @Test fun c06_droppingEndOnEmptySpaceKeepsConnector() {
+        val (a, b, _) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f)); view.onDocMutated()
+        view.tool = Tool.SELECT
+        view.select(listOf(edges().single().id))
+        val p = doc.edgePath(edges().single())!!
+        val ex = sx(p[p.size - 2]); val ey = sy(p[p.size - 1])
+        pen(listOf(ex to ey) + seg(ex, ey, ex + 300f, ey + 600f, wobble = 0f).drop(1))
+        assertEquals(b.id, edges().single().to)
+    }
+
+    @Test fun c07_elbowSurvivesSaveLoad() {
+        val (a, b, _) = threeBlocks()
+        doc.add(Edge(doc.nextId(), a.id, b.id, 0, 2f, "Có", elbow = true))
+        val bytes = ByteArrayOutputStream().also { DocCodec.write(doc, it) }.toByteArray()
+        val e = DocCodec.read(ByteArrayInputStream(bytes)).elements.filterIsInstance<Edge>().single()
+        assertTrue(e.elbow); assertEquals("Có", e.label)
     }
 }

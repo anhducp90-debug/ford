@@ -34,6 +34,8 @@ class Document {
     val collapsed = HashSet<Long>()
     /** Named camera positions to jump back to. */
     val bookmarks = ArrayList<Bookmark>()
+    /** Recognised handwriting: stroke-cluster key → text (filled in by the background indexer). */
+    val inkText = HashMap<Long, String>()
     var background = Background.DOTS
     /** Saved camera: world→screen scale and translation. */
     var camScale = 1f
@@ -318,14 +320,21 @@ class Document {
 
     // --------------------------------------------------------------- queries
 
-    fun edgeEnds(e: Edge): FloatArray? {
+    /** Connector path (x,y pairs: 2 points straight, 4 points elbow). */
+    fun edgePath(e: Edge): FloatArray? {
         val a = byId(e.from)?.takeIf { it !is Edge } ?: return null
         val b = byId(e.to)?.takeIf { it !is Edge } ?: return null
-        return Anchors.ends(a, b)
+        return Anchors.route(a, b, e.elbow)
     }
 
+    /** First and last point of the connector path. */
+    fun edgeEnds(e: Edge): FloatArray? = edgePath(e)?.let { p -> floatArrayOf(p[0], p[1], p[p.size - 2], p[p.size - 1]) }
+
+    /** Distance from a point to a connector's path. */
+    fun edgeDistance(e: Edge, x: Float, y: Float): Float = edgePath(e)?.let { Geo.distToPolyline(x, y, it) } ?: Float.MAX_VALUE
+
     fun boundsOf(e: Element): Box = when (e) {
-        is Edge -> edgeEnds(e)?.let { Box.of(it, 2, e.width * 4 + 12f) } ?: Box.EMPTY
+        is Edge -> edgePath(e)?.let { Box.of(it, 2, e.width * 4 + 12f) } ?: Box.EMPTY
         else -> e.bounds
     }
 
@@ -347,8 +356,7 @@ class Document {
                 if (i <= bestIdx) break
                 val e = elements[i] as? Edge ?: continue
                 if (e.from in hiddenIds() || e.to in hiddenIds()) continue
-                val ends = edgeEnds(e) ?: continue
-                if (Geo.distToSegment(x, y, ends[0], ends[1], ends[2], ends[3]) <= tol + e.width) return e
+                if (edgeDistance(e, x, y) <= tol + e.width) return e
             }
         }
         return best
@@ -440,6 +448,7 @@ class Document {
         d.locked.addAll(locked)
         d.collapsed.addAll(collapsed)
         d.bookmarks.addAll(bookmarks)
+        d.inkText.putAll(inkText)
         d.camScale = camScale; d.camX = camX; d.camY = camY
         return d
     }

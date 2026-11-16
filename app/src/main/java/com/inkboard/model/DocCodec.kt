@@ -18,7 +18,7 @@ import java.util.zip.InflaterInputStream
  */
 object DocCodec {
     private const val MAGIC = 0x494E4B42 // "INKB"
-    private const val VERSION = 4
+    private const val VERSION = 5
 
     private const val T_STROKE = 1
     private const val T_SHAPE = 2
@@ -32,6 +32,7 @@ object DocCodec {
     private const val T_STROKE2 = 9
     private const val Q = 64f
     private const val T_EDGE2 = 10
+    private const val T_EDGE3 = 11
 
     fun write(doc: Document, out: OutputStream) {
         val head = DataOutputStream(out)
@@ -59,6 +60,8 @@ object DocCodec {
         d.writeInt(col.size); for (id in col) d.writeLong(id)
         d.writeInt(doc.bookmarks.size)
         for (b in doc.bookmarks) { d.writeStr(b.name); d.writeFloat(b.scale); d.writeFloat(b.cx); d.writeFloat(b.cy) }
+        d.writeInt(doc.inkText.size)
+        for ((k, v) in doc.inkText) { d.writeLong(k); d.writeStr(v) }
         val usedKeys = doc.elements.filterIsInstance<ImageEl>().map { it.key }.toSet()
         val imgs = doc.images.filterKeys { it in usedKeys }
         d.writeInt(imgs.size)
@@ -94,6 +97,7 @@ object DocCodec {
             repeat(d.readInt()) { doc.collapsed += d.readLong() }
             repeat(d.readInt()) { doc.bookmarks += Bookmark(d.readStr(), d.readFloat(), d.readFloat(), d.readFloat()) }
         }
+        if (ver >= 5) repeat(d.readInt()) { doc.inkText[d.readLong()] = d.readStr() }
         val ni = d.readInt()
         repeat(ni) {
             val k = d.readStr()
@@ -191,8 +195,8 @@ object DocCodec {
                 d.writeInt(e.fill); d.writeFloat(e.size); d.writeLong(e.parentId); d.writeBoolean(e.mindmap)
             }
             is Edge -> {
-                d.writeByte(T_EDGE2); d.writeLong(e.id); d.writeLong(e.from); d.writeLong(e.to)
-                d.writeInt(e.color); d.writeFloat(e.width); d.writeStr(e.label)
+                d.writeByte(T_EDGE3); d.writeLong(e.id); d.writeLong(e.from); d.writeLong(e.to)
+                d.writeInt(e.color); d.writeFloat(e.width); d.writeStr(e.label); d.writeBoolean(e.elbow)
             }
             is TableEl -> {
                 d.writeByte(T_TABLE); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
@@ -244,6 +248,7 @@ object DocCodec {
         )
         T_EDGE -> Edge(d.readLong(), d.readLong(), d.readLong(), d.readInt(), d.readFloat())
         T_EDGE2 -> Edge(d.readLong(), d.readLong(), d.readLong(), d.readInt(), d.readFloat(), d.readStr())
+        T_EDGE3 -> Edge(d.readLong(), d.readLong(), d.readLong(), d.readInt(), d.readFloat(), d.readStr(), d.readBoolean())
         T_IMAGE -> ImageEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr())
         T_TABLE -> {
             val t = TableEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readInt(), d.readInt(), d.readInt(), d.readFloat())

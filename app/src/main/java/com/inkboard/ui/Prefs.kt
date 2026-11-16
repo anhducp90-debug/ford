@@ -98,4 +98,9 @@ class Prefs(context: Context) {
     var eraserMode: Int
         get() = sp.getInt("eraserMode", 0)
         set(v) = sp.edit().putInt("eraserMode", v).apply()
+
+    /** Recognise handwriting in the background so it can be searched. */
+    var inkSearch: Boolean
+        get() = sp.getBoolean("inkSearch", true)
+        set(v) = sp.edit().putBoolean("inkSearch", v).apply()
 }

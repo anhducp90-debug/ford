@@ -61,6 +61,10 @@ class DocStore(context: Context) {
     }
 
     fun thumbnailFile(id: String) = File(dir, "$id.png")
+    fun textFile(id: String) = File(dir, "$id.txt")
+
+    /** Searchable text of every document (id → text). */
+    fun contentIndex(): Map<String, String> = list().associate { m -> m.id to (textFile(m.id).takeIf { it.exists() }?.readText() ?: "") }
 
     fun saveThumbnail(id: String, doc: Document) {
         val b = doc.contentBounds()
@@ -75,6 +79,8 @@ class DocStore(context: Context) {
             Renderer().drawAll(c, doc, a)
         }
         thumbnailFile(id).outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 90, it) }
+        // Searchable text for the home screen (typed text, labels, recognised handwriting).
+        runCatching { textFile(id).writeText(com.inkboard.model.Search.plainText(doc)) }
         bmp.recycle()
     }
 
@@ -92,7 +98,7 @@ class DocStore(context: Context) {
     }
 
     fun deleteForever(id: String) = synchronized(lock) {
-        File(dir, "$id.inkb").delete(); thumbnailFile(id).delete()
+        File(dir, "$id.inkb").delete(); thumbnailFile(id).delete(); textFile(id).delete()
         writeIndex(readIndex().filter { it.id != id })
     }
 

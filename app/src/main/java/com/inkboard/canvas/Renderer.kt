@@ -85,21 +85,8 @@ class Renderer(
                 if (e.from in hidden || e.to in hidden) continue
                 val a = lookup(e.from)?.takeIf { it !is Edge } ?: continue
                 val b = lookup(e.to)?.takeIf { it !is Edge } ?: continue
-                val ends = com.inkboard.model.Anchors.ends(a, b)
-                val x0 = ends[0]; val y0 = ends[1]; val x1 = ends[2]; val y1 = ends[3]
-                line.color = e.color; line.strokeWidth = e.width; line.alpha = 255
-                c.drawLine(x0, y0, x1, y1, line)
-                arrowHead(c, x0, y0, x1, y1, e.width, e.color)
-                if (e.label.isNotBlank()) {
-                    val size = max(10f, e.width * 6f)
-                    text.textSize = size; text.color = e.color
-                    val w = text.measureText(e.label) + size
-                    val cx = (x0 + x1) / 2; val cy = (y0 + y1) / 2
-                    fill.color = 0xFFFFFFFF.toInt()
-                    tmpRect.set(cx - w / 2, cy - size * 0.75f, cx + w / 2, cy + size * 0.75f)
-                    c.drawRoundRect(tmpRect, size * 0.4f, size * 0.4f, fill)
-                    c.drawText(e.label, cx - w / 2 + size / 2, cy + size * 0.35f, text)
-                }
+                val path = com.inkboard.model.Anchors.route(a, b, e.elbow)
+                drawConnector(c, path, e)
             }
         }
         // "+N" badge on folded mind-map nodes
@@ -115,6 +102,28 @@ class Renderer(
             text.color = 0xFFFFFFFF.toInt(); text.textSize = r * 1.05f
             val label = "+$count"
             c.drawText(label, bx - text.measureText(label) / 2, by + r * 0.38f, text)
+        }
+    }
+
+    /** Polyline connector with an arrow head on the last segment and an optional label in the middle. */
+    fun drawConnector(c: Canvas, path: FloatArray, e: Edge) {
+        line.color = e.color; line.strokeWidth = e.width; line.alpha = 255
+        tmpPath.reset()
+        tmpPath.moveTo(path[0], path[1])
+        var i = 2
+        while (i + 1 < path.size) { tmpPath.lineTo(path[i], path[i + 1]); i += 2 }
+        c.drawPath(tmpPath, line)
+        val n = path.size
+        arrowHead(c, path[n - 4], path[n - 3], path[n - 2], path[n - 1], e.width, e.color)
+        if (e.label.isNotBlank()) {
+            val size = max(10f, e.width * 6f)
+            text.textSize = size; text.color = e.color
+            val w = text.measureText(e.label) + size
+            val (cx, cy) = com.inkboard.model.Anchors.midpoint(path)
+            fill.color = 0xFFFFFFFF.toInt()
+            tmpRect.set(cx - w / 2, cy - size * 0.75f, cx + w / 2, cy + size * 0.75f)
+            c.drawRoundRect(tmpRect, size * 0.4f, size * 0.4f, fill)
+            c.drawText(e.label, cx - w / 2 + size / 2, cy + size * 0.35f, text)
         }
     }
 

@@ -98,4 +98,55 @@ object Anchors {
         val (x1, y1) = borderToward(b, ax, ay)
         return floatArrayOf(x0, y0, x1, y1)
     }
+
+    /** Box used for side ports (the outline, without stroke padding). */
+    private fun portBox(e: Element): Box = when (e) {
+        is ShapeEl -> if (e.kind == ShapeKind.ELLIPSE) Box(e.geo[0] - e.geo[2], e.geo[1] - e.geo[3], e.geo[0] + e.geo[2], e.geo[1] + e.geo[3]) else Box.of(e.geo)
+        is Stroke -> Box.of(e.pts, 3)
+        else -> e.bounds
+    }
+
+    /**
+     * Connector path as x,y pairs. Blocks use fixed side ports (middle of the
+     * facing side); elbow connectors route at right angles. Otherwise a straight
+     * line between the outlines.
+     */
+    fun route(a: Element, b: Element, elbow: Boolean): FloatArray {
+        val ports = elbow || a is Node || b is Node
+        if (!ports) return ends(a, b)
+        val ba = portBox(a); val bb = portBox(b)
+        val dx = bb.cx - ba.cx; val dy = bb.cy - ba.cy
+        val vertical = abs(dy) >= abs(dx)
+        val p: FloatArray = if (vertical) {
+            val ay = if (dy > 0) ba.b else ba.t; val by = if (dy > 0) bb.t else bb.b
+            floatArrayOf(ba.cx, ay, bb.cx, by)
+        } else {
+            val ax = if (dx > 0) ba.r else ba.l; val bx = if (dx > 0) bb.l else bb.r
+            floatArrayOf(ax, ba.cy, bx, bb.cy)
+        }
+        if (!elbow || abs(p[0] - p[2]) < 0.5f || abs(p[1] - p[3]) < 0.5f) return p
+        return if (vertical) {
+            val my = (p[1] + p[3]) / 2
+            floatArrayOf(p[0], p[1], p[0], my, p[2], my, p[2], p[3])
+        } else {
+            val mx = (p[0] + p[2]) / 2
+            floatArrayOf(p[0], p[1], mx, p[1], mx, p[3], p[2], p[3])
+        }
+    }
+
+    /** Point halfway along a polyline (for labels). */
+    fun midpoint(path: FloatArray): Pair<Float, Float> {
+        var total = 0f
+        for (i in 0 until path.size / 2 - 1) total += hypot(path[2 * i + 2] - path[2 * i], path[2 * i + 3] - path[2 * i + 1])
+        var acc = 0f
+        for (i in 0 until path.size / 2 - 1) {
+            val l = hypot(path[2 * i + 2] - path[2 * i], path[2 * i + 3] - path[2 * i + 1])
+            if (acc + l >= total / 2 && l > 0f) {
+                val t = (total / 2 - acc) / l
+                return (path[2 * i] + (path[2 * i + 2] - path[2 * i]) * t) to (path[2 * i + 1] + (path[2 * i + 3] - path[2 * i + 1]) * t)
+            }
+            acc += l
+        }
+        return path[0] to path[1]
+    }
 }

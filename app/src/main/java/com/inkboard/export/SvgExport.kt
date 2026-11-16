@@ -222,12 +222,14 @@ object SvgExport {
     }
 
     private fun edge(sb: StringBuilder, doc: Document, e: Edge) {
-        val ends = doc.edgeEnds(e) ?: return
-        sb.append("""<line x1="${f(ends[0])}" y1="${f(ends[1])}" x2="${f(ends[2])}" y2="${f(ends[3])}" stroke="${color(e.color)}" stroke-width="${f(e.width)}"/>""").append('\n')
-        arrow(sb, ends[0], ends[1], ends[2], ends[3], e.width, e.color)
+        val p = doc.edgePath(e) ?: return
+        val pts = (0 until p.size / 2).joinToString(" ") { "${f(p[2 * it])},${f(p[2 * it + 1])}" }
+        sb.append("""<polyline points="$pts" fill="none" stroke="${color(e.color)}" stroke-width="${f(e.width)}" stroke-linejoin="round"/>""").append('\n')
+        val n = p.size
+        arrow(sb, p[n - 4], p[n - 3], p[n - 2], p[n - 1], e.width, e.color)
         if (e.label.isNotBlank()) {
             val size = max(10f, e.width * 6f)
-            val cx = (ends[0] + ends[2]) / 2; val cy = (ends[1] + ends[3]) / 2
+            val (cx, cy) = com.inkboard.model.Anchors.midpoint(p)
             val w = TextMetrics.width(e.label, size) + size
             sb.append("""<rect x="${f(cx - w / 2)}" y="${f(cy - size * 0.75f)}" width="${f(w)}" height="${f(size * 1.5f)}" rx="${f(size * 0.4f)}" fill="#ffffff"/>""").append('\n')
             sb.append("""<text x="${f(cx)}" y="${f(cy + size * 0.35f)}" font-size="${f(size)}" font-family="sans-serif" text-anchor="middle" fill="${color(e.color)}">${esc(e.label)}</text>""").append('\n')

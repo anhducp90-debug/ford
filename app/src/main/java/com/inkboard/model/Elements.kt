@@ -255,12 +255,16 @@ class Edge(
     val width: Float,
     /** Text shown at the middle of the connector (e.g. "Có" / "Không"). */
     val label: String = "",
+    /** Right-angle (orthogonal) routing instead of a straight line. */
+    val elbow: Boolean = false,
 ) : Element() {
     /** Edge geometry depends on its nodes; the Document supplies real bounds. */
     override val bounds: Box get() = Box.EMPTY
-    override fun transformed(a: Affine) = Edge(id, from, to, color, width * a.s, label)
-    override fun withId(newId: Long) = Edge(newId, from, to, color, width, label)
-    fun withLabel(t: String) = Edge(id, from, to, color, width, t)
+    override fun transformed(a: Affine) = Edge(id, from, to, color, width * a.s, label, elbow)
+    override fun withId(newId: Long) = Edge(newId, from, to, color, width, label, elbow)
+    fun withLabel(t: String) = Edge(id, from, to, color, width, t, elbow)
+    fun withEnds(f: Long, t: Long) = Edge(id, f, t, color, width, label, elbow)
+    fun withElbow(e: Boolean) = Edge(id, from, to, color, width, label, e)
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean) = false
     override fun inLasso(poly: FloatArray) = false
 }
