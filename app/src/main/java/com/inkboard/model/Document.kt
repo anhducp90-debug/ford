@@ -259,6 +259,29 @@ class Document {
         apply(Change(ops))
     }
 
+    /**
+     * Remove exactly [ids] (eraser semantics): things attached to a removed
+     * container stay (detached), mind-map branches of a removed node move up
+     * to its nearest surviving ancestor, and only connectors touching removed
+     * items go with them.
+     */
+    fun removeExact(ids: Collection<Long>) = batch {
+        val set = ids.toSet()
+        for ((c, p) in attach.toMap()) if (p in set && c !in set) setContainer(c, 0L)
+        val lifted = elements.filterIsInstance<Node>().filter { it.parentId in set && it.id !in set }.map { n ->
+            var p = n.parentId
+            val seen = HashSet<Long>()
+            while (p in set && seen.add(p)) p = (byId(p) as? Node)?.parentId ?: 0L
+            n.copy(parentId = p)
+        }
+        if (lifted.isNotEmpty()) replace(lifted)
+        val all = HashSet(set)
+        for (e in elements) if (e is Edge && (e.from in set || e.to in set)) all += e.id
+        val ops = elements.withIndex().filter { it.value.id in all }.sortedByDescending { it.index }
+            .map { Op.Delete(it.index, it.value) }
+        apply(Change(ops))
+    }
+
     fun replace(updated: List<Element>) {
         val ops = updated.mapNotNull { n ->
             val i = indexOf(n.id)

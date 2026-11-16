@@ -186,7 +186,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
     var laser by remember { mutableStateOf(false) }
     val clipboard = remember { com.inkboard.data.ClipboardStore(context.filesDir) }
     var showEraserOptions by remember { mutableStateOf(false) }
-    var eraserPartial by remember { mutableStateOf(prefs.eraserPartial) }
+    var eraserMode by remember { mutableIntStateOf(prefs.eraserMode) }
     var eraserSize by remember { mutableFloatStateOf(prefs.eraserSize) }
 
     val view = remember {
@@ -200,7 +200,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
             penButton = InkCanvasView.PenButton.entries.getOrElse(prefs.penButton) { InkCanvasView.PenButton.PAN }
             smartInk = prefs.smartInk
             snapGuides = prefs.snapGuides
-            eraserPartial = prefs.eraserPartial
+            this.eraserMode = InkCanvasView.EraserMode.entries.getOrElse(prefs.eraserMode) { InkCanvasView.EraserMode.PARTIAL }
             eraserSizeDp = prefs.eraserSize
             fingerDraws = prefs.fingerDraws
             autoShape = prefs.autoShape
@@ -391,11 +391,21 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
                         Column(Modifier.padding(12.dp)) {
                             Row {
-                                for ((partial, label) in listOf(false to "Tẩy cả nét", true to "Tẩy một phần")) {
-                                    FilterChip(selected = eraserPartial == partial, onClick = { eraserPartial = partial; view.eraserPartial = partial; prefs.eraserPartial = partial },
-                                        label = { Text(label) }, modifier = Modifier.padding(end = 6.dp))
+                                for ((i, label) in listOf("Một phần", "Cả nét", "Khoanh vùng").withIndex()) {
+                                    FilterChip(selected = eraserMode == i, onClick = {
+                                        eraserMode = i; prefs.eraserMode = i
+                                        view.eraserMode = InkCanvasView.EraserMode.entries[i]
+                                    }, label = { Text(label) }, modifier = Modifier.padding(end = 6.dp))
                                 }
                             }
+                            Text(
+                                when (eraserMode) {
+                                    0 -> "Chỉ xoá phần nét/hình bị quét qua. Chữ, ghi chú, khối, ảnh không bị tẩy."
+                                    1 -> "Xoá trọn vật chạm vào (không xoá nội dung bên trong)."
+                                    else -> "Khoanh một vòng: xoá mọi thứ nằm trong vòng."
+                                },
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             LabeledSlider("Cỡ tẩy ${eraserSize.roundToInt()}", eraserSize, 6f..48f) { eraserSize = it; view.eraserSizeDp = it; prefs.eraserSize = it }
                             Row { Spacer(Modifier.weight(1f)); TextButton(onClick = { showEraserOptions = false }) { Text("Xong") } }
                         }

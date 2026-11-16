@@ -93,4 +93,9 @@ class Prefs(context: Context) {
     var eraserSize: Float
         get() = sp.getFloat("eraserSize", 12f)
         set(v) = sp.edit().putFloat("eraserSize", v).apply()
+
+    /** 0 = partial (default), 1 = whole item, 2 = area. */
+    var eraserMode: Int
+        get() = sp.getInt("eraserMode", 0)
+        set(v) = sp.edit().putInt("eraserMode", v).apply()
 }

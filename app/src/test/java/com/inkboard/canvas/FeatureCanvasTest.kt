@@ -94,6 +94,7 @@ class FeatureCanvasTest {
     fun penButtonCanErase() {
         pen(line(100f, 500f, 500f, 500f))
         view.penButton = InkCanvasView.PenButton.ERASE
+        view.eraserMode = InkCanvasView.EraserMode.WHOLE
         pen(line(300f, 400f, 300f, 600f), buttons = MotionEvent.BUTTON_STYLUS_PRIMARY)
         assertEquals(0, doc.elements.size)
     }

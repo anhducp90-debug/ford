@@ -471,4 +471,141 @@ class ScenarioAuditTest {
         pen(listOf(0f to 0f, 1079f to 0f, 1079f to 1999f, 0f to 1999f, 0f to 0f))
         assertTrue(page.id !in view.selection)
     }
+
+    // ----------------------------------------------------------- eraser audit
+
+    private fun eraser(mode: InkCanvasView.EraserMode) { view.tool = Tool.ERASER; view.eraserMode = mode }
+    private fun strokes() = doc.elements.filterIsInstance<Stroke>()
+
+    @Test fun e01_defaultEraserCutsOnlyPart() {
+        assertEquals(InkCanvasView.EraserMode.PARTIAL, view.eraserMode)
+    }
+
+    @Test fun e02_partOfACircleIsErasedNotTheWholeCircle() {
+        pen(circleStroke(540f, 800f, 200f), hold = true)
+        assertTrue(doc.elements.single() is ShapeEl)
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(740f, 700f, 740f, 900f, wobble = 0f)) // across the right side
+        assertEquals(0, doc.elements.count { it is ShapeEl })
+        val arc = strokes().single()                    // one arc, not two (the loop is opened at the cut)
+        val b = arc.bounds
+        assertTrue("arc keeps most of the circle: ${b.w} x ${b.h}", b.w > 300f / view.scale && b.h > 350f / view.scale)
+        render()
+    }
+
+    @Test fun e03_twoCutsSplitARectangleIntoTwoPieces() {
+        pen(rectStroke(200f, 400f, 800f, 900f), hold = true)
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(500f, 300f, 500f, 1000f, wobble = 0f)) // cuts top and bottom edges
+        assertEquals(2, strokes().size)
+    }
+
+    @Test fun e04_middleOfAStraightLineIsErased() {
+        pen(seg(100f, 1000f, 900f, 1005f), hold = true)
+        assertEquals(ShapeKind.LINE, (doc.elements.single() as ShapeEl).kind)
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(500f, 900f, 500f, 1100f, wobble = 0f))
+        assertEquals(2, strokes().size)
+    }
+
+    @Test fun e05_partialEraserLeavesTextNotesBlocksPictures() {
+        doc.add(TextEl(doc.nextId(), -300f, -300f, "Chữ", 30f, 0), StickyEl(doc.nextId(), -100f, -300f, 150f, 150f, "", 0xFFFFF59D.toInt(), 16f),
+            Node(doc.nextId(), 100f, -300f, 150f, 60f, "Khối", NodeKind.ROUND, 0, 16f), ImageEl(doc.nextId(), 300f, -300f, 150f, 150f, "k"))
+        doc.images["k"] = byteArrayOf(1); view.onDocMutated()
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(sx(-320f), sy(-250f), sx(470f), sy(-240f)))
+        assertEquals(4, doc.elements.size)
+    }
+
+    @Test fun e06_undoRestoresTheShapeWithLabelAndFill() {
+        val c = ShapeEl(doc.nextId(), ShapeKind.ELLIPSE, floatArrayOf(0f, 0f, 200f, 200f, 0f), 0xFF1A73E8.toInt(), 4f, 0xFFBBDEFB.toInt(), "Ý tưởng")
+        doc.add(c); doc.clearHistory(); view.onDocMutated()
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(sx(200f), sy(-60f), sx(200f), sy(60f), wobble = 0f))
+        assertEquals(0, doc.elements.count { it is ShapeEl })
+        doc.undo()
+        val r = doc.elements.single() as ShapeEl
+        assertEquals("Ý tưởng", r.label); assertEquals(0xFFBBDEFB.toInt(), r.fill)
+        assertTrue(!doc.canUndo)
+    }
+
+    @Test fun e07_erasingABoxKeepsTheWritingInside() {
+        pen(rectStroke(100f, 300f, 700f, 800f), hold = true)
+        val box = doc.elements.single()
+        pen(seg(250f, 500f, 550f, 520f))
+        val ink = doc.elements.last()
+        assertEquals(box.id, doc.containerOf(ink.id))
+        eraser(InkCanvasView.EraserMode.WHOLE)
+        pen(seg(80f, 550f, 130f, 560f, wobble = 0f)) // touch only the left edge of the box
+        assertTrue(doc.byId(box.id) == null)
+        assertNotNull(doc.byId(ink.id))
+        assertEquals(0L, doc.containerOf(ink.id))
+    }
+
+    @Test fun e08_erasingAMindmapNodeKeepsItsBranches() {
+        val root = Node(doc.nextId(), 0f, 0f, 160f, 60f, "Gốc", NodeKind.ROUND, 0, 20f, 0L, true)
+        doc.add(root)
+        val a = doc.addMindmapChild(root, "A"); val a1 = doc.addMindmapChild(a, "A1")
+        doc.layoutMindmap(root.id); view.onDocMutated()
+        val an = doc.byId(a.id) as Node
+        eraser(InkCanvasView.EraserMode.WHOLE)
+        pen(seg(sx(an.x + 10), sy(an.y + an.h / 2), sx(an.x + 30), sy(an.y + an.h / 2), wobble = 0f))
+        assertNull(doc.byId(a.id))
+        assertEquals(root.id, (doc.byId(a1.id) as Node).parentId) // lifted to the grandparent
+        assertNotNull(doc.byId(root.id))
+    }
+
+    @Test fun e09_areaEraserRemovesOnlyWhatTheLoopEncloses() {
+        pen(seg(200f, 300f, 300f, 320f)); pen(seg(250f, 400f, 350f, 420f)); pen(seg(700f, 300f, 900f, 300f))
+        eraser(InkCanvasView.EraserMode.AREA)
+        pen(listOf(150f to 250f, 450f to 250f, 450f to 480f, 150f to 480f, 150f to 250f))
+        assertEquals(1, doc.elements.size)
+        assertTrue(doc.elements.single().bounds.l > 600f / view.scale - view.tx / view.scale)
+    }
+
+    @Test fun e10_cutInkInsideANoteStaysAttached() {
+        doc.add(StickyEl(doc.nextId(), -300f, -300f, 600f, 600f, "", 0xFFFFF59D.toInt(), 16f)); view.onDocMutated()
+        val note = doc.elements.single()
+        pen(seg(sx(-200f), sy(0f), sx(200f), sy(0f), n = 60, wobble = 0f))
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(sx(0f), sy(-50f), sx(0f), sy(50f), wobble = 0f))
+        assertEquals(2, strokes().size)
+        assertTrue(strokes().all { doc.containerOf(it.id) == note.id })
+    }
+
+    @Test fun e11_cuttingAConnectedShapeKeepsTheConnector() {
+        twoHandRects(); pen(seg(390f, 400f, 660f, 405f))
+        assertEquals(1, edges().size)
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(250f, 250f, 250f, 330f, wobble = 0f)) // nick the top edge of the first box
+        assertEquals(1, edges().size)
+        assertNotNull(doc.edgeEnds(edges().single()))
+        doc.undo()
+        assertEquals(2, doc.elements.count { it is ShapeEl })
+    }
+
+    @Test fun e12_pressureInkCutsCleanly() {
+        pen(seg(100f, 1200f, 900f, 1200f, n = 4, wobble = 0f)) // sparse points (fast stroke)
+        eraser(InkCanvasView.EraserMode.PARTIAL)
+        pen(seg(500f, 1150f, 500f, 1250f, wobble = 0f))
+        val parts = strokes()
+        assertEquals(2, parts.size)
+        // The gap is about the eraser width, not a whole segment.
+        val gap = parts.minOf { it.bounds.l } .let { _ -> parts.maxOf { it.bounds.l } - parts.minOf { it.bounds.r } }
+        assertTrue("gap $gap", gap < 80f / view.scale)
+    }
+
+    @Test fun e13_strokeEndsAreSolidNoCapHoles() {
+        for (dir in listOf(1f, -1f)) {
+            val d = Document()
+            val x0 = 100f; val x1 = 100f + 200f * dir
+            d.add(Stroke(d.nextId(), floatArrayOf(x0, 100f, 1f, (x0 + x1) / 2, 100f, 1f, x1, 100f, 1f), 0xFF000000.toInt(), 24f, PenType.PEN))
+            val bmp = Bitmap.createBitmap(400, 200, Bitmap.Config.ARGB_8888)
+            com.inkboard.canvas.Renderer().drawAll(Canvas(bmp), d, Affine(1f, if (dir < 0) 200f else 0f, 0f))
+            val ex = (x1 + if (dir < 0) 200f else 0f).toInt()
+            val sxp = (x0 + if (dir < 0) 200f else 0f).toInt()
+            assertEquals("end cap filled (dir $dir)", 0xFF000000.toInt(), bmp.getPixel(ex, 100))
+            assertEquals("start cap filled (dir $dir)", 0xFF000000.toInt(), bmp.getPixel(sxp, 100))
+        }
+    }
 }

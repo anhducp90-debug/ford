@@ -133,6 +133,7 @@ class CanvasGestureTest {
         penStroke(*line(100f, 400f, 500f, 400f))
         assertEquals(1, doc.elements.size)
         view.tool = Tool.ERASER
+        view.eraserMode = InkCanvasView.EraserMode.WHOLE
         penStroke(*line(300f, 300f, 300f, 500f))
         assertEquals(0, doc.elements.size)
         doc.undo()

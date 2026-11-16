@@ -1,3 +1,24 @@
+# InkBoard 1.0.2 — Audit công cụ tẩy (16/11/2026)
+
+| # | Lỗi | Nguyên nhân gốc | Sửa |
+|---|---|---|---|
+| X1 | **Tẩy một phần hình tròn lại xoá cả hình** | Tẩy một phần chỉ áp dụng cho nét vẽ tay; hình đã nắn (tròn, chữ nhật, đường thẳng) luôn bị xoá cả | Hình được chuyển thành đường viền dày điểm rồi cắt đúng chỗ quét; phần còn lại giữ màu và độ dày. Vòng kín được mở tại vết cắt nên cắt 1 lần ra 1 cung, không vỡ thành 2 |
+| X2 | Mặc định là "tẩy cả nét" | — | Mặc định **Một phần** |
+| X3 | **Tẩy khung (hình/ghi chú) xoá luôn nội dung bên trong** | Lệnh xoá kéo theo phần tử gắn kèm | Tẩy chỉ xoá đúng vật chạm vào; nội dung bên trong được giữ lại |
+| X4 | **Tẩy nút mindmap xoá cả nhánh** | Như trên | Nhánh con được chuyển lên nút cha gần nhất |
+| X5 | Tẩy một phần quét qua chữ/ghi chú/khối/ảnh vẫn xoá chúng | — | Chế độ Một phần không động vào các vật này |
+| X6 | Cắt một phần hình đang có đường nối làm mất đường nối | Đường nối trỏ vào hình gốc đã bị xoá | Đường nối chuyển sang đoạn dài nhất còn lại |
+| X7 | Nét nhanh (ít điểm) bị tẩy khuyết cả đoạn dài | Điểm thưa | Làm dày điểm theo cỡ tẩy trước khi cắt |
+| X8 | Chấm trắng ở đầu mọi nét bút (lỗi hiển thị có từ trước) | Đầu tròn của nét vẽ ngược chiều với thân nét | Đầu tròn cùng chiều thân nét; có test kiểm từng điểm ảnh |
+
+**Chế độ tẩy mới** (chạm lại nút Tẩy): *Một phần* · *Cả nét* · *Khoanh vùng* (khoanh vòng đỏ, xoá mọi thứ bên trong) · cỡ tẩy 6–48.
+
+Kịch bản tẩy (13/13 đạt): mặc định một phần · cắt cung hình tròn · cắt hình chữ nhật thành 2 · cắt giữa đường thẳng · không tẩy chữ/ghi chú/khối/ảnh · hoàn tác 1 bước khôi phục hình kèm nhãn và màu nền · tẩy khung giữ chữ viết bên trong · tẩy nút mindmap giữ nhánh · khoanh vùng chỉ xoá phần bên trong · nét trong ghi chú bị cắt vẫn gắn ghi chú · cắt hình có đường nối vẫn giữ nối · nét thưa cắt gọn · đầu nét không thủng.
+
+Tổng: 141 test Kotlin + 13 test Rust đạt.
+
+---
+
 # InkBoard 1.0.1 — Audit lõi theo kịch bản người dùng (14/11/2026)
 
 ## Vì sao audit 1.0.0 bỏ sót lỗi

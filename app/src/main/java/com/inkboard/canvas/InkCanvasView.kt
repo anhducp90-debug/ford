@@ -215,10 +215,17 @@ class InkCanvasView(context: Context) : View(context) {
     private val handleR = 16f * density
     /** Eraser radius on screen (dp) and whether it removes only the touched part of strokes. */
     var eraserSizeDp = 12f
-    var eraserPartial = false
+    /** PARTIAL cuts ink and shapes where touched; WHOLE removes touched items; AREA removes what a loop encloses. */
+    enum class EraserMode { PARTIAL, WHOLE, AREA }
+    var eraserMode = EraserMode.PARTIAL
+    var eraserPartial: Boolean
+        get() = eraserMode == EraserMode.PARTIAL
+        set(v) { eraserMode = if (v) EraserMode.PARTIAL else EraserMode.WHOLE }
+    private var areaErase = false
     private val eraserR get() = eraserSizeDp * density / scale
     /** Partial erase in progress: original stroke id → remaining pieces (x, y, p triples). */
     private val eraseWork = LinkedHashMap<Long, List<FloatArray>>()
+    private val eraseStyle = HashMap<Long, Triple<Int, Float, PenType>>()
 
     /** Main-thread timer (works even before the view is attached). */
     private val timer = android.os.Handler(android.os.Looper.getMainLooper())
@@ -567,8 +574,8 @@ class InkCanvasView(context: Context) : View(context) {
             }
         }
         if (eraseWork.isNotEmpty()) for ((id, parts) in eraseWork) {
-            val o = doc.byId(id) as? Stroke ?: continue
-            for (p in parts) renderer.drawLiveStroke(c, p, p.size / 3, o.color, o.width, o.pen, o.taper)
+            val (color, width, pen) = eraseStyle[id] ?: continue
+            for (p in parts) renderer.drawLiveStroke(c, p, p.size / 3, color, width, pen, false)
         }
         if (laserTrails.isNotEmpty() || (laser && penMode == PenMode.DRAW && liveN > 0)) drawLasers(c)
         if (!selPreview.isIdentity && snapLines.isNotEmpty()) {
@@ -855,9 +862,9 @@ class InkCanvasView(context: Context) : View(context) {
             lassoPath.moveTo(sx(lasso[0]), sy(lasso[1]))
             var i = 2
             while (i + 1 < lasso.size) { lassoPath.lineTo(sx(lasso[i]), sy(lasso[i + 1])); i += 2 }
-            overlayFill.color = 0x182F80ED
+            overlayFill.color = if (areaErase) 0x22D93025 else 0x182F80ED
             c.drawPath(lassoPath, overlayFill)
-            overlay.color = 0xFF2F80ED.toInt(); overlay.pathEffect = Renderer.dash
+            overlay.color = if (areaErase) 0xFFD93025.toInt() else 0xFF2F80ED.toInt(); overlay.pathEffect = Renderer.dash
             c.drawPath(lassoPath, overlay)
             overlay.pathEffect = null
         }
@@ -1046,6 +1053,7 @@ class InkCanvasView(context: Context) : View(context) {
             button && penButton == PenButton.PAN -> PenMode.PAN
             button && penButton == PenButton.ERASE -> PenMode.ERASE
             button && penButton == PenButton.SELECT -> selectModeAt(x, y)
+            (eraserTip || tool == Tool.ERASER) && eraserMode == EraserMode.AREA -> { areaErase = true; PenMode.LASSO }
             eraserTip || tool == Tool.ERASER -> PenMode.ERASE
             tool == Tool.SELECT -> selectModeAt(x, y)
             else -> PenMode.DRAW
@@ -1066,7 +1074,7 @@ class InkCanvasView(context: Context) : View(context) {
                 scheduleHold()
             }
             PenMode.ERASE -> {
-                hidden.clear(); eraseWork.clear()
+                hidden.clear(); eraseWork.clear(); eraseStyle.clear()
                 eraseEdges = if (doc.hasEdges) doc.elements.filterIsInstance<Edge>() else emptyList()
                 eraseAt(wx(x), wy(y))
             }
@@ -1292,8 +1300,9 @@ class InkCanvasView(context: Context) : View(context) {
         var changed = false
         for (el in doc.query(Box(x - r, y - r, x + r, y + r))) {
             if (el.id in doc.locked || el.id in doc.hiddenIds()) continue
-            if (eraserPartial && el is Stroke) {
-                if (splitStroke(el, x, y, r)) changed = true
+            if (eraserMode == EraserMode.PARTIAL) {
+                // Cut ink and drawn shapes; never touch text, notes, blocks, pictures or tables.
+                if (com.inkboard.model.Erase.cuttable(el) && cutElement(el, x, y, r)) changed = true
                 continue
             }
             if (el.id in hidden) continue
@@ -1307,28 +1316,20 @@ class InkCanvasView(context: Context) : View(context) {
         if (changed) invalidate()
     }
 
-    /** Remove the points of [s] within [r] of (x, y); keeps the remaining runs as pieces. */
-    private fun splitStroke(s: Stroke, x: Float, y: Float, r: Float): Boolean {
-        val pieces = eraseWork[s.id] ?: listOf(s.pts)
-        val rr = r + s.width / 2
-        var touched = false
-        val out = ArrayList<FloatArray>()
-        for (p in pieces) {
-            var run = ArrayList<Float>()
-            val n = p.size / 3
-            for (i in 0 until n) {
-                val inside = hypot(p[3 * i] - x, p[3 * i + 1] - y) <= rr
-                if (inside) {
-                    touched = true
-                    if (run.size >= 6) out += run.toFloatArray()
-                    run = ArrayList()
-                } else { run += p[3 * i]; run += p[3 * i + 1]; run += p[3 * i + 2] }
-            }
-            if (run.size >= 6) out += run.toFloatArray()
+    /** Cut [el] where the eraser (radius [r]) touches it; keeps the remaining runs. */
+    private fun cutElement(el: Element, x: Float, y: Float, r: Float): Boolean {
+        val (color, width, pen) = eraseStyle[el.id] ?: com.inkboard.model.Erase.style(el)
+        val rr = r + width / 2
+        val step = maxOf(r / 3f, 0.5f / scale)
+        val runs = eraseWork[el.id] ?: run {
+            // Cheap reject before converting the element to points.
+            if (!el.hit(x, y, r, solid = false)) return false
+            listOf(com.inkboard.model.Erase.outline(el, step, x, y) ?: return false)
         }
-        if (!touched) return false
-        eraseWork[s.id] = out
-        hidden += s.id
+        val out = com.inkboard.model.Erase.split(runs, x, y, rr) ?: return false
+        eraseWork[el.id] = out
+        eraseStyle[el.id] = Triple(color, width, pen)
+        hidden += el.id
         return true
     }
 
@@ -1377,17 +1378,30 @@ class InkCanvasView(context: Context) : View(context) {
                 if (hidden.isNotEmpty()) {
                     val ids = hidden.toList()
                     val work = LinkedHashMap(eraseWork)
-                    hidden.clear(); eraseWork.clear()
+                    val styles = HashMap(eraseStyle)
+                    hidden.clear(); eraseWork.clear(); eraseStyle.clear()
                     doc.batch {
                         val pieces = ArrayList<Pair<Long, Stroke>>()
                         for ((id, parts) in work) {
-                            val orig = doc.byId(id) as? Stroke ?: continue
-                            for (pp in parts) pieces += id to Stroke(doc.nextId(), pp, orig.color, orig.width, orig.pen, orig.taper)
+                            val (color, width, pen) = styles[id] ?: continue
+                            for (pp in parts) pieces += id to Stroke(doc.nextId(), pp, color, width, pen, false)
                         }
                         val containers = work.keys.associateWith { doc.containerOf(it) }
-                        doc.remove(ids)
-                        if (pieces.isNotEmpty()) {
+                        // Connectors of a cut item move to its longest remaining piece.
+                        val longest = pieces.groupBy { it.first }.mapValues { (_, l) -> l.maxBy { it.second.count }.second.id }
+                        val moved = doc.connections().filterIsInstance<Edge>().mapNotNull { e ->
+                            val f = longest[e.from]; val t = longest[e.to]
+                            if (f == null && t == null) null else Edge(e.id, f ?: e.from, t ?: e.to, e.color, e.width, e.label)
+                        }
+                        if (moved.isNotEmpty()) {
+                            // Pieces must exist before edges point at them.
                             doc.add(pieces.map { it.second })
+                            doc.replace(moved)
+                        }
+                        // Erasing removes only what was touched (never contents or whole branches).
+                        doc.removeExact(ids)
+                        if (pieces.isNotEmpty()) {
+                            if (moved.isEmpty()) doc.add(pieces.map { it.second })
                             for ((orig, piece) in pieces) containers[orig]?.takeIf { it != 0L && doc.byId(it) != null }?.let { doc.setContainer(piece.id, it) }
                         }
                     }
@@ -1440,7 +1454,7 @@ class InkCanvasView(context: Context) : View(context) {
     private fun penCancel() {
         timer.removeCallbacks(holdRunnable)
         stopAutoScroll()
-        liveN = 0; snapped = null; perspLine = null; hidden.clear(); eraseWork.clear(); lasso.clear()
+        liveN = 0; snapped = null; perspLine = null; hidden.clear(); eraseWork.clear(); eraseStyle.clear(); lasso.clear(); areaErase = false
         selPreview = Affine.IDENTITY
         penMode = PenMode.NONE
         invalidateContent()
@@ -1474,6 +1488,14 @@ class InkCanvasView(context: Context) : View(context) {
     private fun finishLasso() {
         val pts = lasso.toFloatArray()
         lasso.clear()
+        if (areaErase) {
+            areaErase = false
+            if (pts.size < 6) return
+            val folded = doc.hiddenIds()
+            val ids = doc.query(Box.of(pts)).filter { it.id !in doc.locked && it.id !in folded && it.inLasso(pts) }.map { it.id }
+            if (ids.isNotEmpty()) { doc.removeExact(ids); changed() }
+            return
+        }
         if (pts.size < 2) return
         var len = 0f
         var i = 2

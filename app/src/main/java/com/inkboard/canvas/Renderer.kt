@@ -414,8 +414,14 @@ class Renderer(
             for (i in n - 1 downTo 1) path.quadTo(rx[i], ry[i], (rx[i] + rx[i - 1]) / 2, (ry[i] + ry[i - 1]) / 2)
             path.lineTo(rx[0], ry[0])
             path.close()
-            path.addCircle(xs[0], ys[0], hs[0], Path.Direction.CW)
-            path.addCircle(xs[n - 1], ys[n - 1], hs[n - 1], Path.Direction.CW)
+            // Round caps must wind the same way as the outline, or WINDING fill punches holes at the ends.
+            var area = 0f
+            for (i in 0 until n) { val j = (i + 1) % n; area += lx[i] * ly[j] - lx[j] * ly[i] }
+            for (i in n - 1 downTo 0) { val j = if (i == 0) n - 1 else i - 1; area += rx[i] * ry[j] - rx[j] * ry[i] }
+            area += lx[n - 1] * ry[n - 1] - rx[n - 1] * ly[n - 1] + rx[0] * ly[0] - lx[0] * ry[0]
+            val dir = if (area >= 0f) Path.Direction.CW else Path.Direction.CCW
+            path.addCircle(xs[0], ys[0], hs[0], dir)
+            path.addCircle(xs[n - 1], ys[n - 1], hs[n - 1], dir)
             path.fillType = Path.FillType.WINDING
             return path
         }
