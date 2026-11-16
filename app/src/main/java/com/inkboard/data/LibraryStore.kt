@@ -54,12 +54,12 @@ class LibraryStore(root: File) {
             val out = lib.elements.map { e ->
                 val nid = map.getValue(e.id)
                 when (e) {
-                    is Edge -> Edge(nid, map[e.from] ?: e.from, map[e.to] ?: e.to, e.color, e.width, e.label)
+                    is Edge -> Edge(nid, map[e.from] ?: e.from, map[e.to] ?: e.to, e.color, e.width, e.label, e.elbow)
                     is Node -> (e.transformed(a) as Node).copy(parentId = map[e.parentId] ?: 0L).withId(nid)
                     is ImageEl -> {
                         val k = keyMap.getOrPut(e.key) { UUID.randomUUID().toString() }
                         lib.images[e.key]?.let { target.images[k] = it }
-                        ImageEl(nid, e.x + a.tx, e.y + a.ty, e.w, e.h, k)
+                        ImageEl(nid, e.x + a.tx, e.y + a.ty, e.w, e.h, k, e.rot)
                     }
                     else -> e.transformed(a).withId(nid)
                 }

@@ -168,7 +168,55 @@ class InkCanvasView(context: Context) : View(context) {
     private val hidden = HashSet<Long>()
 
     // ------------------------------------------------------------------ input
-    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE, EDGE_END }
+    private enum class PenMode { NONE, DRAW, LINE, ERASE, LASSO, DRAG, SCALE, PAN, HANDLE, EDGE_END, ROTATE }
+
+    // Rotating the selection with the handle above it.
+    private var selRot = 0f
+    private var rotCX = 0f
+    private var rotCY = 0f
+    private var rotStart = 0f
+    private val previewActive get() = !selPreview.isIdentity || selRot != 0f
+
+    /** Screen position of the rotate handle (above the selection frame), or null. */
+    private fun rotateHandle(): Pair<Float, Float>? {
+        if (selectedEdge() != null) return null
+        val r = planeSelRect() ?: return null
+        return r.centerX() to (r.top - 6f * density - 30f * density)
+    }
+
+    private fun startRotate(px: Float, py: Float) {
+        val b = doc.boundsOf(selection)
+        rotCX = b.cx; rotCY = b.cy
+        rotStart = atan2(wy(py) - rotCY, wx(px) - rotCX)
+        selRot = 0f
+    }
+
+    private fun moveRotate(px: Float, py: Float) {
+        var a = atan2(wy(py) - rotCY, wx(px) - rotCX) - rotStart
+        val step = (Math.PI / 12).toFloat() // 15°
+        val snapped = Math.round(a / step) * step
+        if (abs(a - snapped) < 0.07f) a = snapped
+        selRot = a
+        notifySelection(); invalidate()
+    }
+
+    private fun finishRotate() {
+        val t = selRot
+        selRot = 0f
+        if (t != 0f) {
+            doc.replace(selection.mapNotNull { id -> doc.byId(id)?.takeIf { it !is Edge }?.rotated(t, rotCX, rotCY) })
+            changed()
+        }
+        notifySelection(); invalidate()
+    }
+
+    /** Rotate the selection by [theta] around its centre (e.g. the "rotate 90°" action). */
+    fun rotateSelection(theta: Float) {
+        if (selection.isEmpty()) return
+        val b = doc.boundsOf(selection)
+        doc.replace(selection.mapNotNull { id -> doc.byId(id)?.takeIf { it !is Edge }?.rotated(theta, b.cx, b.cy) })
+        changed()
+    }
 
     // Dragging one end of a selected connector to re-attach it.
     private var edgeEnd = -1 // 0 = start (from), 1 = end (to)
@@ -536,7 +584,7 @@ class InkCanvasView(context: Context) : View(context) {
         val vr = visibleRegion()
         renderer.drawBackground(c, doc.background, vr.left, vr.top, vr.right, vr.bottom, scale, tx, ty, dark)
         if (showRulers) nav.drawOrigin(c, scale, tx, ty, dark) // under the content
-        val previewing = !selPreview.isIdentity
+        val previewing = previewActive
         c.save()
         c.translate(tx, ty)
         c.scale(scale, scale)
@@ -544,7 +592,7 @@ class InkCanvasView(context: Context) : View(context) {
         // Connections (edges + mind-map branches) follow moving nodes live.
         renderer.drawConnections(c, doc) { id ->
             val n = doc.byId(id)
-            if (n != null && previewing && id in selection) n.transformed(selPreview) else n
+            if (n != null && previewing && id in selection) (if (selRot != 0f) n.rotated(selRot, rotCX, rotCY) else n.transformed(selPreview)) else n
         }
 
         if (c.isHardwareAccelerated) {
@@ -561,6 +609,7 @@ class InkCanvasView(context: Context) : View(context) {
 
         if (previewing) {
             c.save()
+            if (selRot != 0f) c.rotate(Math.toDegrees(selRot.toDouble()).toFloat(), rotCX, rotCY)
             c.translate(selPreview.tx, selPreview.ty)
             c.scale(selPreview.s, selPreview.s)
             if (c.isHardwareAccelerated) {
@@ -920,6 +969,20 @@ class InkCanvasView(context: Context) : View(context) {
                 c.drawCircle(hx, hy, 7f * density, overlayFill)
                 c.drawCircle(hx, hy, 7f * density, overlay)
             }
+            rotateHandle()?.let { (hx, hy) ->
+                c.drawLine(hx, r.top, hx, hy + 9f * density, overlay)
+                c.drawCircle(hx, hy, 9f * density, overlayFill)
+                c.drawCircle(hx, hy, 9f * density, overlay)
+                c.drawArc(hx - 4.5f * density, hy - 4.5f * density, hx + 4.5f * density, hy + 4.5f * density, -60f, 280f, false, overlay)
+                if (selRot != 0f) {
+                    val deg = "${Math.round(Math.toDegrees(selRot.toDouble()))}°"
+                    val tw = hintPaint.measureText(deg)
+                    overlayFill.color = 0xE61F3A5F.toInt()
+                    c.drawRoundRect(hx + 16 * density, hy - 14 * density, hx + 32 * density + tw, hy + 14 * density, 14 * density, 14 * density, overlayFill)
+                    c.drawText(deg, hx + 24 * density, hy + 5 * density, hintPaint)
+                    overlayFill.color = Color.WHITE
+                }
+            }
         }
         if (penMode == PenMode.LASSO && lasso.size >= 4) {
             lassoPath.reset()
@@ -1152,6 +1215,7 @@ class InkCanvasView(context: Context) : View(context) {
     /** SELECT tool: decide between scaling, dragging and a new lasso. */
     private fun selectModeAt(x: Float, y: Float): PenMode {
         edgeEndAt(x, y).takeIf { it >= 0 }?.let { edgeEnd = it; moveEdgeEnd(x, y); return PenMode.EDGE_END }
+        rotateHandle()?.let { (hx, hy) -> if (hypot(x - hx, y - hy) <= handleR * 1.3f) { startRotate(x, y); return PenMode.ROTATE } }
         val r = planeSelRect()
         if (r != null) {
             r.inset(-6f * density, -6f * density)
@@ -1241,6 +1305,7 @@ class InkCanvasView(context: Context) : View(context) {
                 PenMode.DRAG -> updateDrag(x, y)
                 PenMode.HANDLE -> moveGuideHandle(handleDrag, x, y)
                 PenMode.EDGE_END -> moveEdgeEnd(x, y)
+                PenMode.ROTATE -> moveRotate(x, y)
                 PenMode.SCALE -> {
                     val f = (hypot(wx(x) - anchorWX, wy(y) - anchorWY) / scaleStartDist).coerceIn(0.05f, 50f)
                     selPreview = Affine.scaleAround(f, anchorWX, anchorWY)
@@ -1457,7 +1522,7 @@ class InkCanvasView(context: Context) : View(context) {
                         val longest = pieces.groupBy { it.first }.mapValues { (_, l) -> l.maxBy { it.second.count }.second.id }
                         val moved = doc.connections().filterIsInstance<Edge>().mapNotNull { e ->
                             val f = longest[e.from]; val t = longest[e.to]
-                            if (f == null && t == null) null else Edge(e.id, f ?: e.from, t ?: e.to, e.color, e.width, e.label)
+                            if (f == null && t == null) null else e.withEnds(f ?: e.from, t ?: e.to)
                         }
                         if (moved.isNotEmpty()) {
                             // Pieces must exist before edges point at them.
@@ -1480,6 +1545,7 @@ class InkCanvasView(context: Context) : View(context) {
             PenMode.PAN -> Unit
             PenMode.HANDLE -> { handleDrag = 0; doc.markDirty(); listener?.onGuidesChanged() }
             PenMode.EDGE_END -> finishEdgeEnd()
+            PenMode.ROTATE -> finishRotate()
             PenMode.NONE -> Unit
         }
         penMode = PenMode.NONE
@@ -1670,7 +1736,11 @@ class InkCanvasView(context: Context) : View(context) {
             val r = planeSelRect()?.apply { inset(-6f * density, -6f * density) }
             handleDrag = hitGuideHandle(f.sx, f.sy)
             val endAt = edgeEndAt(f.sx, f.sy)
-            if (endAt >= 0) {
+            val rh = rotateHandle()
+            if (rh != null && hypot(f.sx - rh.first, f.sy - rh.second) <= handleR * 1.3f) {
+                startRotate(f.sx, f.sy)
+                fingerGesture = 7
+            } else if (endAt >= 0) {
                 edgeEnd = endAt
                 fingerGesture = 6
             } else if (handleDrag != 0) {
@@ -1686,6 +1756,7 @@ class InkCanvasView(context: Context) : View(context) {
         when (fingerGesture) {
             4 -> moveGuideHandle(handleDrag, f.x, f.y)
             6 -> moveEdgeEnd(f.x, f.y)
+            7 -> moveRotate(f.x, f.y)
             1 -> {
                 tx += f.x - gestureCX; ty += f.y - gestureCY
                 gestureCX = f.x; gestureCY = f.y
@@ -1709,6 +1780,9 @@ class InkCanvasView(context: Context) : View(context) {
         if (eyedropping && fingers.isEmpty()) {
             if (canceled) { eyedropping = false; eyeValid = false; fingerGesture = 0; invalidate() } else finishEyedrop()
             return
+        }
+        if (fingerGesture == 7 && fingers.isEmpty()) {
+            fingerGesture = 0; finishRotate(); return
         }
         if (fingerGesture == 6 && fingers.isEmpty()) {
             fingerGesture = 0; finishEdgeEnd(); return

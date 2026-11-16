@@ -510,6 +510,7 @@ fun EditorScreen(store: DocStore, prefs: Prefs, meta: DocMeta, dark: Boolean, on
                         }
                         "reverse" -> actions.reverseEdge()
                         "elbow" -> actions.toggleElbow()
+                        "rot90" -> view.rotateSelection((Math.PI / 2).toFloat())
                     }
                     tick++
                 }
@@ -898,6 +899,7 @@ private fun ContextBar(
                     CtxButton("Màu", Icons.Outlined.Palette) { onAction("color") }
                     CtxButton("Sao chép", null, "⧉") { onAction("copy") }
                     CtxButton("Nhân đôi", Icons.Outlined.ContentCopy) { onAction("dup") }
+                    CtxButton("Xoay 90°", null, "↻") { onAction("rot90") }
                     if (singleEdge) CtxButton("Đổi chiều", null, "⇄") { onAction("reverse") }
                     if (singleEdge) CtxButton("Gấp khúc", null, "⌐") { onAction("elbow") }
                     CtxButton("Lên trên", Icons.Outlined.FlipToFront) { onAction("front") }

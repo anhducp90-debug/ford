@@ -170,7 +170,7 @@ class EditorActions(private val view: InkCanvasView) {
         val copies = sel.mapNotNull { e ->
             val nid = idMap.getValue(e.id)
             when (e) {
-                is Edge -> if (e.from in idMap && e.to in idMap) Edge(nid, idMap.getValue(e.from), idMap.getValue(e.to), e.color, e.width) else null
+                is Edge -> if (e.from in idMap && e.to in idMap) Edge(nid, idMap.getValue(e.from), idMap.getValue(e.to), e.color, e.width, e.label, e.elbow) else null
                 is Node -> {
                     val parent = if (e.parentId in idMap) idMap.getValue(e.parentId) else 0L
                     (e.transformed(Affine.translate(off, off)) as Node).copy(parentId = parent).withId(nid)
@@ -202,7 +202,7 @@ class EditorActions(private val view: InkCanvasView) {
                 is StickyEl -> e.withColor(sticky)
                 is Node -> e.copy(fill = fill)
                 is TableEl -> e.withColor(color)
-                is Edge -> Edge(e.id, e.from, e.to, color, e.width)
+                is Edge -> Edge(e.id, e.from, e.to, color, e.width, e.label, e.elbow)
                 else -> null
             }
         }
@@ -388,7 +388,7 @@ class EditorActions(private val view: InkCanvasView) {
 
     fun reverseEdge() {
         val e = selected().singleOrNull { it is Edge } as? Edge ?: return
-        doc.replace(listOf(Edge(e.id, e.to, e.from, e.color, e.width, e.label))); committed(listOf(e.id))
+        doc.replace(listOf(e.withEnds(e.to, e.from))); committed(listOf(e.id))
     }
 
     fun paste(clip: Document) {

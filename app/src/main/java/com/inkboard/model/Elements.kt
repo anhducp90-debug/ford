@@ -29,6 +29,17 @@ sealed class Element {
     abstract val bounds: Box
     abstract fun transformed(a: Affine): Element
     abstract fun withId(newId: Long): Element
+
+    /**
+     * Rotate by [theta] radians around (cx, cy). Ink and shapes rotate exactly;
+     * text, notes and pictures carry an angle; blocks, tables and connectors stay
+     * upright and only move (diagrams remain readable).
+     */
+    open fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val b = bounds
+        val (nx, ny) = Rot.point(b.cx, b.cy, cx, cy, theta)
+        return transformed(Affine.translate(nx - b.cx, ny - b.cy))
+    }
     /** Hit test; [solid] also counts the interior of closed elements. */
     abstract fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean
     /** True if this element counts as selected by a lasso polygon. */
@@ -68,6 +79,12 @@ class Stroke(
     }
 
     override fun withId(newId: Long) = Stroke(newId, pts, color, width, pen, taper)
+    override fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val out = pts.copyOf()
+        var i = 0
+        while (i + 1 < out.size) { val (x, y) = Rot.point(pts[i], pts[i + 1], cx, cy, theta); out[i] = x; out[i + 1] = y; i += 3 }
+        return Stroke(id, out, color, width, pen, taper)
+    }
     fun withColor(c: Int) = Stroke(id, pts, c, width, pen, taper)
 
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
@@ -138,6 +155,16 @@ class ShapeEl(
 
     fun withStyle(color: Int = this.color, fill: Int = this.fill) = ShapeEl(id, kind, geo, color, width, fill, label, labelColor)
     fun withLabel(t: String, c: Int = labelColor) = ShapeEl(id, kind, geo, color, width, fill, t, c)
+    override fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val g = geo.copyOf()
+        if (kind == ShapeKind.ELLIPSE) {
+            val (x, y) = Rot.point(geo[0], geo[1], cx, cy, theta); g[0] = x; g[1] = y; g[4] = geo[4] + theta
+        } else {
+            var i = 0
+            while (i + 1 < g.size) { val (x, y) = Rot.point(geo[i], geo[i + 1], cx, cy, theta); g[i] = x; g[i + 1] = y; i += 2 }
+        }
+        return ShapeEl(id, kind, g, color, width, fill, label, labelColor)
+    }
 
     override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
         val pad = tol + width / 2
@@ -165,16 +192,27 @@ class TextEl(
     val text: String,
     val size: Float,
     val color: Int,
+    /** Rotation (radians) around the centre of the unrotated box. */
+    val rot: Float = 0f,
 ) : Element() {
-    override val bounds: Box by lazy {
+    /** Unrotated text box. */
+    val box: Box by lazy {
         val w = TextMetrics.width(text, size)
         Box(x, y, x + max(w, size), y + TextMetrics.lines(text) * TextMetrics.lineHeight(size))
     }
-    override fun transformed(a: Affine) = TextEl(id, a.x(x), a.y(y), text, size * a.s, color)
-    override fun withId(newId: Long) = TextEl(newId, x, y, text, size, color)
-    fun withText(t: String) = TextEl(id, x, y, t, size, color)
-    fun withColor(c: Int) = TextEl(id, x, y, text, size, c)
-    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean) = bounds.inset(-tol).contains(x, y)
+    override val bounds: Box by lazy { Rot.box(box, rot) }
+    override fun transformed(a: Affine) = TextEl(id, a.x(x), a.y(y), text, size * a.s, color, rot)
+    override fun withId(newId: Long) = TextEl(newId, x, y, text, size, color, rot)
+    fun withText(t: String) = TextEl(id, x, y, t, size, color, rot)
+    fun withColor(c: Int) = TextEl(id, x, y, text, size, c, rot)
+    override fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val (nx, ny) = Rot.point(box.cx, box.cy, cx, cy, theta)
+        return TextEl(id, x + nx - box.cx, y + ny - box.cy, text, size, color, rot + theta)
+    }
+    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
+        val (ux, uy) = Rot.point(x, y, box.cx, box.cy, -rot)
+        return box.inset(-tol).contains(ux, uy)
+    }
 }
 
 class StickyEl(
@@ -186,13 +224,22 @@ class StickyEl(
     val text: String,
     val color: Int,
     val size: Float,
+    val rot: Float = 0f,
 ) : Element() {
-    override val bounds: Box by lazy { Box(x, y, x + w, y + h) }
-    override fun transformed(a: Affine) = StickyEl(id, a.x(x), a.y(y), w * a.s, h * a.s, text, color, size * a.s)
-    override fun withId(newId: Long) = StickyEl(newId, x, y, w, h, text, color, size)
-    fun withText(t: String) = StickyEl(id, x, y, w, h, t, color, size)
-    fun withColor(c: Int) = StickyEl(id, x, y, w, h, text, c, size)
-    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean) = bounds.inset(-tol).contains(x, y)
+    val box: Box get() = Box(x, y, x + w, y + h)
+    override val bounds: Box by lazy { Rot.box(box, rot) }
+    override fun transformed(a: Affine) = StickyEl(id, a.x(x), a.y(y), w * a.s, h * a.s, text, color, size * a.s, rot)
+    override fun withId(newId: Long) = StickyEl(newId, x, y, w, h, text, color, size, rot)
+    fun withText(t: String) = StickyEl(id, x, y, w, h, t, color, size, rot)
+    fun withColor(c: Int) = StickyEl(id, x, y, w, h, text, c, size, rot)
+    override fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val (nx, ny) = Rot.point(x + w / 2, y + h / 2, cx, cy, theta)
+        return StickyEl(id, nx - w / 2, ny - h / 2, w, h, text, color, size, rot + theta)
+    }
+    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
+        val (ux, uy) = Rot.point(x, y, this.x + w / 2, this.y + h / 2, -rot)
+        return box.inset(-tol).contains(ux, uy)
+    }
 }
 
 /** Connectable box used by flowcharts and mind maps. */
@@ -277,11 +324,20 @@ class ImageEl(
     val h: Float,
     /** Key into Document.images. */
     val key: String,
+    val rot: Float = 0f,
 ) : Element() {
-    override val bounds: Box by lazy { Box(x, y, x + w, y + h) }
-    override fun transformed(a: Affine) = ImageEl(id, a.x(x), a.y(y), w * a.s, h * a.s, key)
-    override fun withId(newId: Long) = ImageEl(newId, x, y, w, h, key)
-    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean) = bounds.inset(-tol).contains(x, y)
+    val box: Box get() = Box(x, y, x + w, y + h)
+    override val bounds: Box by lazy { Rot.box(box, rot) }
+    override fun transformed(a: Affine) = ImageEl(id, a.x(x), a.y(y), w * a.s, h * a.s, key, rot)
+    override fun withId(newId: Long) = ImageEl(newId, x, y, w, h, key, rot)
+    override fun rotated(theta: Float, cx: Float, cy: Float): Element {
+        val (nx, ny) = Rot.point(x + w / 2, y + h / 2, cx, cy, theta)
+        return ImageEl(id, nx - w / 2, ny - h / 2, w, h, key, rot + theta)
+    }
+    override fun hit(x: Float, y: Float, tol: Float, solid: Boolean): Boolean {
+        val (ux, uy) = Rot.point(x, y, this.x + w / 2, this.y + h / 2, -rot)
+        return box.inset(-tol).contains(ux, uy)
+    }
 }
 
 /** Simple table: uniform grid; write in cells by hand or with text on top. */

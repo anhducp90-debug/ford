@@ -63,13 +63,18 @@ class Renderer(
         when (e) {
             is Stroke -> drawStroke(c, e)
             is ShapeEl -> drawShape(c, e)
-            is TextEl -> drawText(c, e)
-            is StickyEl -> drawSticky(c, e)
+            is TextEl -> rotatedAbout(c, e.rot, e.box) { drawText(c, e) }
+            is StickyEl -> rotatedAbout(c, e.rot, e.box) { drawSticky(c, e) }
             is Node -> drawNode(c, e)
-            is ImageEl -> drawImage(c, doc, e)
+            is ImageEl -> rotatedAbout(c, e.rot, e.box) { drawImage(c, doc, e) }
             is TableEl -> drawTable(c, e)
             is Edge -> Unit // drawn by drawConnections
         }
+    }
+
+    private inline fun rotatedAbout(c: Canvas, rot: Float, b: com.inkboard.model.Box, block: () -> Unit) {
+        if (rot == 0f) { block(); return }
+        c.save(); c.rotate(Math.toDegrees(rot.toDouble()).toFloat(), b.cx, b.cy); block(); c.restore()
     }
 
     /** Edges and mind-map branches. [lookup] lets callers substitute moving nodes. */

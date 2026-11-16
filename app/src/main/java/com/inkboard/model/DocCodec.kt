@@ -33,6 +33,9 @@ object DocCodec {
     private const val Q = 64f
     private const val T_EDGE2 = 10
     private const val T_EDGE3 = 11
+    private const val T_TEXT2 = 12
+    private const val T_STICKY2 = 13
+    private const val T_IMAGE2 = 14
 
     fun write(doc: Document, out: OutputStream) {
         val head = DataOutputStream(out)
@@ -182,12 +185,12 @@ object DocCodec {
                 d.writeStr(e.label); d.writeInt(e.labelColor)
             }
             is TextEl -> {
-                d.writeByte(T_TEXT); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
-                d.writeStr(e.text); d.writeFloat(e.size); d.writeInt(e.color)
+                d.writeByte(T_TEXT2); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
+                d.writeStr(e.text); d.writeFloat(e.size); d.writeInt(e.color); d.writeFloat(e.rot)
             }
             is StickyEl -> {
-                d.writeByte(T_STICKY); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
-                d.writeFloat(e.w); d.writeFloat(e.h); d.writeStr(e.text); d.writeInt(e.color); d.writeFloat(e.size)
+                d.writeByte(T_STICKY2); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
+                d.writeFloat(e.w); d.writeFloat(e.h); d.writeStr(e.text); d.writeInt(e.color); d.writeFloat(e.size); d.writeFloat(e.rot)
             }
             is Node -> {
                 d.writeByte(T_NODE); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
@@ -206,8 +209,8 @@ object DocCodec {
                 for ((k, v) in e.cells) { d.writeInt(k); d.writeStr(v) }
             }
             is ImageEl -> {
-                d.writeByte(T_IMAGE); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
-                d.writeFloat(e.w); d.writeFloat(e.h); d.writeStr(e.key)
+                d.writeByte(T_IMAGE2); d.writeLong(e.id); d.writeFloat(e.x); d.writeFloat(e.y)
+                d.writeFloat(e.w); d.writeFloat(e.h); d.writeStr(e.key); d.writeFloat(e.rot)
             }
         }
     }
@@ -241,6 +244,9 @@ object DocCodec {
             else ShapeEl(id, kind, geo, color, w, fill)
         }
         T_TEXT -> TextEl(d.readLong(), d.readFloat(), d.readFloat(), d.readStr(), d.readFloat(), d.readInt())
+        T_TEXT2 -> TextEl(d.readLong(), d.readFloat(), d.readFloat(), d.readStr(), d.readFloat(), d.readInt(), d.readFloat())
+        T_STICKY2 -> StickyEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr(), d.readInt(), d.readFloat(), d.readFloat())
+        T_IMAGE2 -> ImageEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr(), d.readFloat())
         T_STICKY -> StickyEl(d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr(), d.readInt(), d.readFloat())
         T_NODE -> Node(
             d.readLong(), d.readFloat(), d.readFloat(), d.readFloat(), d.readFloat(), d.readStr(),

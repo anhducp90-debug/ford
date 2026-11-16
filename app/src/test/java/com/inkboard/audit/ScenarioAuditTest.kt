@@ -686,4 +686,49 @@ class ScenarioAuditTest {
         val e = DocCodec.read(ByteArrayInputStream(bytes)).elements.filterIsInstance<Edge>().single()
         assertTrue(e.elbow); assertEquals("Có", e.label)
     }
+
+    // ---------------------------------------------------------------- rotation
+
+    private fun selectAndHandle(ids: List<Long>): Pair<Float, Float> {
+        view.tool = Tool.SELECT
+        view.select(ids)
+        val r = view.selectionScreenRect()!!
+        return r.centerX() to (r.top - 6f * view.resources.displayMetrics.density - 30f * view.resources.displayMetrics.density)
+    }
+
+    @Test fun r01_rotateHandleTurnsInkByPen() {
+        pen(seg(300f, 600f, 700f, 600f, wobble = 0f))
+        val s0 = doc.elements.single() as Stroke
+        val (hx, hy) = selectAndHandle(listOf(s0.id))
+        val b = view.selectionScreenRect()!!
+        val cx = b.centerX(); val cy = b.centerY()
+        // Drag the handle a quarter turn clockwise around the centre.
+        val rad = cy - hy
+        pen((0..20).map { i -> val a = -Math.PI / 2 + Math.PI / 2 * i / 20; (cx + rad * Math.cos(a)).toFloat() to (cy + rad * Math.sin(a)).toFloat() })
+        val s1 = doc.elements.single() as Stroke
+        val dx = s1.pts[s1.pts.size - 3] - s1.pts[0]; val dy = s1.pts[s1.pts.size - 2] - s1.pts[1]
+        assertTrue("horizontal line became vertical: dx=$dx dy=$dy", kotlin.math.abs(dx) < 3f && kotlin.math.abs(dy) > 300f / view.scale)
+        doc.undo()
+        assertEquals(s0.pts[0], (doc.elements.single() as Stroke).pts[0], 0.01f)
+    }
+
+    @Test fun r02_rotateNoteWithFinger() {
+        doc.add(StickyEl(doc.nextId(), -100f, -100f, 200f, 200f, "Ghi chú", 0xFFFFF59D.toInt(), 16f)); view.onDocMutated()
+        val st = doc.elements.single()
+        val (hx, hy) = selectAndHandle(listOf(st.id))
+        val b = view.selectionScreenRect()!!
+        fingerDrag(hx, hy, b.right + 200f, b.centerY())
+        assertTrue((doc.byId(st.id) as StickyEl).rot > 1.2f)
+        render()
+    }
+
+    @Test fun r03_rotate90ActionAndSnapping() {
+        pen(rectStroke(200f, 300f, 600f, 500f), hold = true)
+        val s = doc.elements.single() as ShapeEl
+        view.select(listOf(s.id))
+        view.rotateSelection((Math.PI / 2).toFloat())
+        val r = doc.elements.single() as ShapeEl
+        val bb0 = Box.of(s.geo); val bb1 = Box.of(r.geo)
+        assertEquals(bb0.w, bb1.h, 1f); assertEquals(bb0.h, bb1.w, 1f)
+    }
 }

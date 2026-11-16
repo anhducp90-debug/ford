@@ -103,3 +103,21 @@ object Geo {
         return if (abs(angle - q) <= tol) q else angle
     }
 }
+
+/** Rotation helpers (radians, screen orientation: positive = clockwise on screen). */
+object Rot {
+    fun point(x: Float, y: Float, cx: Float, cy: Float, theta: Float): Pair<Float, Float> {
+        if (theta == 0f) return x to y
+        val c = kotlin.math.cos(theta); val s = kotlin.math.sin(theta)
+        val dx = x - cx; val dy = y - cy
+        return (cx + dx * c - dy * s) to (cy + dx * s + dy * c)
+    }
+
+    /** Axis-aligned bounds of [b] rotated by [theta] around its centre. */
+    fun box(b: Box, theta: Float): Box {
+        if (theta == 0f || b.isEmpty) return b
+        val c = abs(kotlin.math.cos(theta)); val s = abs(kotlin.math.sin(theta))
+        val hw = b.w / 2 * c + b.h / 2 * s; val hh = b.w / 2 * s + b.h / 2 * c
+        return Box(b.cx - hw, b.cy - hh, b.cx + hw, b.cy + hh)
+    }
+}
