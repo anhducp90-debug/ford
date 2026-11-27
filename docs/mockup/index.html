@@ -1,0 +1,239 @@
+<title>Mô hình QuanLyNPL</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: cửa sổ ứng dụng Windows — thanh điều hướng trái, vùng làm việc phải. Chất liệu: vải denim, chỉ may cam cho cảnh báo. */
+:root{
+  --bg:#e9edf3; --surface:#ffffff; --surface2:#f4f6fa; --ink:#1b2435; --muted:#5d6a80; --line:#d3dae6;
+  --accent:#2d5b9a; --accent-ink:#ffffff; --accent-soft:#dce7f6;
+  --ok:#1d7a4b; --ok-soft:#dcf1e5; --warn:#a85d00; --warn-soft:#fbe9d0; --bad:#b3261e; --bad-soft:#f9dedc;
+  --font:"Be Vietnam Pro","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f141c; --surface:#18202b; --surface2:#1f2835; --ink:#e7ecf4; --muted:#93a0b6; --line:#2c3748;
+  --accent:#7fa9e6; --accent-ink:#0d1522; --accent-soft:#233450;
+  --ok:#59c58c; --ok-soft:#173a2a; --warn:#f0a94a; --warn-soft:#3d2c12; --bad:#f08379; --bad-soft:#40201e; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141c; --surface:#18202b; --surface2:#1f2835; --ink:#e7ecf4; --muted:#93a0b6; --line:#2c3748;
+  --accent:#7fa9e6; --accent-ink:#0d1522; --accent-soft:#233450;
+  --ok:#59c58c; --ok-soft:#173a2a; --warn:#f0a94a; --warn-soft:#3d2c12; --bad:#f08379; --bad-soft:#40201e; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.45;
+  padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+button,input,select{font:inherit;color:inherit}
+.note{max-width:1180px;margin:0 auto 10px;color:var(--muted);font-size:12.5px}
+.win{max-width:1180px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  display:grid;grid-template-columns:200px minmax(0,1fr);grid-template-rows:auto minmax(560px,auto)}
+.titlebar{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface2);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+.titlebar b{color:var(--ink);font-weight:600}
+.titlebar .sp{flex:1}
+.nav{background:var(--surface2);border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.nav h6{margin:12px 8px 4px;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.nav button{all:unset;cursor:pointer;padding:7px 10px;border-radius:6px;display:block}
+.nav button:hover{background:var(--accent-soft)}
+.nav button[aria-current=page]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.nav button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.main{padding:18px 20px;min-width:0;overflow-x:auto}
+h1{font-size:19px;margin:0 0 2px;font-weight:700}
+.sub{color:var(--muted);margin:0 0 14px;font-size:13px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.btn{border:1px solid var(--line);background:var(--surface);padding:6px 12px;border-radius:6px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.danger{color:var(--bad)}
+.grid2{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:18px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+td.n,th.n{text-align:right}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--accent-soft)}
+tr.sel td{background:var(--accent-soft)}
+input[type=number],input[type=text],select{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:4px 7px;width:100%;max-width:130px}
+input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
+.chip{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}.chip.warn{background:var(--warn-soft);color:var(--warn)}.chip.bad{background:var(--bad-soft);color:var(--bad)}.chip.muted{background:var(--surface2);color:var(--muted)}
+.banner{display:flex;gap:12px;align-items:center;padding:10px 14px;border-radius:8px;margin:0 0 12px;font-weight:600;border:1px solid}
+.banner.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)}.banner.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad)}.banner.warn{background:var(--warn-soft);color:var(--warn);border-color:var(--warn)}
+.banner small{font-weight:400;color:var(--ink)}
+.panel{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);min-width:0}
+.panel h3{margin:0 0 8px;font-size:13px}
+.hint{color:var(--muted);font-size:12.5px}
+.warnline{color:var(--warn);font-size:12.5px;font-weight:500}
+.lock{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
+.lock[hidden]{display:none}
+.lock .box{width:min(320px,100%);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:26px 24px;text-align:center}
+.lock h2{margin:0 0 4px;font-size:18px}
+.dots{display:flex;gap:10px;justify-content:center;margin:16px 0}
+.dots i{width:13px;height:13px;border-radius:50%;border:2px solid var(--accent)}
+.dots i.on{background:var(--accent)}
+.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.keys button{padding:11px 0;border-radius:8px;border:1px solid var(--line);background:var(--surface2);font-size:17px;cursor:pointer}
+.keys button:hover{border-color:var(--accent)}
+.tree{list-style:none;margin:0;padding:0}.tree li{padding:5px 8px;border-radius:5px}.tree ul{list-style:none;padding-left:16px;margin:2px 0}
+.tag{font-size:11px;color:var(--muted)}
+.toast{position:fixed;left:50%;bottom:max(20px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px;z-index:60;font-size:13px;max-width:calc(100% - 32px)}
+.scroll{overflow-x:auto}
+@media (max-width:820px){
+  .win{grid-template-columns:minmax(0,1fr)}
+  .nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.nav h6{display:none}.nav button{white-space:nowrap}
+  .grid2{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:no-preference){.main>*{animation:in .18s ease-out}@keyframes in{from{opacity:.4}to{opacity:1}}}
+</style>
+
+<p class="note">Mô hình giao diện để duyệt trước khi lập trình. Đây là bản chạy thử, không lưu dữ liệu; số liệu mẫu. Phân rã, nhu cầu, cảnh báo thiếu và đề xuất cấp phát tính bằng cùng quy tắc với phần lõi (làm tròn 2 số lẻ ở tổng từng mã NPL).</p>
+<div class="win" id="win">
+  <div class="titlebar"><b>Quản lý Nguyên Phụ liệu</b><span>Dữ liệu: C:\Users\…\QuanLyNPL\data.db</span><span class="sp"></span><span id="lockInfo">Tự khóa sau 5 phút không thao tác</span><button class="btn" id="lockNow">Khóa ngay</button></div>
+  <nav class="nav" id="nav"></nav>
+  <main class="main" id="main"></main>
+</div>
+<div class="lock" id="lock">
+  <div class="box"><h2>Quản lý NPL</h2><div class="hint">Nhập mã PIN để mở khóa</div>
+    <div class="dots" id="dots"></div><div id="pinMsg" class="warnline" style="min-height:20px"></div>
+    <div class="keys" id="keys"></div><p class="hint" style="margin:14px 0 0">Mô hình: nhập 4 số bất kỳ.</p></div>
+</div>
+<div id="toastHost"></div>
+
+<script>
+// ---------- Dữ liệu mẫu ----------
+const DEF_SIZES=["110/56","110/60","120/60","130/64"];
+const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"S M L XL"}];
+const MAP={AO_DO:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},AO_XANH:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},QUAN_DEN:{"110/56":"S","110/60":"M","120/60":"M","130/64":"L"}};
+const MATS={VAI_DO:["Vải đỏ","m",180,0],VAI_XANH:["Vải xanh","m",150,0],VAI_DEN:["Vải đen","m",160,20],CHI:["Chỉ may","cuộn",4,0],NUT:["Nút","cái",800,0],KHOA:["Khóa kéo","cái",500,0],NHAN:["Nhãn chính","cái",300,0]};
+// BOM đã chọn phiên bản theo ngày lập đơn. size '*' = nền; size cụ thể ghi đè nền cùng (BOM, NPL).
+const BOMS=[
+ {id:"BOM cắt",ver:"v2 (12/03/2026)",scope:null,lines:[
+  {m:"VAI_DO",s:"*",u:1.2,w:3,v:"AO_DO"},{m:"VAI_DO",s:"M",u:1.3,w:3,v:"AO_DO"},{m:"VAI_DO",s:"L",u:1.4,w:3,v:"AO_DO"},
+  {m:"VAI_XANH",s:"*",u:1.2,w:3,v:"AO_XANH"},{m:"VAI_XANH",s:"M",u:1.3,w:3,v:"AO_XANH"},{m:"VAI_XANH",s:"L",u:1.4,w:3,v:"AO_XANH"},
+  {m:"VAI_DEN",s:"*",u:1,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"S",u:.95,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"M",u:1.05,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"L",u:1.15,w:3,v:"QUAN_DEN"}]},
+ {id:"BOM phụ liệu",ver:"v1 (02/03/2026)",scope:null,lines:[
+  {m:"CHI",s:"*",u:.02,w:0,v:null},{m:"NHAN",s:"*",u:1,w:0,v:null},{m:"NUT",s:"*",u:5,w:0,v:"AO_DO"},{m:"NUT",s:"*",u:5,w:0,v:"AO_XANH"},{m:"KHOA",s:"*",u:1,w:0,v:"QUAN_DEN"}]}];
+const st={screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock"};
+const fmt=(n,d=2)=>Number(n).toLocaleString("vi-VN",{minimumFractionDigits:d,maximumFractionDigits:d});
+const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
+
+// ---------- Phần lõi (cùng quy tắc với QuanLyNPL.Core) ----------
+function breakdown(){const acc={};for(const ds of DEF_SIZES){const q=+st.sets[ds]||0;for(const v of VARIANTS){const t=MAP[v.c][ds];const k=v.c+"|"+t;acc[k]=(acc[k]||0)+q*v.k}}
+  return Object.entries(acc).map(([k,q])=>{const[v,s]=k.split("|");return{v,s,q}})}
+function demand(){const rows=breakdown(),src=[];
+  for(const r of rows){for(const b of BOMS){const ls=b.lines.filter(l=>l.v===null||l.v===r.v);
+    for(const m of [...new Set(ls.map(l=>l.m))]){const g=ls.filter(l=>l.m===m);const sp=g.filter(l=>l.s===r.s);const ch=sp.length?sp:g.filter(l=>l.s==="*");
+      for(const l of ch)src.push({bom:b.id,v:r.v,s:r.s,m,q:r.q*l.u*(1+l.w/100),u:l.u,w:l.w,base:l.s==="*"})}}}
+  const tot={};src.forEach(x=>tot[x.m]=(tot[x.m]||0)+x.q);Object.keys(tot).forEach(k=>tot[k]=r2(tot[k]));return{rows,src,tot}}
+function avail(d){return Object.keys(d.tot).sort().map(m=>{const[,,oh,rs]=MATS[m];const av=oh-rs;return{m,need:d.tot[m],oh,rs,av,short:Math.max(0,r2(d.tot[m]-av))}})}
+
+// ---------- Khung ----------
+const SCREENS=[["Nghiệp vụ",[["order","Đơn hàng"],["check","Kiểm tra đáp ứng"],["issue","Xuất kho (cấp phát)"],["stock","Nhập kho / Kiểm kê"]]],
+ ["Danh mục",[["mat","Nguyên phụ liệu"],["product","Mã hàng & chủng loại"],["grid","Lưới size"],["bom","BOM & định mức"]]],["Hệ thống",[["report","Báo cáo"],["backup","Sao lưu / Phục hồi"]]]];
+function nav(){document.getElementById("nav").innerHTML=SCREENS.map(([h,items])=>`<h6>${h}</h6>`+items.map(([id,t])=>`<button data-s="${id}" ${st.screen===id?'aria-current="page"':''}>${t}</button>`).join("")).join("");
+  document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{st.screen=b.dataset.s;st.drill=null;go()})}
+function toast(t){const e=document.createElement("div");e.className="toast";e.textContent=t;document.body.appendChild(e);setTimeout(()=>e.remove(),2400)}
+function go(){nav();document.getElementById("main").innerHTML=VIEWS[st.screen]();if(AFTER[st.screen])AFTER[st.screen]()}
+function statusBanner(d,a){if(d.rows.length===0)return"";const sh=a.filter(x=>x.short>0);
+  return sh.length?`<div class="banner bad">THIẾU NPL <small>${sh.length} mã thiếu: ${sh.map(x=>x.m).join(", ")}</small></div>`:`<div class="banner ok">ĐỦ NPL <small>Tồn khả dụng đáp ứng toàn bộ nhu cầu</small></div>`}
+
+// ---------- Màn hình ----------
+const VIEWS={
+order(){return `<h1>Đơn hàng</h1><p class="sub">Nhập số bộ theo size mặc định; hệ thống tự phân rã theo chủng loại và quy đổi size.</p>
+ <div class="bar"><button class="btn primary" data-t="Đã lưu đơn và chụp cấu hình (snapshot)">Lưu đơn</button><button class="btn" data-t="Mở màn Điều chỉnh đơn: xem chênh lệch nhu cầu trước khi lưu">Điều chỉnh đơn…</button><button class="btn" data-t="Lịch sử cấu hình: v1 Lập đơn 02/04/2026">Lịch sử cấu hình</button></div>
+ <div class="grid2"><div class="panel"><h3>Thông tin đơn</h3>
+  <table><tr><td class="hint">Khách hàng</td><td><select><option>KH01 – Công ty Hoàng Long</option></select></td></tr>
+  <tr><td class="hint">Mã hàng</td><td><select><option>MH-2204 – Bộ đồng phục</option></select></td></tr>
+  <tr><td class="hint">Số đơn</td><td>DH-0412</td></tr><tr><td class="hint">Ngày đặt</td><td>02/04/2026</td></tr></table>
+  <h3 style="margin-top:14px">Số bộ theo size mặc định <span class="tag">(lưới Vóc/Chiều cao)</span></h3>
+  <table><tr><th>Size</th><th class="n">Số bộ</th></tr>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td class="n"><input type="number" min="0" data-ds="${s}" value="${st.sets[s]}" aria-label="Số bộ size ${s}"></td></tr>`).join("")}
+  <tr><td><b>Tổng</b></td><td class="n" id="totSets"></td></tr></table></div>
+  <div class="panel scroll"><h3>Kết quả phân rã (theo chủng loại và size đích)</h3><div id="outPane"></div></div></div>`},
+check(){const d=demand(),a=avail(d);return `<h1>Kiểm tra khả năng đáp ứng</h1><p class="sub">Đơn DH-0412 · tồn khả dụng = tồn thực tế − lượng giữ cho đơn khác</p>${statusBanner(d,a)}
+ <div class="bar"><label><input type="checkbox" id="onlyShort"> Chỉ mã thiếu</label><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button><span class="hint">Bấm một dòng để xem nhu cầu đến từ BOM / chủng loại / size nào.</span></div>
+ <div style="display:grid;gap:14px"><div class="scroll"><table id="chk"><thead><tr><th>Mã NPL</th><th>Tên</th><th>ĐVT</th><th class="n">Nhu cầu</th><th class="n">Tồn</th><th class="n">Đã giữ</th><th class="n">Khả dụng</th><th class="n">Thiếu</th><th></th></tr></thead><tbody id="chkBody"></tbody></table></div>
+ <div class="panel scroll"><h3 id="drillT">Chi tiết nguồn nhu cầu</h3><div id="drill" class="hint">Chọn một mã NPL.</div></div></div>`},
+issue(){const d=demand(),a=avail(d);return `<h1>Phiếu xuất nháp PX-0097</h1><p class="sub">Đơn DH-0412 · phạm vi: cả đơn · đề xuất = nhu cầu kỳ − số dư đầu (đầu kỳ: 0)</p>
+ <div class="banner warn">Kho nhập thực cấp. Nhập 0 được giữ nguyên, hệ thống không tự thay bằng đề xuất. <small>Chưa xác nhận thì chưa trừ tồn.</small></div>
+ <div class="scroll"><table><thead><tr><th>Mã NPL</th><th>Tên</th><th class="n">Đề xuất</th><th class="n">Tồn khả dụng</th><th class="n">Thực cấp</th><th>Cảnh báo</th></tr></thead><tbody>
+ ${a.map(x=>`<tr><td>${x.m}</td><td>${MATS[x.m][0]}</td><td class="n">${fmt(x.need)}</td><td class="n">${fmt(x.av)}</td><td class="n"><input type="number" min="0" data-act="${x.m}" value="${st.actual[x.m]??''}" placeholder="chưa nhập"></td><td id="w-${x.m}"></td></tr>`).join("")}</tbody></table></div>
+ <div class="bar" style="margin-top:12px"><button class="btn primary" id="confirmIssue">Xác nhận xuất</button><button class="btn danger" data-t="Đã hủy phiếu nháp (ghi nhật ký)">Hủy phiếu nháp</button><span class="hint" id="issueMsg"></span></div>`},
+stock(){return `<h1>Nhập kho / Kiểm kê</h1><p class="sub">Phiếu nháp không đổi tồn; chỉ phiếu đã xác nhận mới ghi sổ.</p>
+ <div class="grid2"><div class="panel"><h3>Phiếu nhập NK-0231 <span class="chip muted">Nháp</span></h3><table><thead><tr><th>Mã NPL</th><th class="n">Số lượng</th><th>ĐVT</th></tr></thead>
+  <tr><td>CHI</td><td class="n">12,00</td><td>cuộn</td></tr><tr><td>NUT</td><td class="n">600,00</td><td>cái</td></tr></table>
+  <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Đã xác nhận nhập: tồn CHI +12, NUT +600">Xác nhận nhập</button><button class="btn">Thêm dòng</button></div></div>
+ <div class="panel"><h3>Kiểm kê KK-0008 <span class="chip muted">Nháp</span></h3><table><thead><tr><th>Mã NPL</th><th class="n">Tồn sổ</th><th class="n">Thực đếm</th><th class="n">Chênh lệch</th></tr></thead>
+  <tr><td>VAI_DO</td><td class="n">180,00</td><td class="n"><input type="number" value="176" aria-label="Thực đếm VAI_DO"></td><td class="n"><span class="chip warn">−4,00</span></td></tr>
+  <tr><td>KHOA</td><td class="n">500,00</td><td class="n"><input type="number" value="500" aria-label="Thực đếm KHOA"></td><td class="n"><span class="chip ok">0,00</span></td></tr></table>
+  <p class="hint">Chênh lệch tính lại tại thời điểm chốt. Âm → điều chỉnh giảm, dương → điều chỉnh tăng; lưu số trước/sau và lý do.</p>
+  <div class="bar"><input type="text" placeholder="Lý do kiểm kê" aria-label="Lý do" style="max-width:220px"><button class="btn primary" data-t="Đã chốt kiểm kê và tạo phiếu điều chỉnh">Chốt kiểm kê</button></div></div></div>`},
+mat(){return `<h1>Nguyên phụ liệu</h1><p class="sub">Mỗi loại / màu / quy cách cần tồn riêng có một mã riêng. Mã đã dùng không xóa, chỉ ngừng sử dụng.</p>
+ <div class="bar"><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:220px"><button class="btn primary" data-t="Mô hình: thêm NPL">Thêm NPL</button></div>
+ <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th>ĐVT</th><th class="n">Tồn thực tế</th><th class="n">Đã giữ</th><th>Trạng thái</th></tr></thead><tbody>${Object.entries(MATS).map(([c,[n,u,oh,rs]])=>`<tr><td>${c}</td><td>${n}</td><td>${u}</td><td class="n">${fmt(oh)}</td><td class="n">${fmt(rs)}</td><td><span class="chip ok">Đang dùng</span></td></tr>`).join("")}</tbody></table></div>`},
+product(){return `<h1>Mã hàng & chủng loại</h1><p class="sub">MH-2204 · khách KH01 · lưới size mặc định: Vóc/Chiều cao (4 size)</p>
+ <div class="grid2"><div class="panel"><h3>Cấu thành một bộ</h3><table><thead><tr><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th><th>Lưới</th></tr></thead>${VARIANTS.map(v=>`<tr><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td><td>${v.grid}</td></tr>`).join("")}</table>
+  <p class="hint">Nhóm Áo/Quần chỉ là thuộc tính phân loại, không gộp các chủng loại.</p></div>
+ <div class="panel scroll"><h3>Bảng quy đổi size mặc định → size chủng loại</h3><table><thead><tr><th>Size mặc định</th>${VARIANTS.map(v=>`<th>${v.n}</th>`).join("")}</tr></thead>
+  ${DEF_SIZES.map(s=>`<tr><td>${s}</td>${VARIANTS.map(v=>`<td><select aria-label="${v.n} ${s}">${["S","M","L","XL"].map(z=>`<option ${MAP[v.c][s]===z?"selected":""}>${z}</option>`).join("")}</select></td>`).join("")}</tr>`).join("")}</table>
+  <p class="hint">Nhiều size mặc định có thể về cùng một size (ví dụ 110/56 và 110/60 đều là áo S). Thiếu quy đổi thì chặn xác nhận đơn.</p></div></div>`},
+grid(){return `<h1>Lưới size</h1><p class="sub">Khai báo một lần, dùng chung. Lưới đã dùng không sửa cấu trúc; tạo lưới mới rồi gán lại.</p>
+ <div class="grid2"><div class="panel"><h3>Danh sách lưới</h3><table><thead><tr><th>Mã</th><th>Tên</th><th>Dùng bởi</th></tr></thead>
+  <tr><td>G_VOC</td><td>Vóc / Chiều cao</td><td><span class="chip warn">Đã dùng</span> 1 mã hàng</td></tr><tr><td>G_SML</td><td>S M L XL</td><td><span class="chip warn">Đã dùng</span> 3 chủng loại</td></tr><tr><td>G_VOC_2</td><td>Vóc / Chiều cao v2</td><td><span class="chip ok">Chưa dùng</span></td></tr></table>
+  <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Đã sao chép G_VOC thành G_VOC_2 để chỉnh sửa">Sao chép thành lưới mới</button></div></div>
+ <div class="panel"><h3>G_VOC – Vóc / Chiều cao <span class="chip warn">Khóa cấu trúc</span></h3><table><thead><tr><th>Size</th><th>Vóc</th><th>Chiều cao</th></tr></thead>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td>${s.split("/")[0]}</td><td>${s.split("/")[1]}</td></tr>`).join("")}</table></div></div>`},
+bom(){return `<h1>BOM & định mức</h1><p class="sub">MH-2204 · mỗi lần lưu tạo phiên bản mới; đơn lấy phiên bản có ngày tạo muộn nhất không muộn hơn ngày lập đơn.</p>
+ <div class="bar"><select aria-label="BOM" style="max-width:200px"><option>BOM cắt</option><option>BOM phụ liệu</option></select><select aria-label="Phiên bản" style="max-width:200px"><option>v2 – 12/03/2026</option><option>v1 – 05/01/2026</option></select>
+  <button class="btn" data-t="Mô hình: tải file mẫu Excel (BOM, HƯỚNG DẪN, DANH SÁCH SIZE)">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button></div>
+ <div class="scroll"><table><thead><tr><th>Chủng loại</th><th>Mã NPL</th><th>Size</th><th class="n">Định mức</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
+ ${BOMS[0].lines.map(l=>`<tr><td>${VARIANTS.find(v=>v.c===l.v).n}</td><td>${l.m}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>
+ <p class="hint">Dòng size cụ thể thay thế dòng nền '*' cho đúng NPL và chủng loại đó; hai dòng không cộng chồng.</p>`},
+report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["inout","Nhập – xuất – tồn"],["demand","Nhu cầu theo đơn"],["short","Cảnh báo thiếu"],["fulfil","Đáp ứng đơn hàng"],["hist","Lịch sử giao dịch"],["cfg","Lịch sử cấu hình"]];
+ const d=demand(),a=avail(d);let body="";
+ if(k==="stock")body=tbl(["Mã NPL","Tên","ĐVT","Tồn thực tế","Đã giữ","Khả dụng"],Object.entries(MATS).map(([c,[n,u,oh,rs]])=>[c,n,u,fmt(oh),fmt(rs),fmt(oh-rs)]),[3,4,5]);
+ if(k==="inout")body=tbl(["Mã NPL","Tồn đầu","Nhập","Xuất","Trả","Điều chỉnh","Tồn cuối"],Object.entries(MATS).map(([c,[,,oh]])=>[c,fmt(oh*.4),fmt(oh*.9),fmt(oh*.3),fmt(oh*.02),fmt(0),fmt(oh)]),[1,2,3,4,5,6]);
+ if(k==="demand")body=tbl(["Mã NPL","Tên","Tổng nhu cầu"],Object.entries(d.tot).sort().map(([m,q])=>[m,MATS[m][0],fmt(q)]),[2]);
+ if(k==="short")body=tbl(["Mã NPL","Nhu cầu","Khả dụng","Thiếu"],a.filter(x=>x.short>0).map(x=>[x.m,fmt(x.need),fmt(x.av),fmt(x.short)]),[1,2,3]);
+ if(k==="fulfil")body=tbl(["Số đơn","Khách hàng","Mã hàng","Trạng thái","Mã NPL thiếu"],[["DH-0412","KH01","MH-2204",a.some(x=>x.short>0)?"THIẾU NPL":"ĐỦ NPL",a.filter(x=>x.short>0).map(x=>x.m).join(", ")],["DH-0409","KH02","MH-1180","ĐỦ NPL",""],["DH-0398","KH01","MH-2204","CHƯA ĐỦ DỮ LIỆU","(thiếu BOM size L)"]],[]);
+ if(k==="hist")body=tbl(["Thời gian","Số phiếu","Loại","Mã NPL","Số lượng"],[["02/04/2026 08:12","NK-0230","Nhập","VAI_DO",fmt(180)],["03/04/2026 09:40","PX-0090","Xuất","VAI_DO",fmt(-60)],["04/04/2026 10:05","PX-0090B","Xuất bù","VAI_DO",fmt(-5)],["05/04/2026 14:30","TR-0012","Trả","VAI_DO",fmt(6)]],[4]);
+ if(k==="cfg")body=tbl(["Phiên bản","Thời điểm","Lý do","BOM áp dụng"],[["1","02/04/2026 08:30","Lập đơn","BOM cắt v2; BOM phụ liệu v1"],["2","09/04/2026 16:10","Khách tăng đơn từ 100 lên 120 bộ","BOM cắt v2; BOM phụ liệu v1"]],[]);
+ return `<h1>Báo cáo</h1><p class="sub">Lọc theo thời gian, khách hàng, mã hàng, đơn hàng, mã NPL. Xuất Excel / PDF.</p>
+ <div class="bar">${kinds.map(([id,t])=>`<button class="btn ${k===id?"primary":""}" data-k="${id}">${t}</button>`).join("")}</div>
+ <div class="bar"><input type="text" placeholder="Từ ngày dd/mm/yyyy" aria-label="Từ ngày" style="max-width:150px"><input type="text" placeholder="Đến ngày" aria-label="Đến ngày" style="max-width:150px"><select aria-label="Đơn hàng" style="max-width:160px"><option>Tất cả đơn</option><option>DH-0412</option></select><input type="text" placeholder="Mã NPL" aria-label="Mã NPL" style="max-width:130px"><span style="flex:1"></span><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button></div>
+ <div class="scroll">${body}</div>`},
+backup(){return `<h1>Sao lưu / Phục hồi</h1><p class="sub">Dữ liệu nằm trong một tệp SQLite. Nên sao lưu trước khi nâng cấp phần mềm.</p>
+ <div class="grid2"><div class="panel"><h3>Sao lưu</h3><p class="hint">Chọn thư mục để lưu bản sao dữ liệu.</p><button class="btn primary" data-t="Mô hình: đã sao lưu ra D:\\Backup\\QuanLyNPL_2026-04-12.db">Sao lưu ngay…</button><p class="hint">Lần cuối: 11/04/2026 17:30</p></div>
+ <div class="panel"><h3>Phục hồi</h3><p class="warnline">Thao tác ghi đè dữ liệu hiện tại. Phần mềm sẽ tự sao lưu bản hiện tại trước và yêu cầu xác nhận.</p><button class="btn danger" data-t="Mô hình: chọn tệp .db rồi xác nhận ghi đè">Phục hồi từ tệp…</button></div>
+ <div class="panel"><h3>Bảo mật</h3><div class="bar"><label for="idle">Tự khóa sau</label><input id="idle" type="number" value="5" min="1" style="max-width:70px"> phút</div><button class="btn" data-t="Mô hình: đổi mã PIN">Đổi mã PIN</button></div></div>`}
+};
+function tbl(h,rows,numCols){const body=rows.length?rows.map(r=>`<tr>${r.map((c,i)=>{let cls=numCols.includes(i)?"n":"";let cell=c;if(c==="THIẾU NPL")cell='<span class="chip bad">THIẾU NPL</span>';else if(c==="ĐỦ NPL")cell='<span class="chip ok">ĐỦ NPL</span>';else if(c==="CHƯA ĐỦ DỮ LIỆU")cell='<span class="chip warn">CHƯA ĐỦ DỮ LIỆU</span>';return`<td class="${cls}">${cell}</td>`}).join("")}</tr>`).join(""):`<tr><td colspan="${h.length}" class="hint">Không có dòng nào.</td></tr>`;
+  return `<table><thead><tr>${h.map((x,i)=>`<th class="${numCols.includes(i)?"n":""}">${x}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`}
+
+// ---------- Hành vi từng màn ----------
+const AFTER={
+order(){const paint=()=>{const d=demand(),a=avail(d);
+   document.getElementById("totSets").textContent=Object.values(st.sets).reduce((x,y)=>x+(+y||0),0);
+   document.getElementById("outPane").innerHTML=statusBanner(d,a)+tbl(["Chủng loại","Size đích","Số lượng"],d.rows.map(r=>[VARIANTS.find(v=>v.c===r.v).n,r.s,fmt(r.q,0)]),[2])+
+     `<p class="hint" style="margin-top:8px">Tổng nhu cầu NPL: ${Object.keys(d.tot).length} mã · thiếu: ${a.filter(x=>x.short>0).length} mã (xem màn Kiểm tra đáp ứng).</p>`};
+  paint();document.querySelectorAll("[data-ds]").forEach(i=>i.oninput=()=>{st.sets[i.dataset.ds]=Math.max(0,+i.value||0);paint()})},
+check(){const d=demand(),a=avail(d);const paint=()=>{const only=document.getElementById("onlyShort").checked;
+   document.getElementById("chkBody").innerHTML=a.filter(x=>!only||x.short>0).map(x=>`<tr class="click ${st.drill===x.m?"sel":""}" data-m="${x.m}"><td>${x.m}</td><td>${MATS[x.m][0]}</td><td>${MATS[x.m][1]}</td><td class="n">${fmt(x.need)}</td><td class="n">${fmt(x.oh)}</td><td class="n">${fmt(x.rs)}</td><td class="n">${fmt(x.av)}</td><td class="n">${x.short?`<b>${fmt(x.short)}</b>`:"–"}</td><td>${x.short?'<span class="chip bad">THIẾU</span>':'<span class="chip ok">ĐỦ</span>'}</td></tr>`).join("");
+   document.querySelectorAll("#chkBody tr").forEach(tr=>tr.onclick=()=>{st.drill=tr.dataset.m;paint();drill()})};
+  const drill=()=>{const m=st.drill;if(!m)return;document.getElementById("drillT").textContent="Nguồn nhu cầu: "+m;
+   const rows=d.src.filter(s=>s.m===m);document.getElementById("drill").innerHTML=tbl(["BOM","Chủng loại","Size","Nhu cầu"],rows.map(s=>[s.bom,VARIANTS.find(v=>v.c===s.v).n,s.s+(s.base?"":" (ghi đè)"),fmt(s.q)]),[3])+`<p class="hint" style="margin-top:6px">Tổng làm tròn 2 số lẻ: <b>${fmt(d.tot[m])}</b> ${MATS[m][1]}</p>`};
+  document.getElementById("onlyShort").onchange=paint;paint();drill()},
+issue(){const a=avail(demand());const warn=m=>{const x=a.find(y=>y.m===m),v=st.actual[m];const el=document.getElementById("w-"+m);const ws=[];
+   if(v!==undefined&&v!==""){if(+v>x.need)ws.push("Vượt đề xuất");if(+v>x.av)ws.push("Vượt tồn khả dụng")}el.innerHTML=ws.map(w=>`<span class="warnline">${w}</span>`).join(" · ")};
+  a.forEach(x=>warn(x.m));document.querySelectorAll("[data-act]").forEach(i=>i.oninput=()=>{st.actual[i.dataset.act]=i.value===""?undefined:Math.max(0,+i.value);warn(i.dataset.act)});
+  document.getElementById("confirmIssue").onclick=()=>{const miss=a.filter(x=>st.actual[x.m]===undefined).map(x=>x.m);const over=a.filter(x=>st.actual[x.m]>x.av).map(x=>x.m);const msg=document.getElementById("issueMsg");
+   if(miss.length){msg.textContent="Kho chưa nhập thực cấp cho: "+miss.join(", ")+" (nhập 0 nếu không cấp).";msg.className="warnline";return}
+   if(over.length){msg.textContent="Không đủ tồn khả dụng cho: "+over.join(", ")+". Không ghi gì.";msg.className="warnline";return}
+   const closing=a.map(x=>`${x.m} ${fmt(st.actual[x.m]-x.need)}`).join("; ");msg.className="hint";msg.textContent="Đã xác nhận. Số dư cân đối: "+closing;toast("Đã xác nhận xuất, trừ tồn và ghi sổ cân đối")}},
+report(){document.querySelectorAll("#main [data-k]").forEach(b=>b.onclick=()=>{st.reportKind=b.dataset.k;go()})}
+};
+
+// ---------- Khóa PIN ----------
+let pin="";const lock=document.getElementById("lock");
+function dots(){document.getElementById("dots").innerHTML=[0,1,2,3].map(i=>`<i class="${i<pin.length?"on":""}"></i>`).join("")}
+function key(k){const m=document.getElementById("pinMsg");m.textContent="";if(k==="⌫")pin=pin.slice(0,-1);else if(pin.length<4)pin+=k;dots();
+  if(pin.length===4){setTimeout(()=>{pin="";dots();lock.hidden=true},180)}}
+document.getElementById("keys").innerHTML=["1","2","3","4","5","6","7","8","9","","0","⌫"].map(k=>k?`<button data-k="${k}">${k}</button>`:"<span></span>").join("");
+document.querySelectorAll("#keys button").forEach(b=>b.onclick=()=>key(b.dataset.k));dots();
+document.getElementById("lockNow").onclick=()=>{lock.hidden=false};
+document.addEventListener("click",e=>{const t=e.target.closest("[data-t]");if(t)toast(t.dataset.t)});
+go();
+</script>
