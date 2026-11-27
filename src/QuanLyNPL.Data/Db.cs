@@ -65,7 +65,7 @@ public static class Db
     }
 
     // Số lượng lưu dạng TEXT (invariant) để không mất chính xác như REAL.
-    public static string D(decimal d) => d.ToString(CultureInfo.InvariantCulture);
+    public static string D(decimal d) => (d / 1.0000000000000000000000000000m).ToString(CultureInfo.InvariantCulture);   // bỏ số 0 thừa: 10.0 -> 10
     public static decimal D(string s) => decimal.Parse(s, CultureInfo.InvariantCulture);
     public static string Date(DateTime d) => d.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
     public static DateTime Date(string s) => DateTime.Parse(s, CultureInfo.InvariantCulture);

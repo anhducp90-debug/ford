@@ -121,6 +121,22 @@ public sealed class StockService(SqliteConnection c)
         Db.Query(c, "SELECT issued FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
             r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
 
+    /// <summary>Hủy phiếu nháp (chưa phát sinh giao dịch nên được xóa; có ghi nhật ký). Phiếu đã xác nhận thì không xóa.</summary>
+    public void DeleteDraft(long docId, string reason)
+    {
+        using var tx = c.BeginTransaction(deferred: false);
+        var d = Db.Query(c, "SELECT status,doc_no FROM stock_doc WHERE id=$i", r => (r.GetString(0), r.GetString(1)), tx, ("$i", docId)).SingleOrDefault();
+        if (d == default) throw new BusinessException("Phiếu không tồn tại.");
+        if (d.Item1 != "DRAFT") throw new BusinessException("Phiếu đã xác nhận, không xóa; dùng trả/điều chỉnh/phiếu đảo.");
+        if (Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE ref_doc_id=$i", tx, ("$i", docId))) > 0)
+            throw new BusinessException("Phiếu đang được phiếu khác tham chiếu.");
+        Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id=$i", tx, ("$i", docId));
+        Db.Exec(c, "DELETE FROM stock_doc WHERE id=$i", tx, ("$i", docId));
+        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,before_json,reason,created_at) VALUES('stock_doc_draft',$i,$b,$r,$t)", tx,
+            ("$i", docId), ("$b", d.Item2), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        tx.Commit();
+    }
+
     public void Reserve(long orderId, string materialCode, decimal qty)
     {
         if (qty <= 0) throw new BusinessException("Số lượng giữ phải dương.");

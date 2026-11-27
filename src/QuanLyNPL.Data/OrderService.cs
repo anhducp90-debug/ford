@@ -22,15 +22,7 @@ public sealed class OrderService(SqliteConnection c)
         if (prod == default) throw new BusinessException("Mã hàng không tồn tại.");
         if (prod.cust != customerId) throw new BusinessException("Mã hàng không thuộc khách hàng đã chọn.");
         if (lines.Count == 0) throw new BusinessException("Đơn hàng chưa có dòng nào.");
-        var grid = new CatalogRepository(c).GridSizes(prod.grid);
-        var errs = new List<string>();
-        foreach (var l in lines)
-        {
-            if (l.Sets < 0) errs.Add($"Số bộ âm ở size {l.DefaultSize}");
-            if (!grid.Contains(l.DefaultSize)) errs.Add($"Size {l.DefaultSize} không thuộc lưới mặc định");
-        }
-        if (lines.GroupBy(l => l.DefaultSize).Any(g => g.Count() > 1)) errs.Add("Trùng size trong đơn hàng");
-        if (errs.Count > 0) throw new BusinessException(string.Join("\n", errs));
+        ValidateLines(prod.grid, lines);
 
         var snapshot = BuildSnapshot(productId, orderDate);
 
@@ -46,8 +38,22 @@ public sealed class OrderService(SqliteConnection c)
         return id;
     }
 
+    public void ValidateLines(long defaultGridId, IReadOnlyList<OrderLine> lines)
+    {
+        if (lines.Count == 0) throw new BusinessException("Đơn hàng chưa có dòng nào.");
+        var grid = new CatalogRepository(c).GridSizes(defaultGridId);
+        var errs = new List<string>();
+        foreach (var l in lines)
+        {
+            if (l.Sets < 0) errs.Add($"Số bộ âm ở size {l.DefaultSize}");
+            if (!grid.Contains(l.DefaultSize)) errs.Add($"Size {l.DefaultSize} không thuộc lưới mặc định");
+        }
+        if (lines.GroupBy(l => l.DefaultSize).Any(g => g.Count() > 1)) errs.Add("Trùng size trong đơn hàng");
+        if (errs.Count > 0) throw new BusinessException(string.Join("\n", errs));
+    }
+
     /// <summary>Chụp cấu hình bộ, quy đổi và phiên bản BOM hiệu lực tại ngày lập đơn.</summary>
-    OrderSnapshot BuildSnapshot(long productId, DateTime orderDate)
+    public OrderSnapshot BuildSnapshot(long productId, DateTime orderDate)
     {
         var variants = Db.Query(c, "SELECT id,code,qty_per_set FROM variant WHERE product_id=$p ORDER BY code",
             r => (id: r.GetInt64(0), code: r.GetString(1), qty: Db.D(r.GetString(2))), null, ("$p", productId));
@@ -81,12 +87,13 @@ public sealed class OrderService(SqliteConnection c)
         Db.Query(c, "SELECT default_size_code,sets_qty FROM order_line WHERE order_id=$o", r => new OrderLine(r.GetString(0), Db.D(r.GetString(1))), null, ("$o", orderId));
 
     /// <summary>Tính nhu cầu hoàn toàn từ snapshot: đổi BOM/cấu hình về sau không ảnh hưởng đơn cũ.</summary>
-    public DemandResult CalculateDemand(long orderId)
+    public DemandResult CalculateDemand(long orderId) => Calculate(LoadSnapshot(orderId), LoadLines(orderId));
+
+    public static DemandResult Calculate(OrderSnapshot snap, IReadOnlyList<OrderLine> lines)
     {
-        var snap = LoadSnapshot(orderId);
         var map = new SizeMap();
         foreach (var m in snap.Maps) map.Add(m.Variant, m.DefaultSize, m.VariantSize);
-        var result = DemandCalculator.Calculate(LoadLines(orderId),
+        var result = DemandCalculator.Calculate(lines,
             snap.Variants.Select(v => new VariantConfig(v.Code, v.QtyPerSet)), map,
             snap.Boms.Select(b => new Bom(b.Id, b.ScopeVariant)),
             snap.Boms.SelectMany(b => b.Lines.Select(l => new BomLine(b.Id, l.Material, l.Size, l.Usage, l.Waste, l.Variant))));
