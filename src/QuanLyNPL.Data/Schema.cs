@@ -52,5 +52,19 @@ CREATE INDEX ix_bomline_version ON bom_line(bom_version_id);
 CREATE INDEX ix_stocktxn_material ON stock_txn(material_id);
 CREATE INDEX ix_order_customer ON ""order""(customer_id);
 "
+    ,
+@"
+ALTER TABLE stock_doc ADD COLUMN scope TEXT;
+ALTER TABLE stock_doc ADD COLUMN ref_doc_id INTEGER REFERENCES stock_doc(id);
+ALTER TABLE stock_doc_line ADD COLUMN qty_suggested TEXT;
+ALTER TABLE stock_doc_line ADD COLUMN demand TEXT;
+ALTER TABLE stock_doc_line ADD COLUMN entered INTEGER NOT NULL DEFAULT 1;
+CREATE INDEX ix_carry_scope ON carry_ledger(order_id,material_id,scope);
+CREATE INDEX ix_doc_order ON stock_doc(order_id,status);
+CREATE TABLE stock_count(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','CONFIRMED')),
+  reason TEXT, created_at TEXT NOT NULL, confirmed_at TEXT);
+CREATE TABLE stock_count_line(id INTEGER PRIMARY KEY, count_id INTEGER NOT NULL REFERENCES stock_count(id),
+  material_id INTEGER NOT NULL REFERENCES material(id), counted TEXT NOT NULL, book_qty TEXT, diff TEXT, UNIQUE(count_id,material_id));
+"
     };
 }

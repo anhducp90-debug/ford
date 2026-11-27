@@ -34,19 +34,30 @@ public sealed class StockService(SqliteConnection c)
             r => Db.D(r.GetString(0)), tx, ("$c", materialCode), ("$o", exceptOrderId)).Sum();
 
     /// <summary>
-    /// Xác nhận phiếu trong một transaction nguyên tử: chỉ lúc này mới ghi stock_txn.
+    /// Xác nhận phiếu trong một transaction nguyên tử: chỉ lúc này mới ghi stock_txn (và sổ carry nếu là phiếu cấp/trả/bù theo đơn).
     /// Không xác nhận phiếu rỗng/đã xác nhận; xuất không được làm tồn khả dụng âm.
     /// </summary>
     public void Confirm(long docId)
     {
         using var tx = c.BeginTransaction(deferred: false);   // BEGIN IMMEDIATE: khóa ghi, tránh 2 phiếu cùng dùng 1 lượng tồn
-        var doc = Db.Query(c, "SELECT type,status,order_id FROM stock_doc WHERE id=$i",
-            r => (type: r.GetString(0), status: r.GetString(1), order: r.IsDBNull(2) ? (long?)null : r.GetInt64(2)), tx, ("$i", docId)).SingleOrDefault();
+        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id FROM stock_doc WHERE id=$i",
+            r => (type: r.GetString(0), status: r.GetString(1), order: r.IsDBNull(2) ? (long?)null : r.GetInt64(2),
+                  scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: r.IsDBNull(4) ? (long?)null : r.GetInt64(4)), tx, ("$i", docId)).SingleOrDefault();
         if (doc == default) throw new BusinessException("Phiếu không tồn tại.");
         if (doc.status != "DRAFT") throw new BusinessException("Phiếu đã được xác nhận.");
-        var lines = Db.Query(c, "SELECT l.material_id,m.code,l.qty FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d",
-            r => (id: r.GetInt64(0), code: r.GetString(1), qty: Db.D(r.GetString(2))), tx, ("$d", docId));
-        if (lines.Count == 0 || lines.All(l => l.qty == 0)) throw new BusinessException("Phiếu rỗng, không thể xác nhận.");
+        var lines = Db.Query(c, "SELECT l.material_id,m.code,l.qty,l.entered,l.demand FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d",
+            r => (id: r.GetInt64(0), code: r.GetString(1), qty: Db.D(r.GetString(2)), entered: r.GetInt32(3) == 1,
+                  demand: r.IsDBNull(4) ? 0m : Db.D(r.GetString(4))), tx, ("$d", docId));
+        var isIssue = doc.type == "OUT" && doc.scope is not null && doc.refDoc is null;   // phiếu cấp theo nhu cầu
+        var isSupplement = doc.type == "OUT" && doc.scope is not null && doc.refDoc is not null;
+        var isReturn = doc.type == "RETURN" && doc.order is not null && doc.scope is not null;
+        if (lines.Count == 0) throw new BusinessException("Phiếu rỗng, không thể xác nhận.");
+        if (isIssue)
+        {
+            var missing = lines.Where(l => !l.entered).Select(l => l.code).ToList();
+            if (missing.Count > 0) throw new BusinessException("Kho chưa nhập thực cấp cho: " + string.Join(", ", missing) + " (nhập 0 nếu không cấp).");
+        }
+        else if (lines.All(l => l.qty == 0)) throw new BusinessException("Phiếu rỗng, không thể xác nhận.");
         var sign = Sign[doc.type];
 
         if (sign < 0)
@@ -56,14 +67,59 @@ public sealed class StockService(SqliteConnection c)
                 var need = g.Sum(x => x.qty);
                 if (need > avail) throw new BusinessException($"Không đủ tồn khả dụng cho {g.Key}: cần {need}, khả dụng {avail}.");
             }
+        if (isReturn)
+            foreach (var l in lines)
+            {
+                var net = CarryIssued(doc.order!.Value, l.id, doc.scope!, tx);
+                if (l.qty > net) throw new BusinessException($"Trả {l.code} vượt lượng đã cấp cho đơn (đã cấp {net}, trả {l.qty}).");
+            }
 
         var now = Db.Date(DateTime.Now);
         foreach (var l in lines.Where(l => l.qty > 0))
             Db.Exec(c, "INSERT INTO stock_txn(doc_id,material_id,qty_signed,created_at) VALUES($d,$m,$q,$t)", tx,
                 ("$d", docId), ("$m", l.id), ("$q", Db.D(sign * l.qty)), ("$t", now));
+
+        if (isIssue || isSupplement || isReturn)
+            foreach (var l in lines)
+            {
+                var opening = CarryClosing(doc.order!.Value, l.id, doc.scope!, tx);
+                var issued = isReturn ? -l.qty : l.qty;
+                var demand = isIssue ? l.demand : 0m;     // bù/trả không tạo nhu cầu mới
+                Db.Exec(c, "INSERT INTO carry_ledger(order_id,material_id,scope,opening,issued,demand,closing,doc_id,created_at) VALUES($o,$m,$s,$op,$i,$d,$cl,$doc,$t)", tx,
+                    ("$o", doc.order), ("$m", l.id), ("$s", doc.scope), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$d", Db.D(demand)),
+                    ("$cl", Db.D(opening + issued - demand)), ("$doc", docId), ("$t", now));
+            }
+        if (sign < 0 && doc.order is not null)   // lượng đã cấp thực tế tiêu thụ phần giữ kho của chính đơn
+            foreach (var l in lines.Where(l => l.qty > 0)) ConsumeReservation(doc.order.Value, l.id, l.qty, tx);
+
         Db.Exec(c, "UPDATE stock_doc SET status='CONFIRMED', confirmed_at=$t WHERE id=$i", tx, ("$t", now), ("$i", docId));
         tx.Commit();
     }
+
+    void ConsumeReservation(long orderId, long materialId, decimal qty, SqliteTransaction tx)
+    {
+        var rs = Db.Query(c, "SELECT id,qty FROM reservation WHERE order_id=$o AND material_id=$m AND active=1", r => (r.GetInt64(0), Db.D(r.GetString(1))), tx, ("$o", orderId), ("$m", materialId));
+        foreach (var (id, q) in rs)
+        {
+            var left = Math.Max(0m, q - qty);
+            Db.Exec(c, "UPDATE reservation SET qty=$q, active=$a WHERE id=$i", tx, ("$q", Db.D(left)), ("$a", left > 0 ? 1 : 0), ("$i", id));
+        }
+    }
+
+    /// <summary>Số dư cuối của bản ghi MỚI NHẤT trong đúng phạm vi (không SUM).</summary>
+    public decimal CarryClosing(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
+        Db.Query(c, "SELECT closing FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s ORDER BY id DESC LIMIT 1",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).FirstOrDefault();
+
+    /// <summary>Tổng nhu cầu đã được tính vào sổ (cộng các nhu cầu theo kỳ, không phải số dư).</summary>
+    public decimal CarryAccountedDemand(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
+        Db.Query(c, "SELECT demand FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
+
+    /// <summary>Lượng đã cấp ròng cho đơn (cấp + bù − trả).</summary>
+    public decimal CarryIssued(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
+        Db.Query(c, "SELECT issued FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
 
     public void Reserve(long orderId, string materialCode, decimal qty)
     {

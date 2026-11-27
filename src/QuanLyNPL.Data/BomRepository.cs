@@ -14,7 +14,7 @@ public sealed class BomRepository(SqliteConnection c)
     /// Tạo phiên bản BOM mới (bất biến). Kiểm tra toàn bộ trước, lỗi thì không ghi dòng nào
     /// và báo rõ số dòng/nguyên nhân.
     /// </summary>
-    public long AddVersion(long bomId, DateTime createdAt, IReadOnlyList<BomLineInput> lines)
+    public long AddVersion(long bomId, DateTime createdAt, IReadOnlyList<BomLineInput> lines, IReadOnlyList<int>? rowLabels = null)
     {
         var (productId, scopeVariant) = Db.Query(c, "SELECT product_id, scope_variant_id FROM bom WHERE id=$b",
             r => (r.GetInt64(0), r.IsDBNull(1) ? (long?)null : r.GetInt64(1)), null, ("$b", bomId)).Single();
@@ -26,7 +26,7 @@ public sealed class BomRepository(SqliteConnection c)
                          .ToDictionary(x => x.Item1, x => (x.Item2, x.Item3));
         for (var i = 0; i < lines.Count; i++)
         {
-            var l = lines[i]; var row = i + 1;
+            var l = lines[i]; var row = rowLabels?[i] ?? i + 1;
             if (!mats.TryGetValue(l.MaterialCode, out var m)) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' không tồn tại");
             else if (!m.Item2) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' đã ngừng sử dụng");
             if (l.Usage < 0) errors.Add($"Dòng {row}: định mức âm");
