@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{C1F659BB-4D4D-44F8-B7FA-1C83CD28D3ED}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuanLyNPL.Core", "src\QuanLyNPL.Core\QuanLyNPL.Core.csproj", "{33F624E4-4591-41C2-BF0B-6D5181F6BF98}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{56486CCC-0A2D-401D-BA85-577DBECF4673}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuanLyNPL.Core.Tests", "tests\QuanLyNPL.Core.Tests\QuanLyNPL.Core.Tests.csproj", "{603D3563-1208-4A0D-84C1-980507CFADAE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{33F624E4-4591-41C2-BF0B-6D5181F6BF98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{33F624E4-4591-41C2-BF0B-6D5181F6BF98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{33F624E4-4591-41C2-BF0B-6D5181F6BF98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{33F624E4-4591-41C2-BF0B-6D5181F6BF98}.Release|Any CPU.Build.0 = Release|Any CPU
+		{603D3563-1208-4A0D-84C1-980507CFADAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{603D3563-1208-4A0D-84C1-980507CFADAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{603D3563-1208-4A0D-84C1-980507CFADAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{603D3563-1208-4A0D-84C1-980507CFADAE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{33F624E4-4591-41C2-BF0B-6D5181F6BF98} = {C1F659BB-4D4D-44F8-B7FA-1C83CD28D3ED}
+		{603D3563-1208-4A0D-84C1-980507CFADAE} = {56486CCC-0A2D-401D-BA85-577DBECF4673}
+	EndGlobalSection
+EndGlobal
