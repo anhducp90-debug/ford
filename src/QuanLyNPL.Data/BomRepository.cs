@@ -18,10 +18,11 @@ public sealed class BomRepository(SqliteConnection c)
     {
         var (productId, scopeVariant) = Db.Query(c, "SELECT product_id, scope_variant_id FROM bom WHERE id=$b",
             r => (r.GetInt64(0), r.IsDBNull(1) ? (long?)null : r.GetInt64(1)), null, ("$b", bomId)).Single();
+        var productCustomer = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM product WHERE id=$p", null, ("$p", productId)));
         var errors = new List<string>();
         var resolved = new List<(long mat, long? variant, BomLineInput l)>();
-        var mats = Db.Query(c, "SELECT code,id,active FROM material", r => (r.GetString(0), r.GetInt64(1), r.GetInt32(2) == 1))
-                     .ToDictionary(x => x.Item1, x => (x.Item2, x.Item3));
+        var mats = Db.Query(c, "SELECT code,id,active,customer_id FROM material", r => (r.GetString(0), r.GetInt64(1), r.GetInt32(2) == 1, r.IsDBNull(3) ? (long?)null : r.GetInt64(3)))
+                     .ToDictionary(x => x.Item1, x => (x.Item2, x.Item3, x.Item4));
         var variants = Db.Query(c, "SELECT code,id,grid_id FROM variant WHERE product_id=$p", r => (r.GetString(0), r.GetInt64(1), r.GetInt64(2)), null, ("$p", productId))
                          .ToDictionary(x => x.Item1, x => (x.Item2, x.Item3));
         for (var i = 0; i < lines.Count; i++)
@@ -29,6 +30,8 @@ public sealed class BomRepository(SqliteConnection c)
             var l = lines[i]; var row = rowLabels?[i] ?? i + 1;
             if (!mats.TryGetValue(l.MaterialCode, out var m)) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' không tồn tại");
             else if (!m.Item2) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' đã ngừng sử dụng");
+            else if (m.Item3 is null) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' chưa gán khách hàng");
+            else if (m.Item3 != productCustomer) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' thuộc khách hàng khác với mã hàng");
             if (l.Usage < 0) errors.Add($"Dòng {row}: định mức âm");
             if (l.WastePercent < 0) errors.Add($"Dòng {row}: hao hụt âm");
             long? vid = null;

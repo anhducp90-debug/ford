@@ -13,7 +13,7 @@ public class Fixture : IDisposable
     {
         Cat = new(C); Bom = new(C); Orders = new(C); Stock = new(C);
         Cust = Cat.AddCustomer("KH1", "Khách 1");
-        Cat.AddMaterial("VAI", "Vải chính", "m"); Cat.AddMaterial("CHI", "Chỉ", "cuộn"); Cat.AddMaterial("KHOA", "Khóa", "cái");
+        Cat.AddMaterial("VAI", "Vải chính", "m", Cust); Cat.AddMaterial("CHI", "Chỉ", "cuộn", Cust); Cat.AddMaterial("KHOA", "Khóa", "cái", Cust);
         Grid = Cat.AddGrid("G_VOC", "Vóc/Cao", new[] { ("110/56", "110", "56"), ("110/60", "110", "60"), ("120/60", "120", "60") });
         var gSml = Cat.AddGrid("G_SML", "S M L", new[] { ("S", (string?)null, (string?)null), ("M", null, null), ("L", null, null) });
         Prod = Cat.AddProduct(Cust, "MH1", "Bộ đồng phục", Grid);

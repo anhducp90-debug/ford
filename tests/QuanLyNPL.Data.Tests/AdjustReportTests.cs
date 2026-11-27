@@ -137,7 +137,7 @@ public class ReportTests
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 100m) }));
         f.Stock.Reserve(o, "VAI", 30m);
         var row = Rep(f).CurrentStock(new ReportFilter(MaterialCode: "VAI")).Rows.Single();
-        Assert.Equal(new object?[] { "VAI", "Vải chính", "m", 100m, 30m, 70m }, row);
+        Assert.Equal(new object?[] { "VAI", "Vải chính", "KH1", "m", 100m, 30m, 70m }, row);
     }
 
     [Fact]
@@ -151,10 +151,10 @@ public class ReportTests
         cs.Confirm(cs.Create("K1", new[] { ("VAI", 70m) }));            // sổ 75 → đếm 70 → −5
         var today = DateTime.Today;
         var r = Rep(f).InOutStock(new ReportFilter(today, today, MaterialCode: "VAI")).Rows.Single();
-        Assert.Equal(new object?[] { "VAI", "Vải chính", "m", 0m, 100m, 30m, 5m, -5m, 70m }, r);
+        Assert.Equal(new object?[] { "VAI", "Vải chính", "KH1", "m", 0m, 100m, 30m, 5m, -5m, 70m }, r);
         var later = Rep(f).InOutStock(new ReportFilter(today.AddDays(1), today.AddDays(2), MaterialCode: "VAI")).Rows.Single();
-        Assert.Equal(70m, later[3]);   // đầu kỳ = tồn trước kỳ
-        Assert.Equal(70m, later[8]);
+        Assert.Equal(70m, later[4]);   // đầu kỳ = tồn trước kỳ
+        Assert.Equal(70m, later[9]);
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public class ReportTests
         var xl = new MemoryStream(); ReportExporter.ToExcel(t, xl);
         Assert.True(xl.Length > 1000);
         using (var wb = new ClosedXML.Excel.XLWorkbook(new MemoryStream(xl.ToArray())))
-            Assert.Equal(100m, (decimal)wb.Worksheets.First().Cell(6, 4).GetDouble());   // dòng 1 tiêu đề, 3 header, dữ liệu từ dòng 4 theo mã: CHI, KHOA, VAI
+            Assert.Equal(100m, (decimal)wb.Worksheets.First().Cell(6, 5).GetDouble());   // dòng 1 tiêu đề, 3 header, dữ liệu từ dòng 4 theo mã: CHI, KHOA, VAI
         var pdf = new MemoryStream(); ReportExporter.ToPdf(t, pdf);
         Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(pdf.ToArray(), 0, 4));
     }

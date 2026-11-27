@@ -7,8 +7,47 @@ public sealed class CatalogRepository(SqliteConnection c)
     public long AddCustomer(string code, string name) =>
         Db.Insert(c, "INSERT INTO customer(code,name) VALUES($c,$n)", null, ("$c", code), ("$n", name));
 
-    public long AddMaterial(string code, string name, string unit, string? note = null) =>
-        Db.Insert(c, "INSERT INTO material(code,name,unit,note) VALUES($c,$n,$u,$t)", null, ("$c", code), ("$n", name), ("$u", unit), ("$t", note));
+    /// <summary>NPL phải thuộc một khách hàng đang sử dụng. Mã NPL duy nhất toàn hệ thống.</summary>
+    public long AddMaterial(string code, string name, string unit, long customerId, string? note = null)
+    {
+        var active = Db.Scalar(c, "SELECT active FROM customer WHERE id=$i", null, ("$i", customerId));
+        if (active is null) throw new BusinessException("Khách hàng không tồn tại.");
+        if (Convert.ToInt32(active) != 1) throw new BusinessException("Khách hàng đã ngừng sử dụng.");
+        return Db.Insert(c, "INSERT INTO material(code,name,unit,customer_id,note) VALUES($c,$n,$u,$k,$t)", null,
+            ("$c", code), ("$n", name), ("$u", unit), ("$k", customerId), ("$t", note));
+    }
+
+    public long? MaterialCustomerId(string code)
+    {
+        var v = Db.Scalar(c, "SELECT customer_id FROM material WHERE code=$c", null, ("$c", code));
+        return v is null || v is DBNull ? null : Convert.ToInt64(v);
+    }
+
+    /// <summary>Gán/đổi khách hàng cho NPL. Đã phát sinh BOM hoặc giao dịch kho thì không đổi (chỉ gán được khi chưa có khách hàng).</summary>
+    public void AssignMaterialCustomer(string code, long customerId)
+    {
+        var current = MaterialCustomerId(code);
+        if (current == customerId) return;
+        if (current is not null)
+        {
+            var used = Convert.ToInt32(Db.Scalar(c,
+                "SELECT (SELECT COUNT(*) FROM bom_line l JOIN material m ON m.id=l.material_id WHERE m.code=$c)+(SELECT COUNT(*) FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE m.code=$c)", null, ("$c", code)));
+            if (used > 0) throw new BusinessException($"NPL {code} đã được sử dụng, không đổi khách hàng.");
+        }
+        MaterialId(code);   // kiểm tra tồn tại
+        Db.Exec(c, "UPDATE material SET customer_id=$k WHERE code=$c", null, ("$k", customerId), ("$c", code));
+    }
+
+    /// <summary>NPL cũ (trước khi có khai báo theo khách hàng) chưa gán khách hàng.</summary>
+    public List<string> UnassignedMaterials() =>
+        Db.Query(c, "SELECT code FROM material WHERE customer_id IS NULL ORDER BY code", r => r.GetString(0));
+
+    public void RequireMaterialOfCustomer(string code, long customerId)
+    {
+        var owner = MaterialCustomerId(code);
+        if (owner is null) throw new BusinessException($"NPL {code} chưa gán khách hàng.");
+        if (owner != customerId) throw new BusinessException($"NPL {code} thuộc khách hàng khác.");
+    }
 
     public long MaterialId(string code) =>
         Convert.ToInt64(Db.Scalar(c, "SELECT id FROM material WHERE code=$c", null, ("$c", code)) ?? throw new BusinessException($"Mã NPL không tồn tại: {code}"));

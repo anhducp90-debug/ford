@@ -14,6 +14,11 @@ public sealed class StockService(SqliteConnection c)
         var cat = new CatalogRepository(c);
         foreach (var (m, q) in lines)
             if (q < 0) throw new BusinessException($"Số lượng âm ở NPL {m}");
+        if (orderId is long oid)
+        {
+            var cust = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", oid)) ?? throw new BusinessException("Đơn hàng không tồn tại."));
+            foreach (var (m, _) in lines) cat.RequireMaterialOfCustomer(m, cust);
+        }
         var resolved = lines.Select(l => (id: cat.MaterialId(l.material), l.qty)).ToList();   // tra mã trước khi mở transaction
         using var tx = c.BeginTransaction();
         var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,note,created_at) VALUES($t,$n,$o,$note,$d)", tx,

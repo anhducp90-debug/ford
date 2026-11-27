@@ -105,7 +105,10 @@ input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
 const DEF_SIZES=["110/56","110/60","120/60","130/64"];
 const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"S M L XL"}];
 const MAP={AO_DO:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},AO_XANH:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},QUAN_DEN:{"110/56":"S","110/60":"M","120/60":"M","130/64":"L"}};
-const MATS={VAI_DO:["Vải đỏ","m",180,0],VAI_XANH:["Vải xanh","m",150,0],VAI_DEN:["Vải đen","m",160,20],CHI:["Chỉ may","cuộn",4,0],NUT:["Nút","cái",800,0],KHOA:["Khóa kéo","cái",500,0],NHAN:["Nhãn chính","cái",300,0]};
+const CUSTS={KH01:"Công ty Hoàng Long",KH02:"May xuất khẩu Đại Phát"};
+// [tên, ĐVT, tồn, đã giữ, khách hàng] — mỗi NPL thuộc đúng một khách hàng
+const MATS={VAI_DO:["Vải đỏ","m",180,0,"KH01"],VAI_XANH:["Vải xanh","m",150,0,"KH01"],VAI_DEN:["Vải đen","m",160,20,"KH01"],CHI:["Chỉ may","cuộn",4,0,"KH01"],NUT:["Nút","cái",800,0,"KH01"],KHOA:["Khóa kéo","cái",500,0,"KH01"],NHAN:["Nhãn chính","cái",300,0,"KH01"],
+ KH2_KAKI:["Vải kaki","m",90,0,"KH02"],KH2_CHI:["Chỉ may KH02","cuộn",6,0,"KH02"]};
 // BOM đã chọn phiên bản theo ngày lập đơn. size '*' = nền; size cụ thể ghi đè nền cùng (BOM, NPL).
 const BOMS=[
  {id:"BOM cắt",ver:"v2 (12/03/2026)",scope:null,lines:[
@@ -114,7 +117,7 @@ const BOMS=[
   {m:"VAI_DEN",s:"*",u:1,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"S",u:.95,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"M",u:1.05,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"L",u:1.15,w:3,v:"QUAN_DEN"}]},
  {id:"BOM phụ liệu",ver:"v1 (02/03/2026)",scope:null,lines:[
   {m:"CHI",s:"*",u:.02,w:0,v:null},{m:"NHAN",s:"*",u:1,w:0,v:null},{m:"NUT",s:"*",u:5,w:0,v:"AO_DO"},{m:"NUT",s:"*",u:5,w:0,v:"AO_XANH"},{m:"KHOA",s:"*",u:1,w:0,v:"QUAN_DEN"}]}];
-const st={screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock"};
+const st={screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock",custFilter:"",matMsg:""};
 const fmt=(n,d=2)=>Number(n).toLocaleString("vi-VN",{minimumFractionDigits:d,maximumFractionDigits:d});
 const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 
@@ -173,7 +176,7 @@ recv(){return `<h1>Phiếu nhập kho</h1><p class="sub">Phiếu nháp không đ
  <div class="grid2"><div class="panel"><h3>Danh sách phiếu</h3><table><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Trạng thái</th></tr></thead>
   <tr class="sel"><td>NK-0231</td><td>12/04/2026</td><td><span class="chip muted">Nháp</span></td></tr><tr><td>NK-0230</td><td>02/04/2026</td><td><span class="chip ok">Đã xác nhận</span></td></tr><tr><td>NK-0229</td><td>28/03/2026</td><td><span class="chip ok">Đã xác nhận</span></td></tr></table>
   <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Mô hình: tạo phiếu nhập mới">Tạo phiếu nhập</button></div></div>
- <div class="panel"><h3>NK-0231 <span class="chip muted">Nháp</span></h3><div class="bar"><input type="text" placeholder="Ghi chú / nguồn" aria-label="Ghi chú" style="max-width:240px"></div>
+ <div class="panel"><h3>NK-0231 <span class="chip muted">Nháp</span></h3><div class="bar"><label for="rCust">Khách hàng</label><select id="rCust" style="max-width:200px"><option>KH01 – Công ty Hoàng Long</option><option>KH02 – May xuất khẩu Đại Phát</option></select><input type="text" placeholder="Ghi chú / nguồn" aria-label="Ghi chú" style="max-width:200px"></div><p class="hint">Danh sách NPL khi thêm dòng chỉ gồm NPL của khách hàng đã chọn.</p>
   <table><thead><tr><th>Mã NPL</th><th>Tên</th><th class="n">Số lượng</th><th>ĐVT</th></tr></thead>
   <tr><td>CHI</td><td>Chỉ may</td><td class="n"><input type="number" value="12" aria-label="Số lượng CHI"></td><td>cuộn</td></tr><tr><td>NUT</td><td>Nút</td><td class="n"><input type="number" value="600" aria-label="Số lượng NUT"></td><td>cái</td></tr></table>
   <p class="hint">Số lượng phải dương; mã NPL phải đang sử dụng; không có lô, màu, quy cách.</p>
@@ -185,9 +188,16 @@ count(){return `<h1>Kiểm kê & điều chỉnh tồn</h1><p class="sub">Đối
   <tr><td>NHAN</td><td class="n">300,00</td><td class="n"><input type="number" value="312" aria-label="Thực đếm NHAN"></td><td class="n"><span class="chip ok">+12,00</span></td><td>Điều chỉnh tăng</td></tr></table></div>
   <p class="hint">Chênh lệch tính lại tại thời điểm chốt. Lưu số trước/sau, lý do, người xác nhận và thời điểm.</p>
   <div class="bar"><input type="text" placeholder="Lý do kiểm kê" aria-label="Lý do" style="max-width:260px"><button class="btn primary" data-t="Đã chốt kiểm kê và tạo phiếu điều chỉnh">Chốt kiểm kê</button></div></div>`},
-mat(){return `<h1>Nguyên phụ liệu</h1><p class="sub">Mỗi loại / màu / quy cách cần tồn riêng có một mã riêng. Mã đã dùng không xóa, chỉ ngừng sử dụng.</p>
- <div class="bar"><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:220px"><button class="btn primary" data-t="Mô hình: thêm NPL">Thêm NPL</button></div>
- <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th>ĐVT</th><th class="n">Tồn thực tế</th><th class="n">Đã giữ</th><th>Trạng thái</th></tr></thead><tbody>${Object.entries(MATS).map(([c,[n,u,oh,rs]])=>`<tr><td>${c}</td><td>${n}</td><td>${u}</td><td class="n">${fmt(oh)}</td><td class="n">${fmt(rs)}</td><td><span class="chip ok">Đang dùng</span></td></tr>`).join("")}</tbody></table></div>`},
+mat(){const rows=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.custFilter);
+ return `<h1>Nguyên phụ liệu</h1><p class="sub">Mỗi NPL thuộc một khách hàng. BOM và phiếu theo đơn chỉ dùng NPL của đúng khách hàng đó. Mỗi loại / màu / quy cách cần tồn riêng có một mã riêng.</p>
+ <div class="panel" style="margin-bottom:14px"><h3>Khai báo NPL mới</h3><div class="bar">
+  <label for="mCust">Khách hàng <span class="warnline">*</span></label><select id="mCust" style="max-width:230px"><option value="">— Chọn khách hàng —</option>${Object.entries(CUSTS).map(([c,n])=>`<option value="${c}">${c} – ${n}</option>`).join("")}</select>
+  <label for="mCode">Mã <span class="warnline">*</span></label><input type="text" id="mCode" style="max-width:130px"><label for="mName">Tên <span class="warnline">*</span></label><input type="text" id="mName" style="max-width:170px">
+  <label for="mUnit">ĐVT <span class="warnline">*</span></label><input type="text" id="mUnit" style="max-width:80px"><button class="btn primary" id="mSave">Lưu NPL</button></div>
+  <div id="matMsg" class="warnline">${st.matMsg}</div></div>
+ <div class="bar"><label for="fCust">Lọc theo khách hàng</label><select id="fCust" style="max-width:230px"><option value="">Tất cả khách hàng</option>${Object.keys(CUSTS).map(c=>`<option value="${c}" ${st.custFilter===c?"selected":""}>${c} – ${CUSTS[c]}</option>`).join("")}</select><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:200px"></div>
+ <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th>Khách hàng</th><th>ĐVT</th><th class="n">Tồn thực tế</th><th class="n">Đã giữ</th><th>Trạng thái</th></tr></thead><tbody>${rows.map(([c,[n,u,oh,rs,k]])=>`<tr><td>${c}</td><td>${n}</td><td>${k}</td><td>${u}</td><td class="n">${fmt(oh)}</td><td class="n">${fmt(rs)}</td><td><span class="chip ok">Đang dùng</span></td></tr>`).join("")}</tbody></table></div>
+ <p class="hint">NPL đã dùng trong BOM hoặc giao dịch kho thì không đổi khách hàng. NPL cũ chưa gán khách hàng sẽ hiện cảnh báo cho tới khi được gán.</p>`},
 product(){return `<h1>Mã hàng & chủng loại</h1><p class="sub">MH-2204 · khách KH01 · lưới size mặc định: Vóc/Chiều cao (4 size)</p>
  <div class="grid2"><div class="panel"><h3>Cấu thành một bộ</h3><table><thead><tr><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th><th>Lưới</th></tr></thead>${VARIANTS.map(v=>`<tr><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td><td>${v.grid}</td></tr>`).join("")}</table>
   <p class="hint">Nhóm Áo/Quần chỉ là thuộc tính phân loại, không gộp các chủng loại.</p></div>
@@ -204,18 +214,19 @@ bom(){return `<h1>BOM & định mức</h1><p class="sub">MH-2204 · mỗi lần 
   <button class="btn" data-t="Mô hình: tải file mẫu Excel (BOM, HƯỚNG DẪN, DANH SÁCH SIZE)">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button></div>
  <div class="scroll"><table><thead><tr><th>Chủng loại</th><th>Mã NPL</th><th>Size</th><th class="n">Định mức</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
  ${BOMS[0].lines.map(l=>`<tr><td>${VARIANTS.find(v=>v.c===l.v).n}</td><td>${l.m}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>
- <p class="hint">Dòng size cụ thể thay thế dòng nền '*' cho đúng NPL và chủng loại đó; hai dòng không cộng chồng.</p>`},
+ <p class="hint">Chỉ chọn được NPL của khách hàng sở hữu mã hàng (KH01). Dòng size cụ thể thay thế dòng nền '*' cho đúng NPL và chủng loại đó; hai dòng không cộng chồng.</p>`},
 report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["inout","Nhập – xuất – tồn"],["demand","Nhu cầu theo đơn"],["short","Cảnh báo thiếu"],["fulfil","Đáp ứng đơn hàng"],["hist","Lịch sử giao dịch"],["cfg","Lịch sử cấu hình"]];
  const d=demand(),a=avail(d);let body="";
- if(k==="stock")body=tbl(["Mã NPL","Tên","ĐVT","Tồn thực tế","Đã giữ","Khả dụng"],Object.entries(MATS).map(([c,[n,u,oh,rs]])=>[c,n,u,fmt(oh),fmt(rs),fmt(oh-rs)]),[3,4,5]);
- if(k==="inout")body=tbl(["Mã NPL","Tồn đầu","Nhập","Xuất","Trả","Điều chỉnh","Tồn cuối"],Object.entries(MATS).map(([c,[,,oh]])=>[c,fmt(oh*.4),fmt(oh*.9),fmt(oh*.3),fmt(oh*.02),fmt(0),fmt(oh)]),[1,2,3,4,5,6]);
+ const ml=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.custFilter);
+ if(k==="stock")body=tbl(["Mã NPL","Tên","Khách hàng","ĐVT","Tồn thực tế","Đã giữ","Khả dụng"],ml.map(([c,[n,u,oh,rs,kh]])=>[c,n,kh,u,fmt(oh),fmt(rs),fmt(oh-rs)]),[4,5,6]);
+ if(k==="inout")body=tbl(["Mã NPL","Khách hàng","Tồn đầu","Nhập","Xuất","Trả","Điều chỉnh","Tồn cuối"],ml.map(([c,[,,oh,,kh]])=>[c,kh,fmt(oh*.4),fmt(oh*.9),fmt(oh*.3),fmt(oh*.02),fmt(0),fmt(oh)]),[2,3,4,5,6,7]);
  if(k==="demand")body=tbl(["Mã NPL","Tên","Tổng nhu cầu"],Object.entries(d.tot).sort().map(([m,q])=>[m,MATS[m][0],fmt(q)]),[2]);
  if(k==="short")body=tbl(["Mã NPL","Nhu cầu","Khả dụng","Thiếu"],a.filter(x=>x.short>0).map(x=>[x.m,fmt(x.need),fmt(x.av),fmt(x.short)]),[1,2,3]);
  if(k==="fulfil")body=tbl(["Số đơn","Khách hàng","Mã hàng","Trạng thái","Mã NPL thiếu"],[["DH-0412","KH01","MH-2204",a.some(x=>x.short>0)?"THIẾU NPL":"ĐỦ NPL",a.filter(x=>x.short>0).map(x=>x.m).join(", ")],["DH-0409","KH02","MH-1180","ĐỦ NPL",""],["DH-0398","KH01","MH-2204","CHƯA ĐỦ DỮ LIỆU","(thiếu BOM size L)"]],[]);
  if(k==="hist")body=tbl(["Thời gian","Số phiếu","Loại","Mã NPL","Số lượng"],[["02/04/2026 08:12","NK-0230","Nhập","VAI_DO",fmt(180)],["03/04/2026 09:40","PX-0090","Xuất","VAI_DO",fmt(-60)],["04/04/2026 10:05","PX-0090B","Xuất bù","VAI_DO",fmt(-5)],["05/04/2026 14:30","TR-0012","Trả","VAI_DO",fmt(6)]],[4]);
  if(k==="cfg")body=tbl(["Phiên bản","Thời điểm","Lý do","BOM áp dụng"],[["1","02/04/2026 08:30","Lập đơn","BOM cắt v2; BOM phụ liệu v1"],["2","09/04/2026 16:10","Khách tăng đơn từ 100 lên 120 bộ","BOM cắt v2; BOM phụ liệu v1"]],[]);
  return `<h1>${kinds.find(x=>x[0]===k)[1]}</h1><p class="sub">Lọc theo thời gian, khách hàng, mã hàng, đơn hàng, mã NPL. Xuất Excel / PDF.</p>
- <div class="bar"><input type="text" placeholder="Từ ngày dd/mm/yyyy" aria-label="Từ ngày" style="max-width:150px"><input type="text" placeholder="Đến ngày" aria-label="Đến ngày" style="max-width:150px"><select aria-label="Đơn hàng" style="max-width:160px"><option>Tất cả đơn</option><option>DH-0412</option></select><input type="text" placeholder="Mã NPL" aria-label="Mã NPL" style="max-width:130px"><span style="flex:1"></span><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button></div>
+ <div class="bar"><input type="text" placeholder="Từ ngày dd/mm/yyyy" aria-label="Từ ngày" style="max-width:150px"><input type="text" placeholder="Đến ngày" aria-label="Đến ngày" style="max-width:150px"><select id="rpCust" aria-label="Khách hàng" style="max-width:170px"><option value="">Tất cả khách hàng</option>${Object.keys(CUSTS).map(c=>`<option value="${c}" ${st.custFilter===c?"selected":""}>${c}</option>`).join("")}</select><select aria-label="Đơn hàng" style="max-width:160px"><option>Tất cả đơn</option><option>DH-0412</option></select><input type="text" placeholder="Mã NPL" aria-label="Mã NPL" style="max-width:130px"><span style="flex:1"></span><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button></div>
  <div class="scroll">${body}</div>`},
 backup(){return `<h1>Sao lưu / Phục hồi</h1><p class="sub">Dữ liệu nằm trong một tệp SQLite. Nên sao lưu trước khi nâng cấp phần mềm.</p>
  <div class="grid2"><div class="panel"><h3>Sao lưu</h3><p class="hint">Chọn thư mục để lưu bản sao dữ liệu.</p><button class="btn primary" data-t="Mô hình: đã sao lưu ra D:\\Backup\\QuanLyNPL_2026-04-12.db">Sao lưu ngay…</button><p class="hint">Lần cuối: 11/04/2026 17:30</p></div>
@@ -274,6 +285,13 @@ issue(){const a=avail(demand());const warn=m=>{const x=a.find(y=>y.m===m),v=st.a
    if(miss.length){msg.textContent="Kho chưa nhập thực cấp cho: "+miss.join(", ")+" (nhập 0 nếu không cấp).";msg.className="warnline";return}
    if(over.length){msg.textContent="Không đủ tồn khả dụng cho: "+over.join(", ")+". Không ghi gì.";msg.className="warnline";return}
    const closing=a.map(x=>`${x.m} ${fmt(st.actual[x.m]-x.need)}`).join("; ");msg.className="hint";msg.textContent="Đã xác nhận. Số dư cân đối: "+closing;toast("Đã xác nhận xuất, trừ tồn và ghi sổ cân đối")}},
+mat(){document.getElementById("fCust").onchange=e=>{st.custFilter=e.target.value;st.matMsg="";go()};
+  document.getElementById("mSave").onclick=()=>{const g=id=>document.getElementById(id).value.trim();const m=document.getElementById("matMsg");
+   if(!g("mCust"))return m.textContent="Phải chọn khách hàng cho NPL.";
+   if(!g("mCode")||!g("mName")||!g("mUnit"))return m.textContent="Nhập đủ mã, tên và đơn vị tính.";
+   if(MATS[g("mCode")])return m.textContent="Mã NPL đã tồn tại.";
+   MATS[g("mCode")]=[g("mName"),g("mUnit"),0,0,g("mCust")];st.matMsg="";toast("Đã lưu NPL "+g("mCode")+" cho khách hàng "+g("mCust"));go()}},
+report(){const f=document.getElementById("rpCust");if(f)f.onchange=e=>{st.custFilter=e.target.value;go()}},
 adjust(){const ISSUED={VAI_DO:60,VAI_XANH:60,VAI_DEN:70,NUT:400,CHI:3,NHAN:100,KHOA:40};const adj={...st.sets};
   const paint=()=>{const b=demand(),a=demand(adj);const mats=[...new Set([...Object.keys(b.tot),...Object.keys(a.tot)])].sort();let warn=[];
    const rows=mats.map(m=>{const bf=b.tot[m]||0,af=a.tot[m]||0,is=ISSUED[m]||0;if(is>af)warn.push(`${m}: đã cấp ${fmt(is)} vượt nhu cầu mới ${fmt(af)}. Cần trả kho, giữ lại hoặc chuyển đơn.`);

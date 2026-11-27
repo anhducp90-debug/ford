@@ -28,7 +28,7 @@
 
 Danh mục
 - `customer(id, code UNIQUE, name, active)`
-- `material(id, code UNIQUE, name, unit, active, note)`
+- `material(id, code UNIQUE, name, unit, customer_id → customer, active, note)` — mỗi NPL thuộc đúng một khách hàng
 - `size_grid(id, code UNIQUE, name, active, used_flag)`; `size_grid_item(id, grid_id, size_code, voc, chieu_cao, UNIQUE(grid_id,size_code))`
 - `product(id, customer_id, code, name, default_grid_id, active, UNIQUE(customer_id,code))`
 - `variant(id, product_id, code, name, group_name, qty_per_set, grid_id)`
@@ -67,3 +67,12 @@ Kho
 ## 5. Lộ trình & test
 
 Theo mục 20 của tài liệu v2.0. Bộ test ưu tiên: phân rã (100 bộ size M), n→1 quy đổi, ghi đè `*`, không nhân đôi khi một NPL ở nhiều BOM, làm tròn half-up, tồn khả dụng, carry âm/dương, xác nhận trùng, rollback transaction.
+
+## 6. NPL gắn với khách hàng (bổ sung)
+
+- Khai báo NPL bắt buộc chọn khách hàng đang sử dụng. Mã NPL vẫn duy nhất toàn hệ thống (khác khách hàng cũng không trùng mã; nếu cần trùng mã giữa các khách hàng thì đổi thành `UNIQUE(customer_id, code)` và truyền khách hàng vào mọi chỗ tra mã).
+- BOM (nhập tay hoặc Excel) chỉ dùng NPL của khách hàng sở hữu mã hàng; sai thì báo theo số dòng và không ghi gì.
+- Phiếu gắn với đơn (trả, xuất bù, cấp phát) chỉ dùng NPL của khách hàng của đơn. Phiếu nhập/kiểm kê không gắn đơn thì chọn khách hàng để lọc danh sách NPL.
+- NPL đã dùng trong BOM hoặc giao dịch kho thì không đổi khách hàng.
+- Dữ liệu cũ (trước migration 3) có `customer_id` rỗng; phải gán khách hàng (`AssignMaterialCustomer`) trước khi đưa vào BOM mới.
+- Báo cáo Tồn hiện tại, Nhập–xuất–tồn và Lịch sử giao dịch có cột/bộ lọc khách hàng.

@@ -33,12 +33,12 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
     {
         f ??= new();
         var rows = new List<object?[]>();
-        foreach (var m in Materials(f.MaterialCode))
+        foreach (var m in Materials(f.MaterialCode, f.CustomerId))
         {
             var onHand = stock.OnHand(m.code); var reserved = stock.ReservedForOthers(m.code, null);
-            rows.Add(new object?[] { m.code, m.name, m.unit, onHand, reserved, onHand - reserved });
+            rows.Add(new object?[] { m.code, m.name, m.cust, m.unit, onHand, reserved, onHand - reserved });
         }
-        return new("Tồn hiện tại", Describe(f), new[] { "Mã NPL", "Tên", "ĐVT", "Tồn thực tế", "Đã giữ", "Khả dụng" }, rows);
+        return new("Tồn hiện tại", Describe(f), new[] { "Mã NPL", "Tên", "Khách hàng", "ĐVT", "Tồn thực tế", "Đã giữ", "Khả dụng" }, rows);
     }
 
     /// <summary>Nhập – xuất – tồn theo kỳ. Tồn cuối = đầu + nhập − xuất + trả + điều chỉnh.</summary>
@@ -48,7 +48,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var txns = Db.Query(c, "SELECT m.code,d.type,t.qty_signed,t.created_at FROM stock_txn t JOIN material m ON m.id=t.material_id JOIN stock_doc d ON d.id=t.doc_id",
             r => (code: r.GetString(0), type: r.GetString(1), q: Db.D(r.GetString(2)), at: Db.Date(r.GetString(3))));
         var rows = new List<object?[]>();
-        foreach (var m in Materials(f.MaterialCode))
+        foreach (var m in Materials(f.MaterialCode, f.CustomerId))
         {
             var mine = txns.Where(t => t.code == m.code).ToList();
             var open = mine.Where(t => t.at < from).Sum(t => t.q);
@@ -57,9 +57,9 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
             var xuat = -inP.Where(t => t.type == "OUT").Sum(t => t.q);
             var tra = inP.Where(t => t.type == "RETURN").Sum(t => t.q);
             var dc = inP.Where(t => t.type is "ADJUST_UP" or "ADJUST_DOWN").Sum(t => t.q);
-            rows.Add(new object?[] { m.code, m.name, m.unit, open, nhap, xuat, tra, dc, open + nhap - xuat + tra + dc });
+            rows.Add(new object?[] { m.code, m.name, m.cust, m.unit, open, nhap, xuat, tra, dc, open + nhap - xuat + tra + dc });
         }
-        return new("Nhập – xuất – tồn", Describe(f), new[] { "Mã NPL", "Tên", "ĐVT", "Tồn đầu kỳ", "Nhập", "Xuất", "Trả", "Điều chỉnh", "Tồn cuối kỳ" }, rows);
+        return new("Nhập – xuất – tồn", Describe(f), new[] { "Mã NPL", "Tên", "Khách hàng", "ĐVT", "Tồn đầu kỳ", "Nhập", "Xuất", "Trả", "Điều chỉnh", "Tồn cuối kỳ" }, rows);
     }
 
     /// <summary>Nhu cầu theo đơn: tổng hợp theo mã NPL.</summary>
@@ -122,9 +122,9 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var rows = Db.Query(c,
             @"SELECT t.created_at,d.doc_no,d.type,m.code,t.qty_signed,o.order_no,d.ref_doc_id FROM stock_txn t
               JOIN stock_doc d ON d.id=t.doc_id JOIN material m ON m.id=t.material_id LEFT JOIN ""order"" o ON o.id=d.order_id
-              WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) ORDER BY t.id",
+              WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) AND ($k IS NULL OR m.customer_id=$k) ORDER BY t.id",
             r => (at: Db.Date(r.GetString(0)), no: r.GetString(1), type: r.GetString(2), code: r.GetString(3), q: Db.D(r.GetString(4)),
-                  order: r.IsDBNull(5) ? "" : r.GetString(5), bu: !r.IsDBNull(6)), null, ("$m", f.MaterialCode), ("$o", f.OrderId))
+                  order: r.IsDBNull(5) ? "" : r.GetString(5), bu: !r.IsDBNull(6)), null, ("$m", f.MaterialCode), ("$o", f.OrderId), ("$k", f.CustomerId))
             .Where(t => t.at >= from && t.at < toEx)
             .Select(t => new object?[] { t.at.ToString("dd/MM/yyyy HH:mm"), t.no, TypeText(t.type, t.bu), t.code, t.q, t.order }).ToList();
         return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Mã NPL", "Số lượng (±)", "Đơn" }, rows);
@@ -139,8 +139,9 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
     }
 
     // ---- helpers ----
-    List<(string code, string name, string unit)> Materials(string? code) =>
-        Db.Query(c, "SELECT code,name,unit FROM material WHERE ($c IS NULL OR code=$c) ORDER BY code", r => (r.GetString(0), r.GetString(1), r.GetString(2)), null, ("$c", code));
+    List<(string code, string name, string unit, string cust)> Materials(string? code, long? customerId = null) =>
+        Db.Query(c, "SELECT m.code,m.name,m.unit,COALESCE(k.code,'(chưa gán)') FROM material m LEFT JOIN customer k ON k.id=m.customer_id WHERE ($c IS NULL OR m.code=$c) AND ($k IS NULL OR m.customer_id=$k) ORDER BY m.code",
+            r => (r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3)), null, ("$c", code), ("$k", customerId));
 
     string MatName(string code) => (string)Db.Scalar(c, "SELECT name FROM material WHERE code=$c", null, ("$c", code))!;
 

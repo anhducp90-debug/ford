@@ -66,5 +66,10 @@ CREATE TABLE stock_count(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQUE, st
 CREATE TABLE stock_count_line(id INTEGER PRIMARY KEY, count_id INTEGER NOT NULL REFERENCES stock_count(id),
   material_id INTEGER NOT NULL REFERENCES material(id), counted TEXT NOT NULL, book_qty TEXT, diff TEXT, UNIQUE(count_id,material_id));
 "
+    ,
+@"
+ALTER TABLE material ADD COLUMN customer_id INTEGER REFERENCES customer(id);
+CREATE INDEX ix_material_customer ON material(customer_id);
+"
     };
 }
