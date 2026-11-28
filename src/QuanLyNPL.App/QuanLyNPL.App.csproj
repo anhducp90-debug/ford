@@ -7,7 +7,7 @@
     <AssemblyName>QuanLyNPL</AssemblyName>
     <RootNamespace>QuanLyNPL.App</RootNamespace>
     <Product>Quản lý Nguyên phụ liệu</Product>
-    <Version>1.5.1</Version>
+    <Version>1.5.2</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
     <InvariantGlobalization>false</InvariantGlobalization>

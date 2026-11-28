@@ -113,16 +113,19 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     }
 
     /// <summary>
-    /// Chủng loại cấp được theo BOM của các loại đã chọn (có BOM theo chủng loại hiệu lực trong cấu hình đơn),
-    /// và có loại nào khai báo theo bộ không (khi đó phải cấp cả bộ).
+    /// Mọi chủng loại của đơn, kèm các loại BOM (trong các loại đã chọn) mà chủng loại đó CHƯA có BOM hiệu lực;
+    /// và có loại nào khai báo theo bộ không (khi đó phải cấp cả bộ, không cần BOM theo chủng loại cho loại đó).
     /// </summary>
-    public (List<OrderVariant> variants, bool setOnly) VariantsFor(long orderId, IReadOnlyCollection<string> types)
+    public (List<(OrderVariant Variant, List<string> MissingTypes)> variants, bool setOnly) VariantsFor(long orderId, IReadOnlyCollection<string> types)
     {
         var snap = orders.LoadSnapshot(orderId);
         var bt = BomTypes(snap);
-        var boms = snap.Boms.Where(b => bt.GetValueOrDefault(b.Id) is string t && types.Contains(t)).ToList();
-        var codes = snap.Variants.Where(v => boms.Any(b => !b.PerSet && (b.ScopeVariant == v.Code || b.ScopeVariant is null))).Select(v => v.Code).ToHashSet();
-        return (Variants(orderId).Where(v => codes.Contains(v.Code)).ToList(), boms.Any(b => b.PerSet));
+        var res = Variants(orderId).Select(v => (v, IssueScopes.Types.Where(types.Contains).Where(t =>
+        {
+            var boms = snap.Boms.Where(b => bt.GetValueOrDefault(b.Id) == t).ToList();
+            return !boms.Any(b => b.PerSet) && !boms.Any(b => !b.PerSet && (b.ScopeVariant == v.Code || b.ScopeVariant is null));
+        }).ToList())).ToList();
+        return (res, snap.Boms.Any(b => b.PerSet && bt.GetValueOrDefault(b.Id) is string t && types.Contains(t)));
     }
 
     /// <summary>
@@ -151,7 +154,9 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
             foreach (var v in snap.Variants.Where(v => variants.Contains(v.Code)))
                 if (boms.Any(b => !b.PerSet && (b.ScopeVariant == v.Code || b.ScopeVariant is null)))
                 { rows.AddRange(sets.Select(s => new IssueQtyRow(t, v.Code, s.DefaultSize, s.Sets * v.QtyPerSet))); added = true; }
-            if (!added && !boms.Any(b => b.PerSet)) errs.Add($"Các chủng loại đã tích không có BOM {IssueScopes.Label(t)} hiệu lực.");
+                else if (!boms.Any(b => b.PerSet))   // không bỏ qua âm thầm: thiếu BOM thì NPL của chủng loại này không được tính → chặn
+                    errs.Add($"Chủng loại {v.Code} chưa có BOM {IssueScopes.Label(t)} hiệu lực cho đơn: khai báo BOM (rồi cập nhật cấu hình đơn) hoặc bỏ tích chủng loại / loại BOM này.");
+            if (!added && !boms.Any(b => b.PerSet) && variants.Count > 0 && errs.Count == 0) errs.Add($"Đơn không có BOM {IssueScopes.Label(t)} hiệu lực.");
         }
         return (rows, errs);
     }

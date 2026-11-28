@@ -113,6 +113,22 @@ Check("BOM Tổ cắt", true); Check("BOM Sản xuất", true); Check("BOM Đón
 Click("Điền tối đa còn lại");
 Shot(w, "901d_phieu_cap_tron_goi_A_Z");
 Expect(All<CheckBox>().Where(c => (c.Content as TextBlock)?.Text?.Contains(" – ") == true).All(c => !c.IsEnabled), "trọn gói có Đóng gói (theo bộ) → khóa ở cả bộ");
+// Chủng loại chưa có BOM: hiện ⚠, cảnh báo và chặn lập phiếu (không bỏ qua âm thầm)
+var mh5 = x.Cat.AddProduct(x.Q.Customers().First(c => c.Code == "KH01").Id, "MH-2205", "Bộ thể thao", x.Q.Products().First(pp => pp.Code == "MH-2204").GridId);
+var aoTt = x.Cat.AddVariant(mh5, "AO_TT", "Áo thể thao", "Áo", 1); var quanTt = x.Cat.AddVariant(mh5, "QUAN_TT", "Quần thể thao", "Quần", 1);
+x.Bom.AddVersion(x.Bom.CreateBom(aoTt, BomType.ToCat), new DateTime(2026, 1, 5), new[] { new BomLineInput("VAI_DO", "*", 1m) });
+x.Bom.AddVersion(x.Bom.CreateBom(quanTt, BomType.ToCat), new DateTime(2026, 1, 5), new[] { new BomLineInput("VAI_DEN", "*", 1m) });
+x.Bom.AddVersion(x.Bom.CreateBom(aoTt, BomType.SanXuat), new DateTime(2026, 1, 5), new[] { new BomLineInput("CHI", "*", 0.02m) });   // quần thể thao CHƯA khai báo BOM sản xuất
+x.Orders.CreateOrder(mh5, "DH-0414", new DateTime(2026, 4, 5), new[] { new OrderLine("110/56", 10) });
+Go("Kiểm tra đáp ứng"); Go("Phiếu xuất (cấp phát)");
+Pick(All<ComboBox>().First(), "DH-0414");
+Pick(ComboWith("CHUYEN-2"), "CHUYEN-2");
+Check("BOM Tổ cắt", false); Check("BOM Sản xuất", true);
+Shot(w, "901e_canh_bao_chung_loai_chua_co_BOM");
+Expect(All<CheckBox>().Any(c => (c.Content as TextBlock)?.Text?.Contains("QUAN_TT – Quần thể thao ⚠ chưa có BOM Sản xuất") == true), "hiện chủng loại thiếu BOM kèm ⚠");
+Expect(w.GetVisualDescendantsTexts().Any(t => t.Contains("QUAN_TT chưa có BOM Sản xuất")) && !All<Button>().Any(b => (b.Content as string) == "Tạo phiếu xuất nháp"), "cảnh báo và chặn lập phiếu khi tích chủng loại thiếu BOM");
+Check("QUAN_TT – Quần thể thao ⚠ chưa có BOM Sản xuất", false);
+Expect(All<Button>().Any(b => (b.Content as string) == "Tạo phiếu xuất nháp"), "bỏ tích chủng loại thiếu BOM → lập phiếu lẻ áo được");
 Shot(w, "901_sau_xuat");
 
 Go("Kiểm tra đáp ứng"); Shot(w, "902_kiem_tra");

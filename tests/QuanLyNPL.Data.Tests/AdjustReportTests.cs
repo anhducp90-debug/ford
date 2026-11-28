@@ -202,7 +202,7 @@ public class ReportTests
         var iss = new IssueService(f.C, f.Orders, f.Stock);
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 100m), ("CHI", 100m) }));
         var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); f.Stock.Confirm(d);
-        var dc = f.IssueDraft(o, "X2", "TO2", IssueScopes.SanXuat); iss.SetActual(dc, "CHI", 5.5m); f.Stock.Confirm(dc);
+        var dc = f.Issue(o, "X2", "TO2", new[] { IssueScopes.SanXuat }, new[] { "AO" }, ("110/56", 10m)); iss.SetActual(dc, "CHI", 5.5m); f.Stock.Confirm(dc);
         var bu = iss.CreateSupplement(d, "B1", new[] { ("VAI", 5m) }); f.Stock.Confirm(bu);
         var rep = Rep(f);
         Assert.Equal(3, rep.TransactionHistory(new ReportFilter(MaterialCode: "VAI")).Rows.Count);

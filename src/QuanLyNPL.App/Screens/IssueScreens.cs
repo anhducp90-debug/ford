@@ -56,8 +56,8 @@ public sealed class IssueScreen : Screen
     {
         var types = IssueScopes.Types.Where(_types.Contains).ToList();
         var orderVars = X.Issue.Variants(o).Select(v => v.Code).ToList();
-        var (variants, setOnly) = X.Issue.VariantsFor(o, types);              // chủng loại tự load theo BOM của loại đã tích
-        var shown = variants.Select(v => v.Code).ToHashSet();
+        var (variants, setOnly) = X.Issue.VariantsFor(o, types);              // mọi chủng loại + loại BOM còn thiếu
+        var shown = variants.Select(v => v.Variant.Code).ToHashSet();
         var all = _vars is null || setOnly || shown.All(_vars.Contains);
         var vars = all ? shown : _vars!.Where(shown.Contains).ToHashSet();
         var typeRow = new WrapPanel();
@@ -71,9 +71,11 @@ public sealed class IssueScreen : Screen
         var allCb = new CheckBox { Content = new TextBlock { Text = "Cả bộ (tất cả)" }, IsChecked = all, IsEnabled = !setOnly, FontWeight = Avalonia.Media.FontWeight.SemiBold, Margin = new Avalonia.Thickness(0, 0, 18, 0) };
         allCb.IsCheckedChanged += (_, _) => { _vars = allCb.IsChecked == true ? null : new HashSet<string>(); Reload(); };
         varRow.Children.Add(allCb);
-        foreach (var v in variants)
+        foreach (var (v, missing) in variants)
         {
-            var cb = new CheckBox { Content = new TextBlock { Text = $"{v.Code} – {v.Name}" }, IsChecked = vars.Contains(v.Code), IsEnabled = !setOnly, Margin = new Avalonia.Thickness(0, 0, 18, 0) };
+            var text = $"{v.Code} – {v.Name}" + (missing.Count > 0 ? $" ⚠ chưa có BOM {string.Join(", ", missing.Select(IssueScopes.Label))}" : "");
+            var tbk = new TextBlock { Text = text }; if (missing.Count > 0) tbk.Foreground = Ui.Bad;
+            var cb = new CheckBox { Content = tbk, IsChecked = vars.Contains(v.Code), IsEnabled = !setOnly, Margin = new Avalonia.Thickness(0, 0, 18, 0) };
             cb.IsCheckedChanged += (_, _) =>
             {
                 var set = new HashSet<string>(vars);
@@ -82,10 +84,9 @@ public sealed class IssueScreen : Screen
             };
             varRow.Children.Add(cb);
         }
-        // Cả bộ = mọi chủng loại của đơn (chủng loại không có BOM của loại nào thì hệ thống tự bỏ qua)
-        var chosen = all ? orderVars : orderVars.Where(vars.Contains).ToList();
-        var noBom = types.Count > 0 && variants.Count == 0 && !setOnly;
-        var mode = types.Count == 0 ? "Chưa tích loại BOM." : noBom ? "Đơn không có BOM hiệu lực cho loại đã tích." : chosen.Count == 0 ? "Chưa tích chủng loại."
+        var chosen = variants.Select(v => v.Variant.Code).Where(vars.Contains).ToList();
+        var noBom = false;
+        var mode = types.Count == 0 ? "Chưa tích loại BOM." : chosen.Count == 0 ? "Chưa tích chủng loại."
             : (types.Count == IssueScopes.Types.Length ? "Trọn gói A–Z (Tổ cắt + Sản xuất + Đóng gói)" : "BOM " + string.Join(" + ", types.Select(IssueScopes.Label)))
               + " · " + (all ? "cấp cả bộ" : chosen.Count == 1 ? "cấp lẻ chủng loại " + chosen[0] : $"cấp gộp {chosen.Count} chủng loại");
         var (cap, errs) = types.Count == 0 || chosen.Count == 0 || noBom ? (new List<SizeCapacity>(), new List<string>()) : X.Issue.Capacity(o, types, chosen);
@@ -107,7 +108,7 @@ public sealed class IssueScreen : Screen
             Ui.Row(Ui.Label("Chủng loại", true), varRow),
             setOnly ? Ui.Hint("Có loại BOM khai báo theo bộ (ví dụ Đóng gói) nên phiếu này cấp cả bộ.") : null,
             Ui.Banner(mode, errs.Count > 0 || types.Count == 0 || chosen.Count == 0 || noBom ? "warn" : "ok"),
-            errs.Count > 0 ? Ui.Banner(string.Join("\n", errs), "bad") : null,
+            errs.Count > 0 ? Ui.Banner("Không lập được phiếu:\n" + string.Join("\n", errs), "bad") : null,
             cap.Count == 0 ? null : Ui.Text(all ? "Số bộ cấp theo size:" : "Số lượng cấp theo size (tính theo bộ – mỗi chủng loại đã tích = số này × SL chủng loại/bộ):", Ui.Muted),
             cap.Count == 0 ? null : grid,
             cap.Count == 0 ? null : Ui.Row(
@@ -120,7 +121,7 @@ public sealed class IssueScreen : Screen
                 }, "Đã tạo phiếu xuất nháp."), primary: true),
                 Ui.Btn("Điền tối đa còn lại", () => { foreach (var c in cap) _qty[c.Size] = c.MaxSets > 0 ? Ui.N(c.MaxSets) : ""; Reload(); }),
                 Ui.Btn("Xóa số lượng", () => { _qty.Clear(); Reload(); })),
-            Ui.Hint("Danh sách chủng loại tự hiện theo BOM của các loại đã tích. Tổ cắt mặc định cấp theo bộ (tích \"Cả bộ\"); bỏ tích để cấp lẻ một hoặc vài chủng loại. Sản xuất: tích 1 chủng loại = cấp lẻ, tích nhiều = cấp gộp, tích tất cả = cả bộ. " +
+            Ui.Hint("Chủng loại chưa có BOM của loại đã tích được đánh dấu ⚠; nếu tích chủng loại đó, hệ thống chặn lập phiếu (tránh thiếu NPL trong số liệu). Tổ cắt mặc định cấp theo bộ (tích \"Cả bộ\"); bỏ tích để cấp lẻ một hoặc vài chủng loại. Sản xuất: tích 1 chủng loại = cấp lẻ, tích nhiều = cấp gộp, tích tất cả = cả bộ. " +
                     "Tích cả ba loại BOM = cấp trọn gói từ A–Z cho một đơn vị sản xuất. Đóng gói khai báo theo bộ nên phải tích đủ chủng loại. " +
                     "\"còn x/y bộ\": số bộ còn cấp được cho lựa chọn này (không vượt số lượng đơn ở từng size). Để trống số bộ: chỉ lập phiếu cấp bù phần nơi nhận đang thiếu."));
     }

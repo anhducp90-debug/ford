@@ -7,13 +7,14 @@ using Xunit;
 public class PlaceBalanceTests
 {
     // Đơn 10 bộ size 110/56. BOM: Tổ cắt VAI 1/SP (áo, quần) → 2/bộ; Sản xuất áo CHI 0,5/SP; Đóng gói theo bộ KHOA 1/bộ.
-    static (Fixture f, IssueService iss, long o) Setup(decimal sets = 10)
+    static (Fixture f, IssueService iss, long o) Setup(decimal sets = 10, bool quanSx = false)
     {
         var f = new Fixture();
         var d = new DateTime(2026, 1, 1);
         f.BomAll(d, new[] { new BomLineInput("VAI", "*", 1m) });
         f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.SanXuat), d, new[] { new BomLineInput("CHI", "*", 0.5m) });
         f.Bom.AddVersion(f.Bom.CreateSetBom(f.Prod, BomType.DongGoi), d, new[] { new BomLineInput("KHOA", "*", 1m) });
+        if (quanSx) f.Bom.AddVersion(f.Bom.CreateBom(f.VQuan, BomType.SanXuat), d, new[] { new BomLineInput("CHI", "*", 0.3m) });   // quần: CHI 0,3
         var o = f.Orders.CreateOrder(f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", sets) });
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 500m), ("CHI", 100m), ("KHOA", 100m) }));
         return (f, f.Iss, o);
@@ -75,25 +76,31 @@ public class PlaceBalanceTests
         var (f, iss, o) = Setup();
         var t1 = One(f, o, "X1", "TO1", SX, new[] { "AO" }, 6);                         // tổ 1 may 6 áo (lẻ)
         Assert.Equal(new[] { "CHI" }, Mats(f, t1)); Assert.Equal(3m, Sug(f, t1, "CHI"));
-        Assert.Contains("không có BOM Sản xuất", Assert.Throws<BusinessException>(() => One(f, o, "X2", "TO2", SX, new[] { "QUAN" }, 1)).Message);
-        var t2 = One(f, o, "X2", "TO2", SX, new[] { "AO", "QUAN" }, 4);                 // tích cả 2: quần không có BOM SX thì bỏ qua
-        Assert.Equal(2m, Sug(f, t2, "CHI"));
+        Assert.Contains("chưa có BOM Sản xuất", Assert.Throws<BusinessException>(() => One(f, o, "X2", "TO2", SX, new[] { "QUAN" }, 1)).Message);
+        Assert.Throws<BusinessException>(() => One(f, o, "X2", "TO2", SX, new[] { "AO", "QUAN" }, 4));
+        (f, iss, o) = Setup(quanSx: true);
+        t1 = One(f, o, "X1", "TO1", SX, new[] { "AO" }, 6);
+        var t2 = One(f, o, "X2", "TO2", SX, new[] { "AO", "QUAN" }, 4);                 // sau khi khai báo BOM sản xuất cho quần
+        Assert.Equal(3.2m, Sug(f, t2, "CHI"));                                            // 4 áo × 0,5 + 4 quần × 0,3
         Assert.Contains("Cả bộ", IssueService.Describe(f.C, t2));                          // tích đủ 2/2 chủng loại = cả bộ
         Assert.Equal(new[] { new IssueQtyRow(SX, "AO", Z, 6) }, iss.DocQuantities(t1));
     }
 
     [Fact]
-    public void VariantsLoadedFromBom_OfCheckedTypes()
+    public void VariantWithoutBom_IsFlagged_AndBlocked_NeverSilentlySkipped()
     {
         var (f, iss, o) = Setup();
-        Assert.Equal(new[] { "AO", "QUAN" }, iss.VariantsFor(o, new[] { T }).variants.Select(v => v.Code));
-        Assert.False(iss.VariantsFor(o, new[] { T }).setOnly);
-        Assert.Equal(new[] { "AO" }, iss.VariantsFor(o, new[] { SX }).variants.Select(v => v.Code));   // quần không có BOM sản xuất
+        Assert.All(iss.VariantsFor(o, new[] { T }).variants, v => Assert.Empty(v.MissingTypes));
+        var sx = iss.VariantsFor(o, new[] { SX }).variants;
+        Assert.Equal(new[] { "AO", "QUAN" }, sx.Select(v => v.Variant.Code));               // vẫn hiện quần
+        Assert.Equal(new[] { SX }, sx.Single(v => v.Variant.Code == "QUAN").MissingTypes);   // nhưng đánh dấu thiếu BOM sản xuất
         var dg = iss.VariantsFor(o, new[] { DG });
-        Assert.True(dg.setOnly); Assert.Empty(dg.variants);                                      // đóng gói theo bộ
-        Assert.True(iss.VariantsFor(o, AZ).setOnly);
-        var d = One(f, o, "X1", "TO1", SX, null, 10);                                            // "cả bộ" với BOM sản xuất: quần tự bỏ qua
-        Assert.Equal(new[] { new IssueQtyRow(SX, "AO", Z, 10) }, iss.DocQuantities(d));
+        Assert.True(dg.setOnly); Assert.All(dg.variants, v => Assert.Empty(v.MissingTypes)); // đóng gói theo bộ: không cần BOM chủng loại
+        var ex = Assert.Throws<BusinessException>(() => One(f, o, "X1", "TO1", SX, null, 10));   // cả bộ với BOM sản xuất: quần thiếu BOM → chặn
+        Assert.Contains("QUAN chưa có BOM Sản xuất", ex.Message);
+        Assert.Contains("QUAN chưa có BOM Sản xuất", string.Join("\n", iss.Capacity(o, new[] { SX }, new[] { "AO", "QUAN" }).errors));
+        Assert.Throws<BusinessException>(() => f.Issue(o, "X1", "TO1", AZ, null, (Z, 1)));   // trọn gói cũng chặn
+        Assert.Equal(new[] { new IssueQtyRow(SX, "AO", Z, 10) }, iss.DocQuantities(One(f, o, "X1", "TO1", SX, new[] { "AO" }, 10)));
     }
 
     [Fact]
@@ -109,14 +116,14 @@ public class PlaceBalanceTests
     [Fact]
     public void WholeUnit_AtoZ_OneDocument_AllBomTypes()
     {
-        var (f, iss, o) = Setup();
+        var (f, iss, o) = Setup(quanSx: true);
         Assert.Throws<BusinessException>(() => f.Issue(o, "X0", "XN", AZ, new[] { "AO" }, (Z, 1)));   // trọn gói gồm đóng gói → phải cả bộ
         var d = f.Issue(o, "X1", "XN", AZ, null, (Z, 10));
         Assert.Equal(new[] { "CHI", "KHOA", "VAI" }, Mats(f, d));
-        Assert.Equal((20m, 5m, 10m), (Sug(f, d, "VAI"), Sug(f, d, "CHI"), Sug(f, d, "KHOA")));
+        Assert.Equal((20m, 8m, 10m), (Sug(f, d, "VAI"), Sug(f, d, "CHI"), Sug(f, d, "KHOA")));
         Assert.StartsWith("Trọn gói", IssueScopes.Label((string)Db.Scalar(f.C, "SELECT scope FROM stock_doc WHERE id=" + d)!));
         Assert.All(iss.Progress(o), p => Assert.Equal(0m, p.P.Remaining));
-        Issue(f, iss, d, ("VAI", 21m), ("CHI", 5m), ("KHOA", 10m));
+        Issue(f, iss, d, ("VAI", 21m), ("CHI", 8m), ("KHOA", 10m));
         Assert.Equal(1m, f.Closing(o, "VAI", "XN"));
         Assert.Single(iss.Settlement(o).Where(x => x.Material == "VAI"));
     }
@@ -212,8 +219,8 @@ public class PlaceBalanceTests
     [Fact]
     public void CloseOrder_SurplusBlocks_ShortageNeedsConfirmation_BalancedCloses()
     {
-        var (f, iss, o) = Setup();
-        Issue(f, iss, f.Issue(o, "X1", "XN", AZ, null, (Z, 10)), ("VAI", 22m), ("CHI", 5m), ("KHOA", 9m));   // VAI dư 2, KHOA thiếu 1
+        var (f, iss, o) = Setup(quanSx: true);
+        Issue(f, iss, f.Issue(o, "X1", "XN", AZ, null, (Z, 10)), ("VAI", 22m), ("CHI", 8m), ("KHOA", 9m));   // VAI dư 2, KHOA thiếu 1
         var s = iss.Settlement(o);
         Assert.Equal(2m, s.Single(x => x.Material == "VAI").Balance);
         Assert.Equal("Thiếu", s.Single(x => x.Material == "KHOA").Conclusion);
