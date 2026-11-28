@@ -240,7 +240,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
     public ReportTable SettlementReport(long orderId)
     {
         var iss = new IssueService(c, orders, stock);
-        var rows = iss.Settlement(orderId).Select(s => new object?[] { s.Place, IssueScopes.Label(s.Scope), s.Material, s.MaterialName, s.Unit,
+        var rows = iss.Settlement(orderId).Select(s => new object?[] { s.Scope == IssueScopes.Place ? s.Place : $"{s.Place} ({IssueScopes.Label(s.Scope)})", s.Material, s.MaterialName, s.Unit,
             s.Demand, s.Issued, s.Loss, s.Returned, s.Balance, s.Conclusion }).ToList();
         var filters = Describe(new ReportFilter(OrderId: orderId));
         // Số lượng chưa cấp / cấp vượt đơn theo loại BOM, đối tượng, size
@@ -249,10 +249,10 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var over = prog.Where(p => p.P.Issued > p.P.Ordered).Select(p => $"{IssueScopes.Label(p.Type)} {p.Obj.Label} {p.P.Size}: vượt {AuditLog.N(p.P.Issued - p.P.Ordered)}").ToList();
         if (notIssued.Count > 0) filters.Add("Chưa cấp – " + string.Join(" · ", notIssued));
         if (over.Count > 0) filters.Add("Cấp vượt đơn (sau khi giảm đơn) – " + string.Join(" · ", over));
-        var dư = rows.Count(r => (string)r[10]! == "Dư"); var thiếu = rows.Count(r => (string)r[10]! == "Thiếu");
+        var dư = rows.Count(r => (string)r[9]! == "Dư"); var thiếu = rows.Count(r => (string)r[9]! == "Thiếu");
         filters.Add(dư == 0 && thiếu == 0 ? "Kết luận: đã cân đối đủ" : $"Kết luận: {dư} dòng dư (phải trả kho / điều chuyển trước khi đóng), {thiếu} dòng thiếu");
         return new("Quyết toán NPL theo đơn", filters,
-            new[] { "Nơi nhận", "Loại BOM", "Mã NPL", "Tên", "ĐVT", "Nhu cầu", "Đã cấp", "Bù hao hụt", "Trả / chuyển đi", "Số dư", "Kết luận" }, rows);
+            new[] { "Nơi nhận", "Mã NPL", "Tên", "ĐVT", "Nhu cầu", "Đã cấp", "Bù hao hụt", "Trả / chuyển đi", "Số dư", "Kết luận" }, rows);
     }
 
     /// <summary>Tiến độ cấp phát theo size: số lượng đơn hàng / đã cấp / đang nháp / còn lại cho từng loại BOM và chủng loại (hoặc bộ).</summary>

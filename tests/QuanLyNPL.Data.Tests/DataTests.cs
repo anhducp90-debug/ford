@@ -37,13 +37,20 @@ public class Fixture : IDisposable
     }
     public IssueService Iss => new(C, Orders, Stock);
     /// <summary>Lập phiếu cấp nháp cho toàn bộ số lượng còn lại của loại BOM (mặc định Tổ cắt) cho nơi nhận.</summary>
-    public long IssueDraft(long o, string no, string place = "TO1", string type = IssueScopes.ToCat) =>
-        Iss.CreateIssueDraft(o, Place(place), type, no, Iss.Objects(o, type).SelectMany(ob => ob.Sizes.Where(p => p.Remaining > 0).Select(p => new IssueQty(ob.Code, p.Size, p.Remaining))).ToList());
-    public long IssueQty(long o, string no, string place, string type, params (string obj, string size, decimal q)[] qty) =>
-        Iss.CreateIssueDraft(o, Place(place), type, no, qty.Select(x => new IssueQty(x.obj, x.size, x.q)).ToList());
-    public decimal Closing(long o, string mat, string place = "TO1", string scope = IssueScopes.ToCat) => Stock.CarryClosing(o, Cat.MaterialId(mat), scope, Place(place));
-    public decimal Issued(long o, string mat, string place = "TO1", string scope = IssueScopes.ToCat) => Stock.CarryIssued(o, Cat.MaterialId(mat), scope, Place(place));
-    public long Return(long o, string no, (string, decimal)[] lines, string place = "TO1", string scope = IssueScopes.ToCat) => Iss.CreateReturn(o, Place(place), scope, no, lines);
+    /// <summary>Phiếu cấp nháp toàn bộ số bộ còn cấp được, cả bộ (tất cả chủng loại), cho các loại BOM (mặc định Tổ cắt).</summary>
+    public long IssueDraft(long o, string no, string place = "TO1", params string[] types)
+    {
+        if (types.Length == 0) types = new[] { IssueScopes.ToCat };
+        var vars = Iss.Variants(o).Select(v => v.Code).ToArray();
+        var cap = Iss.Capacity(o, types, vars).sizes.Where(x => x.MaxSets > 0).Select(x => new OrderLine(x.Size, x.MaxSets)).ToList();
+        return Iss.CreateIssueDraft(o, Place(place), types, vars, cap, no);
+    }
+    /// <summary>Phiếu cấp nháp: loại BOM + chủng loại (null = tất cả) + số bộ theo size.</summary>
+    public long Issue(long o, string no, string place, string[] types, string[]? variants, params (string size, decimal sets)[] sets) =>
+        Iss.CreateIssueDraft(o, Place(place), types, variants ?? Iss.Variants(o).Select(v => v.Code).ToArray(), sets.Select(x => new OrderLine(x.size, x.sets)).ToList(), no);
+    public decimal Closing(long o, string mat, string place = "TO1") => Stock.CarryClosing(o, Cat.MaterialId(mat), IssueScopes.Place, Place(place));
+    public decimal Issued(long o, string mat, string place = "TO1") => Stock.CarryIssued(o, Cat.MaterialId(mat), IssueScopes.Place, Place(place));
+    public long Return(long o, string no, (string, decimal)[] lines, string place = "TO1") => Iss.CreateReturn(o, Place(place), no, lines);
 
     public void AddVersionAll(long[] ids, DateTime createdAt, BomLineInput[] lines)
     { foreach (var id in ids) Bom.AddVersion(id, createdAt, lines); }

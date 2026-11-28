@@ -23,11 +23,13 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
    - Nhập kho > Phiếu nhập: lập phiếu, Lưu nháp, Xác nhận nhập (chỉ khi xác nhận mới cộng tồn).
    - Khai báo > Đơn hàng: chọn mã hàng, nhập số bộ theo size, Lưu đơn.
    - Xuất kho > Kiểm tra đáp ứng: xem ĐỦ / THIẾU / CHƯA ĐỦ DỮ LIỆU, giữ kho cho đơn.
-   - Xuất kho > Phiếu xuất (cấp phát): chọn nơi nhận + loại BOM
-       * BOM Tổ cắt  -> cấp cho nhà cắt
-       * BOM Sản xuất -> cấp cho các tổ sản xuất (mỗi tổ làm 1 hoặc nhiều chủng loại)
-       * BOM Đóng gói -> theo bộ
-     Nhập số lượng sản phẩm theo chủng loại / size mà nơi nhận làm (dưới mỗi ô có "còn x/y").
+   - Xuất kho > Phiếu xuất (cấp phát): chọn nơi nhận, rồi TÍCH:
+       * Loại BOM: Tổ cắt (nhà cắt) / Sản xuất (các tổ) / Đóng gói.
+         Tích cả ba = cấp trọn gói A-Z cho một đơn vị sản xuất.
+       * Chủng loại: "Cả bộ" = tất cả chủng loại (mặc định, dùng cho tổ cắt);
+         tích 1 chủng loại = cấp lẻ; tích nhiều = cấp gộp.
+         Đóng gói tính theo bộ nên phải tích đủ chủng loại.
+     Nhập số bộ theo size (dưới mỗi ô có "còn x/y bộ"; nút "Điền tối đa còn lại").
      Tổng số lượng cấp của mọi nơi nhận không được vượt số lượng đơn ở từng size.
      Tạo phiếu nháp -> hệ thống tính NPL theo BOM, đề xuất = nhu cầu - số dư của nơi nhận đó,
      nhập thực cấp, Xác nhận xuất. Các nơi nhận lập phiếu song song được.

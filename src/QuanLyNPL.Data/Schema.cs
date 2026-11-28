@@ -143,5 +143,21 @@ CREATE TABLE issue_qty(id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL REFERENCE
   size_code TEXT NOT NULL, qty TEXT NOT NULL, UNIQUE(doc_id,object,size_code));
 CREATE INDEX ix_issue_qty_doc ON issue_qty(doc_id);
 "
+    ,
+@"
+-- Phiếu cấp chọn (checkbox) nhiều loại BOM và nhiều chủng loại, nhập số bộ theo size.
+-- issue_qty ghi thêm loại BOM; issue_set lưu số bộ theo size; stock_doc.issue_variants lưu chủng loại đã chọn.
+-- Sổ cân đối theo nơi nhận: mọi khóa có nơi nhận chuyển về phạm vi NOI_NHAN (số dư cuối được tính lại ở Db.Migrate).
+CREATE TABLE issue_qty_new(id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL REFERENCES stock_doc(id), bom_type TEXT NOT NULL, object TEXT NOT NULL,
+  size_code TEXT NOT NULL, qty TEXT NOT NULL, UNIQUE(doc_id,bom_type,object,size_code));
+INSERT INTO issue_qty_new(id,doc_id,bom_type,object,size_code,qty) SELECT q.id,q.doc_id,d.scope,q.object,q.size_code,q.qty FROM issue_qty q JOIN stock_doc d ON d.id=q.doc_id;
+DROP TABLE issue_qty;
+ALTER TABLE issue_qty_new RENAME TO issue_qty;
+CREATE INDEX ix_issue_qty_doc ON issue_qty(doc_id);
+CREATE TABLE issue_set(id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL REFERENCES stock_doc(id), size_code TEXT NOT NULL, qty TEXT NOT NULL, UNIQUE(doc_id,size_code));
+ALTER TABLE stock_doc ADD COLUMN issue_variants TEXT;
+UPDATE carry_ledger SET scope='NOI_NHAN' WHERE place_id IS NOT NULL;
+UPDATE surplus_transfer SET from_scope='NOI_NHAN', to_scope='NOI_NHAN';
+"
     };
 }

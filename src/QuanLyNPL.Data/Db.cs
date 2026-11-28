@@ -23,8 +23,23 @@ public static class Db
         {
             using var tx = c.BeginTransaction();
             Exec(c, Schema.Migrations[i], tx);
+            if (i == 10) RechainPlaceLedger(c, tx);
             Exec(c, $"PRAGMA user_version={i + 1};", tx);
             tx.Commit();
+        }
+    }
+
+    /// <summary>Gộp sổ cân đối theo nơi nhận (migration 11): tính lại số dư đầu/cuối theo thứ tự ghi sổ của từng (đơn, nơi nhận, mã NPL).</summary>
+    static void RechainPlaceLedger(SqliteConnection c, SqliteTransaction tx)
+    {
+        var rows = Query(c, "SELECT id,order_id,material_id,place_id,issued,demand,loss FROM carry_ledger WHERE scope='NOI_NHAN' ORDER BY id",
+            r => (id: r.GetInt64(0), key: (r.GetInt64(1), r.GetInt64(2), r.GetInt64(3)), delta: D(r.GetString(4)) - D(r.GetString(5)) - D(r.GetString(6))), tx);
+        var bal = new Dictionary<(long, long, long), decimal>();
+        foreach (var r in rows)
+        {
+            var op = bal.GetValueOrDefault(r.key);
+            bal[r.key] = op + r.delta;
+            Exec(c, "UPDATE carry_ledger SET opening=$o, closing=$c WHERE id=$i", tx, ("$o", D(op)), ("$c", D(op + r.delta)), ("$i", r.id));
         }
     }
 

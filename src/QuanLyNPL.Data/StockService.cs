@@ -87,7 +87,7 @@ public sealed class StockService(SqliteConnection c)
         if (isReturn)
             foreach (var l in lines)
             {
-                var net = CarryIssued(doc.order!.Value, l.id, doc.scope!, doc.place, tx);
+                var net = CarryIssued(doc.order!.Value, l.id, IssueScopes.Ledger(doc.scope!), doc.place, tx);
                 if (l.qty > net) throw new BusinessException($"Trả {l.code} vượt lượng nơi nhận này đã nhận (đã nhận {AuditLog.N(net)}, trả {AuditLog.N(l.qty)}).");
             }
 
@@ -100,12 +100,13 @@ public sealed class StockService(SqliteConnection c)
             foreach (var l in lines)
             {
                 // Khóa sổ = đơn + nơi nhận + phạm vi + mã NPL: số dư nơi nhận này không dùng cho nơi nhận khác.
-                var opening = CarryClosing(doc.order!.Value, l.id, doc.scope!, doc.place, tx);
+                var ledgerScope = IssueScopes.Ledger(doc.scope!);
+                var opening = CarryClosing(doc.order!.Value, l.id, ledgerScope, doc.place, tx);
                 var issued = isReturn ? -l.qty : l.qty;
                 var demand = isIssue ? l.demand : 0m;                                   // bù/trả không tạo nhu cầu mới
                 var loss = isSupplement && doc.sub == "BU_HAO_HUT" ? l.qty : 0m;        // bù hao hụt = tiêu hao, không làm số dư dương
                 Db.Exec(c, "INSERT INTO carry_ledger(order_id,material_id,scope,place_id,opening,issued,demand,loss,closing,doc_id,created_at) VALUES($o,$m,$s,$p,$op,$i,$d,$l,$cl,$doc,$t)", tx,
-                    ("$o", doc.order), ("$m", l.id), ("$s", doc.scope), ("$p", doc.place), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$d", Db.D(demand)), ("$l", Db.D(loss)),
+                    ("$o", doc.order), ("$m", l.id), ("$s", ledgerScope), ("$p", doc.place), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$d", Db.D(demand)), ("$l", Db.D(loss)),
                     ("$cl", Db.D(opening + issued - demand - loss)), ("$doc", docId), ("$t", now));
             }
         if (sign < 0 && doc.order is not null)   // lượng đã cấp thực tế tiêu thụ phần giữ kho của chính đơn
@@ -163,6 +164,7 @@ public sealed class StockService(SqliteConnection c)
         if (Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE ref_doc_id=$i", tx, ("$i", docId))) > 0)
             throw new BusinessException("Phiếu đang được phiếu khác tham chiếu.");
         Db.Exec(c, "DELETE FROM issue_qty WHERE doc_id=$i", tx, ("$i", docId));
+        Db.Exec(c, "DELETE FROM issue_set WHERE doc_id=$i", tx, ("$i", docId));
         Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id=$i", tx, ("$i", docId));
         Db.Exec(c, "DELETE FROM stock_doc WHERE id=$i", tx, ("$i", docId));
         AuditLog.Write(c, "stock_doc", "Hủy phiếu nháp", d.Item2, reason: reason, entityId: docId, tx: tx);

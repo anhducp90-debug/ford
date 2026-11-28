@@ -95,7 +95,7 @@ public class AdjustmentTests
     public void RebindBom_AppliesNewVersionToRemainingDemand_WithPreview()
     {
         var (f, iss, adj, o, bom) = Setup();
-        var d1 = f.IssueQty(o, "X1", "TO1", IssueScopes.ToCat, ("AO", "110/56", 5m), ("QUAN", "110/56", 5m)); iss.SetActual(d1, "VAI", 10m); f.Stock.Confirm(d1);
+        var d1 = f.Issue(o, "X1", "TO1", new[] { IssueScopes.ToCat }, null, ("110/56", 5m)); iss.SetActual(d1, "VAI", 10m); f.Stock.Confirm(d1);
         f.AddVersionAll(bom, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 1.5m) });
         var same = new[] { new OrderLine("110/56", 10) };
         Assert.Equal(0m, adj.Preview(o, same, rebindBom: false).Deltas.Single().Diff);
