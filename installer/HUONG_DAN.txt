@@ -26,7 +26,8 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
    - Xuất kho > Phiếu xuất (cấp phát): chọn nơi nhận, rồi TÍCH:
        * Loại BOM: Tổ cắt (nhà cắt) / Sản xuất (các tổ) / Đóng gói.
          Tích cả ba = cấp trọn gói A-Z cho một đơn vị sản xuất.
-       * Chủng loại: "Cả bộ" = tất cả chủng loại (mặc định, dùng cho tổ cắt);
+       * Chủng loại: tự hiện theo BOM của loại đã tích (chủng loại không có BOM thì ẩn).
+         "Cả bộ" = tất cả chủng loại (mặc định, dùng cho tổ cắt);
          tích 1 chủng loại = cấp lẻ; tích nhiều = cấp gộp.
          Đóng gói tính theo bộ nên phải tích đủ chủng loại.
      Nhập số bộ theo size (dưới mỗi ô có "còn x/y bộ"; nút "Điền tối đa còn lại").

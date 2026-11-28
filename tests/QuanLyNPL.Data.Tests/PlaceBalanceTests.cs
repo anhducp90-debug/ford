@@ -83,6 +83,20 @@ public class PlaceBalanceTests
     }
 
     [Fact]
+    public void VariantsLoadedFromBom_OfCheckedTypes()
+    {
+        var (f, iss, o) = Setup();
+        Assert.Equal(new[] { "AO", "QUAN" }, iss.VariantsFor(o, new[] { T }).variants.Select(v => v.Code));
+        Assert.False(iss.VariantsFor(o, new[] { T }).setOnly);
+        Assert.Equal(new[] { "AO" }, iss.VariantsFor(o, new[] { SX }).variants.Select(v => v.Code));   // quần không có BOM sản xuất
+        var dg = iss.VariantsFor(o, new[] { DG });
+        Assert.True(dg.setOnly); Assert.Empty(dg.variants);                                      // đóng gói theo bộ
+        Assert.True(iss.VariantsFor(o, AZ).setOnly);
+        var d = One(f, o, "X1", "TO1", SX, null, 10);                                            // "cả bộ" với BOM sản xuất: quần tự bỏ qua
+        Assert.Equal(new[] { new IssueQtyRow(SX, "AO", Z, 10) }, iss.DocQuantities(d));
+    }
+
+    [Fact]
     public void Packing_IsBySet_RequiresAllVariants()
     {
         var (f, iss, o) = Setup();

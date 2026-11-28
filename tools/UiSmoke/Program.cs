@@ -112,6 +112,7 @@ Pick(ComboWith("HT"), "HT");
 Check("BOM Tổ cắt", true); Check("BOM Sản xuất", true); Check("BOM Đóng gói", true);
 Click("Điền tối đa còn lại");
 Shot(w, "901d_phieu_cap_tron_goi_A_Z");
+Expect(All<CheckBox>().Where(c => (c.Content as TextBlock)?.Text?.Contains(" – ") == true).All(c => !c.IsEnabled), "trọn gói có Đóng gói (theo bộ) → khóa ở cả bộ");
 Shot(w, "901_sau_xuat");
 
 Go("Kiểm tra đáp ứng"); Shot(w, "902_kiem_tra");

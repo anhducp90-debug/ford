@@ -113,6 +113,19 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     }
 
     /// <summary>
+    /// Chủng loại cấp được theo BOM của các loại đã chọn (có BOM theo chủng loại hiệu lực trong cấu hình đơn),
+    /// và có loại nào khai báo theo bộ không (khi đó phải cấp cả bộ).
+    /// </summary>
+    public (List<OrderVariant> variants, bool setOnly) VariantsFor(long orderId, IReadOnlyCollection<string> types)
+    {
+        var snap = orders.LoadSnapshot(orderId);
+        var bt = BomTypes(snap);
+        var boms = snap.Boms.Where(b => bt.GetValueOrDefault(b.Id) is string t && types.Contains(t)).ToList();
+        var codes = snap.Variants.Where(v => boms.Any(b => !b.PerSet && (b.ScopeVariant == v.Code || b.ScopeVariant is null))).Select(v => v.Code).ToHashSet();
+        return (Variants(orderId).Where(v => codes.Contains(v.Code)).ToList(), boms.Any(b => b.PerSet));
+    }
+
+    /// <summary>
     /// Phân rã lựa chọn (loại BOM, chủng loại, số bộ theo size) thành số lượng từng loại BOM / đối tượng / size.
     /// BOM theo bộ của một loại chỉ áp dụng khi chọn đủ tất cả chủng loại.
     /// </summary>

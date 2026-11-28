@@ -129,6 +129,7 @@ Quy trình thực tế: một đơn hàng do nhiều tổ cùng làm, mỗi tổ
   - Sản xuất: tích 1 chủng loại = cấp lẻ; tích nhiều = cấp gộp; tích tất cả = cả bộ.
   - Tích cả ba loại BOM = **trọn gói A–Z** cho một đơn vị sản xuất.
   - Đóng gói (và mọi BOM khai báo theo bộ) chỉ áp dụng khi tích đủ tất cả chủng loại.
+- **Chủng loại tự load theo BOM**: chỉ hiện các chủng loại có BOM (theo chủng loại) của các loại đã tích; loại nào khai báo theo bộ (Đóng gói) thì khóa ở "Cả bộ". "Cả bộ" = mọi chủng loại của đơn, chủng loại không có BOM của loại đó được bỏ qua.
 - Số lượng mỗi chủng loại = số bộ × SL chủng loại/bộ; chủng loại được tích nhưng không có BOM của loại đó thì bỏ qua cho loại đó.
 - **Kiểm soát số lượng**: với mỗi loại BOM / chủng loại (hoặc bộ) / size, lũy kế số lượng trên phiếu cấp (đã xác nhận + nháp) ≤ số lượng đơn. Màn hình hiện "còn x/y bộ" = số bộ tối đa còn cấp được cho đúng lựa chọn. Hủy phiếu nháp trả lại số lượng. Phiếu bù/trả không cộng số lượng sản phẩm.
 - Lưu trữ: `issue_qty(doc, bom_type, object, size, qty)`, `issue_set(doc, size, qty)`, `stock_doc.issue_variants`, `stock_doc.scope` = danh sách loại BOM (vd. `TO_CAT,SAN_XUAT,DONG_GOI`).
