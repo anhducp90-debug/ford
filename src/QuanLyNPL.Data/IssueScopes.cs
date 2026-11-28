@@ -7,12 +7,15 @@ namespace QuanLyNPL.Data;
 public static class IssueScopes
 {
     public const string All = "ALL", ToCat = "TO_CAT", SanXuat = "SAN_XUAT", DongGoi = "DONG_GOI";
+    /// <summary>Phạm vi lập phiếu cấp mới = loại BOM. "ALL" chỉ còn ở dữ liệu cũ (bản 1.3.0).</summary>
     public static readonly string[] Types = { ToCat, SanXuat, DongGoi };
-    public static readonly string[] Values = { All, ToCat, SanXuat, DongGoi };
+    public static readonly string[] Values = Types;
+    /// <summary>Đối tượng sản xuất "cả bộ" (BOM theo bộ).</summary>
+    public const string SetObject = Core.DemandCalculator.SetScope;
 
     public static string Label(string? s) => s switch
     {
-        null => "", All => "Cả bộ NPL", ToCat => "Tổ cắt", SanXuat => "Sản xuất", DongGoi => "Đóng gói",
+        null => "", All => "Cả bộ NPL (cũ)", ToCat => "Tổ cắt", SanXuat => "Sản xuất", DongGoi => "Đóng gói",
         Core.DemandCalculator.SetScope => "Theo bộ (cũ)", _ => "Chủng loại " + s + " (cũ)"
     };
 
@@ -21,7 +24,7 @@ public static class IssueScopes
 
     public static void Require(string scope)
     {
-        if (!Values.Contains(scope)) throw new BusinessException("Phạm vi cấp không hợp lệ: " + scope);
+        if (!Types.Contains(scope)) throw new BusinessException("Loại BOM cấp phát không hợp lệ: " + scope);
     }
 }
 

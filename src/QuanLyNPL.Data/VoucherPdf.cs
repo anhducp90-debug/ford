@@ -27,9 +27,10 @@ public static class VoucherPdf
         var product = d.OrderId is long oid ? Db.Query(c, "SELECT p.code||' – '||p.name FROM \"order\" o JOIN product p ON p.id=o.product_id WHERE o.id=$o", r => r.GetString(0), null, ("$o", oid)).FirstOrDefault() : null;
         var refNo = d.RefDocId is long rid ? q.Docs().FirstOrDefault(x => x.Id == rid)?.DocNo : null;
         var isIssue = d.Type == "OUT" && d.Scope is not null && d.RefDocId is null;
+        var qtys = Db.Query(c, "SELECT object,size_code,qty FROM issue_qty WHERE doc_id=$d ORDER BY id", r => new IssueQty(r.GetString(0), r.GetString(1), Db.D(r.GetString(2))), null, ("$d", docId));
         var date = d.ConfirmedAt ?? d.CreatedAt;
         var isIn = d.Type is "IN" or "RETURN" or "ADJUST_UP";
-        string Scope(string? s) => IssueScopes.Label(s) + (d.IssuePlace.Length > 0 ? " · nơi nhận cấp phát: " + d.IssuePlace : "");
+        string Scope(string? s) => "BOM " + IssueScopes.Label(s);
 
         QuestPDF.Settings.License = LicenseType.Community;
         QuestPDF.Settings.CheckIfAllTextGlyphsAreAvailable = false;
@@ -59,10 +60,16 @@ public static class VoucherPdf
                     void Pair(string k, string? v) { t.Cell().PaddingVertical(2).Text(k).FontColor(Colors.Grey.Darken2); t.Cell().PaddingVertical(2).Text(v ?? "").SemiBold(); }
                     Pair("Khách hàng:", cust); Pair("Đơn hàng:", d.OrderNo.Length > 0 ? d.OrderNo + (product is null ? "" : $" ({product})") : "");
                     Pair("Nơi xuất:", d.FromPlace); Pair("Nơi nhận:", d.ToPlace);
-                    if (isIssue || d.Scope is not null) { Pair("Phạm vi cấp:", Scope(d.Scope)); Pair("", ""); }
+                    if (isIssue || d.Scope is not null) { Pair("Loại BOM:", Scope(d.Scope)); Pair("", ""); }
                     if (refNo is not null) { Pair("Phiếu gốc:", refNo); Pair("", ""); }
                     Pair("Ghi chú:", d.Note); Pair("", "");
                 });
+                if (isIssue && qtys.Count > 0)
+                {
+                    col.Item().PaddingTop(8).Text("Số lượng sản phẩm cấp NPL:").SemiBold();
+                    col.Item().Text(string.Join("   ·   ", qtys.GroupBy(q => q.Object).Select(g =>
+                        $"{(g.Key == IssueScopes.SetObject ? "Cả bộ" : g.Key)}: " + string.Join(", ", g.Select(q => $"{q.Size} = {N(q.Qty)}")) + $" (tổng {N(g.Sum(q => q.Qty))})")));
+                }
                 col.Item().PaddingTop(10).Table(t =>
                 {
                     t.ColumnsDefinition(cd =>

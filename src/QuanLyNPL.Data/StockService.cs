@@ -162,6 +162,7 @@ public sealed class StockService(SqliteConnection c)
         if (d.Item1 != "DRAFT") throw new BusinessException("Phiếu đã xác nhận, không xóa; dùng trả/điều chỉnh/phiếu đảo.");
         if (Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE ref_doc_id=$i", tx, ("$i", docId))) > 0)
             throw new BusinessException("Phiếu đang được phiếu khác tham chiếu.");
+        Db.Exec(c, "DELETE FROM issue_qty WHERE doc_id=$i", tx, ("$i", docId));
         Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id=$i", tx, ("$i", docId));
         Db.Exec(c, "DELETE FROM stock_doc WHERE id=$i", tx, ("$i", docId));
         AuditLog.Write(c, "stock_doc", "Hủy phiếu nháp", d.Item2, reason: reason, entityId: docId, tx: tx);

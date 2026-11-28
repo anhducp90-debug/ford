@@ -120,17 +120,20 @@ Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán t
 - Không có người thực hiện (ứng dụng một người dùng, khóa PIN).
 - Lịch sử cấu hình đơn chỉ lấy các lần "Điều chỉnh" (không lẫn đóng/mở đơn).
 
-## 10. Cân đối cấp phát theo nơi nhận (thay thế cân đối theo đơn/chủng loại)
+## 10. Cấp phát theo nơi nhận + loại BOM + số lượng theo size (bản 1.4.0)
 
-- **Khóa sổ cân đối** = đơn + **nơi nhận** + **phạm vi** + mã NPL. Phạm vi = loại BOM: Cả bộ NPL (mọi loại) / Tổ cắt / Sản xuất / Đóng gói. Số dư của nơi nhận này **không bao giờ** tự bù cho nơi nhận khác, kể cả cùng mã NPL.
-- **Giao việc** (`assignment`): nơi nhận (loại nơi nhận hoặc cả hai) + phạm vi + số bộ theo size. Ràng buộc: với mỗi size và mỗi loại BOM, tổng số bộ giao (phạm vi "Cả bộ" chiếm chỗ của mọi loại) ≤ số bộ của đơn. Tăng số bộ giao = thêm đợt; giảm dưới phần đã cấp → phần đã cấp thành số dư.
-- **Nhu cầu của khóa** = định mức các BOM thuộc phạm vi × số bộ giao (làm tròn 2 số lẻ mỗi mã). Đề xuất = max(0, nhu cầu kỳ − số dư của đúng khóa).
-- **Nhiều phiếu nháp song song**: tối đa một phiếu nháp cho mỗi nơi nhận + phạm vi.
-- **Xuất bù**: Bù thiếu (issued += số lượng) – cảnh báo khi vượt phần đang thiếu; Bù hao hụt (issued += số lượng, loss += số lượng) → số dư không đổi, không làm giảm đề xuất sau; báo cáo "Hao hụt vượt định mức".
+Quy trình thực tế: một đơn hàng do nhiều tổ cùng làm, mỗi tổ làm một hoặc nhiều chủng loại. **Đơn hàng là tổng số lượng cần sản xuất.**
+
+- **BOM Tổ cắt** dùng cấp cho nhà cắt; **BOM Sản xuất** (theo chủng loại) tính NPL cấp cho các tổ sản xuất; **BOM Đóng gói** theo bộ.
+- **Phiếu cấp** = đơn + **nơi nhận** + **loại BOM** + **số lượng sản phẩm theo chủng loại/size** (bảng `issue_qty`: đối tượng = mã chủng loại, hoặc "(Bộ)" với BOM theo bộ). Không còn bước "Giao việc" và phạm vi "Cả bộ NPL".
+- **Kiểm soát số lượng**: với mỗi loại BOM, mỗi chủng loại (hoặc bộ), mỗi size: lũy kế số lượng trên phiếu cấp (đã xác nhận + đang nháp) ≤ số lượng đơn (= số bộ × SL chủng loại/bộ). Hủy phiếu nháp trả lại số lượng. Phiếu bù/trả không cộng số lượng sản phẩm.
+- **Nhu cầu phiếu** = định mức các BOM thuộc loại × số lượng trên phiếu (làm tròn 2 số lẻ mỗi mã). Đề xuất = max(0, nhu cầu − số dư của đúng nơi nhận + loại BOM). NPL nơi nhận đang thiếu từ lần trước (số dư âm) được thêm vào phiếu kế tiếp để cấp bù.
+- **Khóa sổ cân đối** = đơn + nơi nhận + loại BOM + mã NPL. Số dư của nơi nhận này **không bao giờ** tự bù cho nơi nhận khác, kể cả cùng mã NPL.
+- Tối đa một phiếu nháp cho mỗi nơi nhận + loại BOM; các nơi nhận khác nhau lập song song.
+- **Xuất bù**: Bù thiếu (issued += số lượng) – cảnh báo khi vượt phần đang thiếu; Bù hao hụt (issued += , loss += ) → số dư không đổi; báo cáo "Hao hụt vượt định mức".
 - **Số dư cuối** = số dư đầu + thực cấp − nhu cầu kỳ − hao hụt.
-- **Trả NPL** theo nơi nhận + phạm vi; không trả vượt lượng nơi đó đã nhận.
-- **Điều chuyển NPL dư** (`surplus_transfer`): từ (đơn, nơi nhận, phạm vi) sang (đơn cùng khách hàng, nơi nhận, phạm vi) đã giao việc và có mã NPL trong định mức; chỉ trong phạm vi số dư dương; không đổi tồn kho; ghi sổ hai phía trong một giao dịch.
-- **Quyết toán & đóng đơn**: theo từng khóa – nhu cầu theo giao việc, đã cấp (không gồm hao hụt), bù hao hụt, trả/chuyển đi, số dư. Còn dư → không cho đóng; còn thiếu → phải xác nhận. Báo cáo cũng nêu số bộ chưa giao việc.
-- Kiểm tra đáp ứng / số bộ tối đa dùng "đã cấp ròng" = cấp + bù thiếu − trả (không tính hao hụt).
-- Điều chỉnh đơn không cho giảm số bộ dưới tổng đã giao việc (giảm giao việc trước).
-- Dữ liệu cũ (trước migration 9): sổ không có nơi nhận vẫn đọc được và vẫn quyết toán theo nhu cầu đã tính vào sổ.
+- **Trả NPL** theo nơi nhận + loại BOM; không trả vượt lượng nơi đó đã nhận.
+- **Điều chuyển NPL dư** (`surplus_transfer`): từ (đơn, nơi nhận, loại BOM) sang (đơn cùng khách hàng, nơi nhận, loại BOM) mà NPL có trong BOM loại đó; chỉ trong số dư dương; không đổi tồn kho; phần chuyển sang được trừ vào đề xuất các phiếu sau của nơi nhận đích.
+- **Quyết toán & đóng đơn**: theo từng khóa – nhu cầu (định mức × số lượng đã cấp), đã cấp, bù hao hụt, trả/chuyển đi, số dư; kèm **Tiến độ cấp phát theo size** (đơn / đã cấp / đang nháp / còn lại). Còn dư → không cho đóng; còn thiếu NPL hoặc chưa cấp hết số lượng đơn → phải xác nhận.
+- Điều chỉnh đơn: giảm số lượng dưới phần đã đưa vào phiếu cấp chỉ cảnh báo; báo cáo quyết toán nêu "Cấp vượt đơn". Đổi BOM chỉ ảnh hưởng các phiếu cấp sau.
+- Dữ liệu cũ: sổ không có nơi nhận / phạm vi "Cả bộ NPL (cũ)" vẫn đọc và quyết toán được; giao việc của bản 1.3.0 không còn dùng.

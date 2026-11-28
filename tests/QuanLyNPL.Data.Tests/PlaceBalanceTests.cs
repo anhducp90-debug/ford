@@ -3,7 +3,7 @@ using QuanLyNPL.Core;
 using QuanLyNPL.Data;
 using Xunit;
 
-/// <summary>Cân đối cấp phát theo NƠI NHẬN và các đề xuất: phạm vi theo loại BOM, nhiều nháp, đợt, bù thiếu/hao hụt, điều chuyển dư, quyết toán.</summary>
+/// <summary>Cấp phát theo nơi nhận + loại BOM + số lượng sản phẩm theo size (không vượt đơn), cân đối theo nơi nhận, bù, trả, điều chuyển dư, quyết toán.</summary>
 public class PlaceBalanceTests
 {
     // Đơn 10 bộ size 110/56. BOM: Tổ cắt VAI 1/SP (áo, quần) → 2/bộ; Sản xuất áo CHI 0,5/SP; Đóng gói theo bộ KHOA 1/bộ.
@@ -27,130 +27,138 @@ public class PlaceBalanceTests
         f.Stock.Confirm(doc);
     }
 
+    const string T = IssueScopes.ToCat, SX = IssueScopes.SanXuat, DG = IssueScopes.DongGoi, Z = "110/56";
+    /// <summary>Phiếu cấp tổ cắt cho n áo + n quần size 110/56.</summary>
+    static long Cut(Fixture f, long o, string no, string place, decimal n) => f.IssueQty(o, no, place, T, ("AO", Z, n), ("QUAN", Z, n));
+
     [Fact]
     public void BalanceOfOnePlace_IsNeverUsedByAnother_SameMaterial()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(5), "TO1", IssueScopes.ToCat); f.Assign(o, S(5), "TO2", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.ToCat, "X1");
+        var d1 = Cut(f, o, "X1", "TO1", 5);
         Assert.Equal(10m, Sug(f, d1, "VAI"));
         Issue(f, iss, d1, ("VAI", 13m));                                  // tổ 1 cấp thừa 3
-        Assert.Equal(3m, f.Closing(o, "VAI", "TO1", IssueScopes.ToCat));
-        var d2 = iss.CreateIssueDraft(o, f.Place("TO2"), IssueScopes.ToCat, "X2");
+        Assert.Equal(3m, f.Closing(o, "VAI", "TO1", T));
+        var d2 = Cut(f, o, "X2", "TO2", 5);
         Assert.Equal(10m, Sug(f, d2, "VAI"));                             // tổ 2 KHÔNG được trừ phần dư của tổ 1
-        Assert.Equal(0m, f.Closing(o, "VAI", "TO2", IssueScopes.ToCat));
+        Assert.Equal(0m, f.Closing(o, "VAI", "TO2", T));
     }
 
     [Fact]
-    public void Assignment_CannotExceedOrderedSets_PerSizeAndBomType()
+    public void IssuedQuantity_PerObjectAndSize_CannotExceedOrder_DraftsCount()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(4), "TO1", IssueScopes.All);
-        f.Assign(o, S(6), "TO2", IssueScopes.ToCat);
-        f.Assign(o, S(6), "TO3", IssueScopes.SanXuat);
-        Assert.Equal(0m, iss.Remaining(o, IssueScopes.ToCat)["110/56"]);
-        Assert.Equal(0m, iss.Remaining(o, IssueScopes.All)["110/56"]);
-        Assert.Equal(6m, iss.Remaining(o, IssueScopes.DongGoi)["110/56"]);
-        Assert.Throws<BusinessException>(() => f.Assign(o, S(1), "TO4", IssueScopes.ToCat));
-        Assert.Throws<BusinessException>(() => f.Assign(o, S(1), "TO4", IssueScopes.All));
-        f.Assign(o, S(6), "TO4", IssueScopes.DongGoi);
-        f.Assign(o, S(5), "TO2", IssueScopes.ToCat);                       // sửa giao việc của chính nơi đó (không tính trùng)
-        Assert.Throws<BusinessException>(() => f.Assign(o, new[] { new OrderLine("120/60", 1) }, "TO5", IssueScopes.ToCat));   // size không có trong đơn
+        f.IssueQty(o, "X1", "TO1", SX, ("AO", Z, 6));                                   // nháp cũng được tính
+        Assert.Contains("vượt số lượng còn lại 4", Assert.Throws<BusinessException>(() => f.IssueQty(o, "X2", "TO2", SX, ("AO", Z, 5))).Message);
+        f.IssueQty(o, "X2", "TO2", SX, ("AO", Z, 4));
+        var ao = iss.Objects(o, SX).Single();                                            // chỉ áo có BOM sản xuất
+        Assert.Equal(("AO", 10m, 0m, 10m, 0m), (ao.Code, ao.Sizes[0].Ordered, ao.Sizes[0].Issued, ao.Sizes[0].Draft, ao.Sizes[0].Remaining));
+        Assert.Throws<BusinessException>(() => f.IssueQty(o, "X3", "TO3", SX, ("QUAN", Z, 1)));       // quần không có BOM sản xuất
+        Assert.Throws<BusinessException>(() => f.IssueQty(o, "X3", "TO3", T, ("AO", "120/60", 1)));   // size không có trong đơn
+        Assert.Equal(new[] { IssueScopes.SetObject }, iss.Objects(o, DG).Select(x => x.Code));        // đóng gói theo bộ
+        Assert.Throws<BusinessException>(() => f.IssueQty(o, "X3", "TO3", DG, ("AO", Z, 1)));
         var ncc = new PlaceService(f.C).Add("NCC", "NCC", PlaceKind.Xuat);
-        Assert.Throws<BusinessException>(() => iss.SetAssignment(o, ncc, IssueScopes.All, S(1)));   // chỉ là nơi xuất
+        Assert.Throws<BusinessException>(() => iss.CreateIssueDraft(o, ncc, T, "X4", new[] { new IssueQty("AO", Z, 1) }));   // chỉ là nơi xuất
+        // xóa nháp → trả lại số lượng
+        f.Stock.DeleteDraft(Convert.ToInt64(Db.Scalar(f.C, "SELECT id FROM stock_doc WHERE doc_no='X1'")), "Lập sai");
+        Assert.Equal(6m, iss.Objects(o, SX).Single().Sizes[0].Remaining);
     }
 
     [Fact]
-    public void ScopeByBomType_OnlyMaterialsOfThatType()
+    public void ManyTeams_EachMakesSomeVariants_DemandByBomType()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(10), "CAT", IssueScopes.ToCat); f.Assign(o, S(10), "CHUYEN", IssueScopes.SanXuat); f.Assign(o, S(10), "HT", IssueScopes.DongGoi);
-        Assert.Equal(new[] { "VAI" }, iss.KeyDemand(o, f.Place("CAT"), IssueScopes.ToCat).Keys);
-        Assert.Equal(5m, iss.KeyDemand(o, f.Place("CHUYEN"), IssueScopes.SanXuat)["CHI"]);
-        Assert.Equal(new[] { "KHOA" }, iss.KeyDemand(o, f.Place("HT"), IssueScopes.DongGoi).Keys);
-        Assert.Equal(20m, iss.KeyDemand(o, f.Place("CAT"), IssueScopes.ToCat)["VAI"]);
+        var cat = Cut(f, o, "X1", "CAT", 10);                                            // nhà cắt cắt cả áo và quần
+        Assert.Equal(new[] { "VAI" }, new Queries(f.C).DocLines(cat).Select(l => l.Material));
+        Assert.Equal(20m, Sug(f, cat, "VAI"));
+        var t1 = f.IssueQty(o, "X2", "TO1", SX, ("AO", Z, 6));                           // tổ 1 may 6 áo
+        var t2 = f.IssueQty(o, "X3", "TO2", SX, ("AO", Z, 4));                           // tổ 2 may 4 áo
+        Assert.Equal((3m, 2m), (Sug(f, t1, "CHI"), Sug(f, t2, "CHI")));
+        var ht = f.IssueQty(o, "X4", "HT", DG, (IssueScopes.SetObject, Z, 10));
+        Assert.Equal(new[] { "KHOA" }, new Queries(f.C).DocLines(ht).Select(l => l.Material));
+        Assert.Equal(10m, Sug(f, ht, "KHOA"));
+        Assert.Equal(new[] { new IssueQty("AO", Z, 6) }, iss.DocQuantities(t1));
+        Assert.All(iss.Progress(o), p => Assert.Equal(0m, p.P.Remaining));
     }
 
     [Fact]
-    public void ParallelDrafts_PerPlaceAndScope_DuplicateKeyBlocked()
+    public void ParallelDrafts_PerPlaceAndType_DuplicateBlocked()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(10), "CAT", IssueScopes.ToCat); f.Assign(o, S(10), "CHUYEN", IssueScopes.SanXuat);
-        iss.CreateIssueDraft(o, f.Place("CAT"), IssueScopes.ToCat, "X1");
-        iss.CreateIssueDraft(o, f.Place("CHUYEN"), IssueScopes.SanXuat, "X2");     // song song được
-        Assert.Throws<BusinessException>(() => iss.CreateIssueDraft(o, f.Place("CAT"), IssueScopes.ToCat, "X3"));
-        Assert.Throws<BusinessException>(() => iss.CreateIssueDraft(o, f.Place("HT"), IssueScopes.DongGoi, "X4"));   // chưa giao việc
+        Cut(f, o, "X1", "CAT", 5);
+        f.IssueQty(o, "X2", "CAT", SX, ("AO", Z, 5));                                   // khác loại BOM: song song được
+        f.IssueQty(o, "X3", "TO2", SX, ("AO", Z, 5));                                   // khác nơi nhận: song song được
+        Assert.Throws<BusinessException>(() => Cut(f, o, "X4", "CAT", 1));
     }
 
     [Fact]
-    public void Batches_IncreaseAssignment_NextDraftSuggestsOnlyIncrement()
+    public void Batches_NextIssueSuggestsOnlyItsQuantity_ShortageCarriedForward()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(4), "CAT", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("CAT"), IssueScopes.ToCat, "X1");
-        Assert.Equal(8m, Sug(f, d1, "VAI")); Issue(f, iss, d1, ("VAI", 8m));
-        f.Assign(o, S(10), "CAT", IssueScopes.ToCat);                          // đợt 2
-        var d2 = iss.CreateIssueDraft(o, f.Place("CAT"), IssueScopes.ToCat, "X2");
-        Assert.Equal(12m, Sug(f, d2, "VAI"));
+        var d1 = Cut(f, o, "X1", "CAT", 4);
+        Assert.Equal(8m, Sug(f, d1, "VAI")); Issue(f, iss, d1, ("VAI", 6m));            // cấp thiếu 2
+        Assert.Equal(-2m, f.Closing(o, "VAI", "CAT", T));
+        var d2 = Cut(f, o, "X2", "CAT", 6);
+        Assert.Equal(14m, Sug(f, d2, "VAI"));                                            // 12 cho đợt 2 + 2 còn thiếu
+        Issue(f, iss, d2, ("VAI", 14m));
+        Assert.Equal(0m, f.Closing(o, "VAI", "CAT", T));
+        Assert.Equal(0m, iss.Objects(o, T).Sum(x => x.Sizes.Sum(p => p.Remaining)));
     }
 
     [Fact]
     public void LossSupplement_DoesNotCreateSurplus_ShortageSupplement_Warns()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(10), "CAT", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("CAT"), IssueScopes.ToCat, "X1"); Issue(f, iss, d1, ("VAI", 18m));   // thiếu 2
+        var d1 = Cut(f, o, "X1", "CAT", 10); Issue(f, iss, d1, ("VAI", 18m));            // thiếu 2
         Assert.Contains(iss.SupplementWarnings(d1, new[] { ("VAI", 5m) }, SupplementKind.BuThieu), w => w.Contains("vượt phần đang thiếu"));
         Assert.Empty(iss.SupplementWarnings(d1, new[] { ("VAI", 2m) }, SupplementKind.BuThieu));
         Assert.Contains(iss.SupplementWarnings(d1, new[] { ("CHI", 1m) }, SupplementKind.BuHaoHut), w => w.Contains("không có trong định mức"));
         var b1 = iss.CreateSupplement(d1, "B1", new[] { ("VAI", 2m) }, SupplementKind.BuThieu); f.Stock.Confirm(b1);
-        Assert.Equal(0m, f.Closing(o, "VAI", "CAT", IssueScopes.ToCat));
+        Assert.Equal(0m, f.Closing(o, "VAI", "CAT", T));
         var b2 = iss.CreateSupplement(d1, "B2", new[] { ("VAI", 3m) }, SupplementKind.BuHaoHut); f.Stock.Confirm(b2);   // cắt hỏng
-        Assert.Equal(0m, f.Closing(o, "VAI", "CAT", IssueScopes.ToCat));       // hao hụt không làm số dư dương
+        Assert.Equal(0m, f.Closing(o, "VAI", "CAT", T));                         // hao hụt không làm số dư dương
         Assert.Equal(477m, f.Stock.OnHand("VAI"));                              // nhưng vẫn trừ tồn kho
         Assert.Equal(20m, f.Stock.IssuedNet(o, "VAI"));                         // đã cấp ròng không tính phần hao hụt
         var loss = new ReportService(f.C, f.Orders, f.Stock).LossReport(new ReportFilter(OrderId: o)).Rows.Single();
         Assert.Equal((3m, 15m), ((decimal)loss[7]!, (decimal)loss[8]!));        // 3/20 = 15%
         Assert.Contains(new ReportService(f.C, f.Orders, f.Stock).TransactionHistory(new ReportFilter()).Rows, r => (string)r[2]! == "Xuất bù hao hụt");
+        Assert.Equal(0m, iss.Objects(o, T).Sum(x => x.Sizes.Sum(p => p.Issued)) - 20m);   // phiếu bù không cộng thêm số lượng sản phẩm
     }
 
     [Fact]
     public void Return_OnlyWhatThatPlaceReceived()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(5), "TO1", IssueScopes.ToCat); f.Assign(o, S(5), "TO2", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.ToCat, "X1"); Issue(f, iss, d1, ("VAI", 10m));
-        var bad = iss.CreateReturn(o, f.Place("TO2"), IssueScopes.ToCat, "R1", new[] { ("VAI", 1m) });   // tổ 2 chưa nhận gì
+        var d1 = Cut(f, o, "X1", "TO1", 5); Issue(f, iss, d1, ("VAI", 10m));
+        var bad = iss.CreateReturn(o, f.Place("TO2"), T, "R1", new[] { ("VAI", 1m) });   // tổ 2 chưa nhận gì
         Assert.Throws<BusinessException>(() => f.Stock.Confirm(bad));
-        var ok = iss.CreateReturn(o, f.Place("TO1"), IssueScopes.ToCat, "R2", new[] { ("VAI", 4m) }); f.Stock.Confirm(ok);
-        Assert.Equal(-4m, f.Closing(o, "VAI", "TO1", IssueScopes.ToCat));
+        var ok = iss.CreateReturn(o, f.Place("TO1"), T, "R2", new[] { ("VAI", 4m) }); f.Stock.Confirm(ok);
+        Assert.Equal(-4m, f.Closing(o, "VAI", "TO1", T));
     }
 
     [Fact]
     public void SurplusTransfer_ExplicitOnly_WithinSurplus_SameCustomer_NoStockChange()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(5), "TO1", IssueScopes.ToCat); f.Assign(o, S(5), "TO2", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.ToCat, "X1"); Issue(f, iss, d1, ("VAI", 13m));   // dư 3
+        var d1 = Cut(f, o, "X1", "TO1", 5); Issue(f, iss, d1, ("VAI", 13m));            // dư 3
         var stockBefore = f.Stock.OnHand("VAI");
-        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC0", o, f.Place("TO1"), IssueScopes.ToCat, o, f.Place("TO2"), IssueScopes.ToCat, new[] { new SurplusLine("VAI", 4m) }));
-        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC0", o, f.Place("TO1"), IssueScopes.ToCat, o, f.Place("TO3"), IssueScopes.ToCat, new[] { new SurplusLine("VAI", 1m) }));   // TO3 chưa giao việc
-        iss.TransferSurplus("DC1", o, f.Place("TO1"), IssueScopes.ToCat, o, f.Place("TO2"), IssueScopes.ToCat, new[] { new SurplusLine("VAI", 3m) }, "Tổ 1 thừa vải");
-        Assert.Equal(0m, f.Closing(o, "VAI", "TO1", IssueScopes.ToCat));
-        Assert.Equal(3m, f.Closing(o, "VAI", "TO2", IssueScopes.ToCat));
+        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC0", o, f.Place("TO1"), T, o, f.Place("TO2"), T, new[] { new SurplusLine("VAI", 4m) }));
+        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC0", o, f.Place("TO1"), T, o, f.Place("TO1"), T, new[] { new SurplusLine("VAI", 1m) }));   // cùng nơi
+        iss.TransferSurplus("DC1", o, f.Place("TO1"), T, o, f.Place("TO2"), T, new[] { new SurplusLine("VAI", 3m) }, "Tổ 1 thừa vải");
+        Assert.Equal(0m, f.Closing(o, "VAI", "TO1", T));
+        Assert.Equal(3m, f.Closing(o, "VAI", "TO2", T));
         Assert.Equal(stockBefore, f.Stock.OnHand("VAI"));
-        var d2 = iss.CreateIssueDraft(o, f.Place("TO2"), IssueScopes.ToCat, "X2");
+        var d2 = Cut(f, o, "X2", "TO2", 5);
         Assert.Equal(7m, Sug(f, d2, "VAI"));                                  // 10 − 3 đã nhận qua điều chuyển
         Assert.Contains(new Queries(f.C).Carry(o), r => r.DocNo == "DC1");
-        f.Assign(o, S(10), "HT", IssueScopes.DongGoi);
-        Assert.Contains("không có trong định mức", Assert.Throws<BusinessException>(() =>
-            iss.TransferSurplus("DCx", o, f.Place("TO2"), IssueScopes.ToCat, o, f.Place("HT"), IssueScopes.DongGoi, new[] { new SurplusLine("VAI", 1m) })).Message);
+        Assert.Contains("không có trong BOM Đóng gói", Assert.Throws<BusinessException>(() =>
+            iss.TransferSurplus("DCx", o, f.Place("TO2"), T, o, f.Place("HT"), DG, new[] { new SurplusLine("VAI", 1m) })).Message);
         // khác khách hàng
         var kh2 = f.Cat.AddCustomer("KH2", "K2");
         var g = (long)Db.Scalar(f.C, "SELECT id FROM size_grid WHERE code='G_VOC'")!;
         var p2 = f.Cat.AddProduct(kh2, "MH2", "x", g); f.Cat.AddVariant(p2, "V", "v", "Áo", 1);
         var o2 = f.Orders.CreateOrder(p2, "DH2", DateTime.Now, S(1));
-        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC2", o, f.Place("TO2"), IssueScopes.ToCat, o2, f.Place("TO2"), IssueScopes.ToCat, new[] { new SurplusLine("VAI", 1m) }));
+        Assert.Throws<BusinessException>(() => iss.TransferSurplus("DC2", o, f.Place("TO2"), T, o2, f.Place("TO2"), T, new[] { new SurplusLine("VAI", 1m) }));
     }
 
     [Fact]
@@ -158,41 +166,42 @@ public class PlaceBalanceTests
     {
         var (f, iss, o) = Setup();
         var o2 = f.Orders.CreateOrder(f.Prod, "DH2", new DateTime(2026, 2, 1), S(5));
-        f.Assign(o, S(10), "TO1", IssueScopes.ToCat); f.Assign(o2, S(5), "TO1", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.ToCat, "X1"); Issue(f, iss, d1, ("VAI", 24m));   // dư 4
-        iss.TransferSurplus("DC1", o, f.Place("TO1"), IssueScopes.ToCat, o2, f.Place("TO1"), IssueScopes.ToCat, new[] { new SurplusLine("VAI", 4m) });
-        Assert.Equal(0m, f.Closing(o, "VAI", "TO1", IssueScopes.ToCat));
-        Assert.Equal(6m, Sug(f, iss.CreateIssueDraft(o2, f.Place("TO1"), IssueScopes.ToCat, "X2"), "VAI"));
+        var d1 = Cut(f, o, "X1", "TO1", 10); Issue(f, iss, d1, ("VAI", 24m));            // dư 4
+        iss.TransferSurplus("DC1", o, f.Place("TO1"), T, o2, f.Place("TO1"), T, new[] { new SurplusLine("VAI", 4m) });
+        Assert.Equal(0m, f.Closing(o, "VAI", "TO1", T));
+        Assert.Equal(6m, Sug(f, Cut(f, o2, "X2", "TO1", 5), "VAI"));
     }
 
     [Fact]
     public void CloseOrder_SurplusBlocks_ShortageNeedsConfirmation_BalancedCloses()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(10), "TO1", IssueScopes.All);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.All, "X1"); Issue(f, iss, d1, ("VAI", 22m), ("CHI", 5m), ("KHOA", 9m));   // VAI dư 2, KHOA thiếu 1
+        Issue(f, iss, Cut(f, o, "X1", "CAT", 10), ("VAI", 22m));                                        // dư 2
+        Issue(f, iss, f.IssueQty(o, "X2", "TO1", SX, ("AO", Z, 10)), ("CHI", 5m));
+        Issue(f, iss, f.IssueQty(o, "X3", "HT", DG, (IssueScopes.SetObject, Z, 10)), ("KHOA", 9m));    // thiếu 1
         var s = iss.Settlement(o);
         Assert.Equal(2m, s.Single(x => x.Material == "VAI").Balance);
         Assert.Equal("Thiếu", s.Single(x => x.Material == "KHOA").Conclusion);
         Assert.Contains("VAI", Assert.Throws<BusinessException>(() => iss.CloseOrder(o)).Message);
-        f.Stock.Confirm(iss.CreateReturn(o, f.Place("TO1"), IssueScopes.All, "R1", new[] { ("VAI", 2m) }));
+        f.Stock.Confirm(iss.CreateReturn(o, f.Place("CAT"), T, "R1", new[] { ("VAI", 2m) }));
         var ex = Assert.Throws<ShortageOnCloseException>(() => iss.CloseOrder(o));
         Assert.Contains("KHOA", ex.Message);
+        Assert.DoesNotContain(" size ", ex.Message);                                     // đã cấp đủ số lượng đơn
         iss.CloseOrder(o, allowShortage: true);
         Assert.Equal("CLOSED", Db.Scalar(f.C, "SELECT status FROM \"order\" WHERE id=" + o));
     }
 
     [Fact]
-    public void Settlement_ReflectsAssignmentReduction_AndUnassignedSets()
+    public void Settlement_ShowsUnissuedQuantities_CloseNeedsConfirmation()
     {
         var (f, iss, o) = Setup();
-        f.Assign(o, S(10), "TO1", IssueScopes.ToCat);
-        var d1 = iss.CreateIssueDraft(o, f.Place("TO1"), IssueScopes.ToCat, "X1"); Issue(f, iss, d1, ("VAI", 20m));
-        f.Assign(o, S(6), "TO1", IssueScopes.ToCat);                             // giảm giao việc → dư 8
-        Assert.Equal(8m, iss.Settlement(o).Single(x => x.Material == "VAI").Balance);
+        Issue(f, iss, f.IssueQty(o, "X1", "CAT", T, ("AO", Z, 10)), ("VAI", 10m));        // quần chưa cắt
+        Assert.Equal(0m, iss.Settlement(o).Single().Balance);
         var rep = new ReportService(f.C, f.Orders, f.Stock).SettlementReport(o);
-        Assert.Contains(rep.Filters, x => x.StartsWith("Chưa giao việc") && x.Contains("Tổ cắt: 110/56 còn 4 bộ"));
-        Assert.Contains(rep.Filters, x => x.Contains("1 dòng dư"));
+        Assert.Contains(rep.Filters, x => x.StartsWith("Chưa cấp") && x.Contains("Quần đen"));
+        var prog = new ReportService(f.C, f.Orders, f.Stock).IssueProgress(o);
+        Assert.Contains(prog.Rows, r => r.Contains("Đã cấp đủ")); Assert.Contains(prog.Rows, r => r.Contains("Chưa cấp"));
+        Assert.Contains("chưa cấp 10 / 10", Assert.Throws<ShortageOnCloseException>(() => iss.CloseOrder(o)).Message);
     }
 
     [Fact]

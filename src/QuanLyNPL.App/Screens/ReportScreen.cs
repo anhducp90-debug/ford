@@ -8,7 +8,7 @@ public sealed class ReportScreen : Screen
     public static readonly (string Id, string Title)[] Kinds =
     {
         ("stock", "Tồn hiện tại"), ("inout", "Nhập – xuất – tồn"), ("norm", "Định mức một bộ"), ("demand", "Nhu cầu theo đơn"),
-        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("settle", "Quyết toán NPL theo đơn"), ("loss", "Hao hụt vượt định mức"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("card", "Thẻ kho"), ("cfg", "Lịch sử cấu hình")
+        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("settle", "Quyết toán NPL theo đơn"), ("progress", "Tiến độ cấp phát theo size"), ("loss", "Hao hụt vượt định mức"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("card", "Thẻ kho"), ("cfg", "Lịch sử cấu hình")
     };
 
     readonly string _kind;
@@ -31,7 +31,8 @@ public sealed class ReportScreen : Screen
         "hist" => "Mọi biến động tồn đã xác nhận (nhập, xuất cấp phát, xuất bù, trả, điều chỉnh kiểm kê, chuyển NPL) kèm khách hàng, đơn, phạm vi, nơi xuất, nơi nhận, ghi chú.",
         "card" => "Thẻ kho của một mã NPL: tồn đầu kỳ, từng phiếu nhập/xuất trong kỳ với tồn sau mỗi giao dịch, cộng phát sinh và tồn cuối kỳ.",
         "short" => "Nhu cầu của đơn so với tồn khả dụng (đã trừ lượng giữ cho đơn khác).",
-        "settle" => "Theo nơi nhận / phạm vi / mã NPL: nhu cầu theo giao việc, đã cấp, bù hao hụt, trả/chuyển đi, số dư (dư – thiếu – đủ).",
+        "settle" => "Theo nơi nhận / loại BOM / mã NPL: nhu cầu (định mức × số lượng đã cấp), đã cấp, bù hao hụt, trả/chuyển đi, số dư (dư – thiếu – đủ).",
+        "progress" => "Theo loại BOM / chủng loại / size: số lượng đơn, đã cấp, đang nháp, còn lại – kiểm soát tổng số lượng cấp không vượt đơn hàng.",
         "loss" => "Xuất bù hao hụt vượt định mức theo đơn / nơi nhận / mã NPL, so với nhu cầu theo định mức đã cấp.",
         "max" => "Theo cơ cấu size của đơn: số bộ tối đa = tổng số bộ × min(tồn khả dụng / nhu cầu) của mọi mã NPL. Riêng từng size: số bộ tối đa nếu chỉ sản xuất size đó (các size không cộng với nhau).",
         _ => ""
@@ -62,7 +63,7 @@ public sealed class ReportScreen : Screen
             var mats = Opts.Materials(_cust, false); mats.Insert(0, new Opt<string>("Tất cả NPL", ""));
             filters.Children.Add(F("Mã NPL", Ui.Combo(mats, _mat ?? "", 260, v => { _mat = v == "" ? null : v; Reload(); })));
         }
-        if (_kind is "demand" or "short" or "cfg" or "hist" or "max" or "settle" or "loss")
+        if (_kind is "demand" or "short" or "cfg" or "hist" or "max" or "settle" or "progress" or "loss")
         {
             var orders = Opts.Orders(openOnly: false);
             if (_kind is "hist" or "loss") orders.Insert(0, new Opt<long?>("Tất cả đơn", null));
@@ -99,6 +100,7 @@ public sealed class ReportScreen : Screen
             case "fulfil": t = X.Reports.Fulfillment(f with { OrderId = null }); break;
             case "hist": t = X.Reports.TransactionHistory(f); break;
             case "settle": if (_order is long o5) t = X.Reports.SettlementReport(o5); else empty = "Chưa có đơn hàng."; break;
+            case "progress": if (_order is long o6) t = X.Reports.IssueProgress(o6); else empty = "Chưa có đơn hàng."; break;
             case "loss": t = X.Reports.LossReport(f); break;
             case "card": if (_mat is string mc) t = X.Reports.StockCard(mc, _from, _to); else empty = "Chưa có NPL."; break;
             case "demand": if (_order is long o1) t = _detail ? X.Reports.OrderDemandDetail(o1) : X.Reports.OrderDemand(o1); else empty = "Chưa có đơn hàng."; break;

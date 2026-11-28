@@ -205,7 +205,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var from = f.From ?? DateTime.MinValue; var toEx = EndOfDay(f.To) ?? DateTime.MaxValue;
         var rows = Txns(f.MaterialCode, f.OrderId, f.CustomerId).Where(t => t.At >= from && t.At < toEx)
             .Select(t => new object?[] { t.At.ToString("dd/MM/yyyy HH:mm"), t.DocNo, t.TypeText, t.Customer, t.Material, t.Qty, t.Order, t.ScopeText, t.FromPlace, t.ToPlace, t.Note }).ToList();
-        return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Khách hàng", "Mã NPL", "Số lượng (±)", "Đơn", "Phạm vi", "Nơi xuất", "Nơi nhận", "Ghi chú" }, rows);
+        return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Khách hàng", "Mã NPL", "Số lượng (±)", "Đơn", "Loại BOM", "Nơi xuất", "Nơi nhận", "Ghi chú" }, rows);
     }
 
     /// <summary>
@@ -243,14 +243,26 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var rows = iss.Settlement(orderId).Select(s => new object?[] { s.Place, IssueScopes.Label(s.Scope), s.Material, s.MaterialName, s.Unit,
             s.Demand, s.Issued, s.Loss, s.Returned, s.Balance, s.Conclusion }).ToList();
         var filters = Describe(new ReportFilter(OrderId: orderId));
-        // Phần số bộ chưa giao việc cho nơi nhận nào
-        var notAssigned = IssueScopes.Types.Select(t => (t, rem: iss.Remaining(orderId, t).Where(kv => kv.Value > 0).ToList()))
-            .Where(x => x.rem.Count > 0).Select(x => $"{IssueScopes.Label(x.t)}: " + string.Join(", ", x.rem.Select(kv => $"{kv.Key} còn {AuditLog.N(kv.Value)} bộ"))).ToList();
-        if (notAssigned.Count > 0) filters.Add("Chưa giao việc – " + string.Join(" · ", notAssigned));
+        // Số lượng chưa cấp / cấp vượt đơn theo loại BOM, đối tượng, size
+        var prog = iss.Progress(orderId);
+        var notIssued = prog.Where(p => p.P.Ordered - p.P.Issued > 0).Select(p => $"{IssueScopes.Label(p.Type)} {p.Obj.Label} {p.P.Size}: {AuditLog.N(p.P.Ordered - p.P.Issued)}").ToList();
+        var over = prog.Where(p => p.P.Issued > p.P.Ordered).Select(p => $"{IssueScopes.Label(p.Type)} {p.Obj.Label} {p.P.Size}: vượt {AuditLog.N(p.P.Issued - p.P.Ordered)}").ToList();
+        if (notIssued.Count > 0) filters.Add("Chưa cấp – " + string.Join(" · ", notIssued));
+        if (over.Count > 0) filters.Add("Cấp vượt đơn (sau khi giảm đơn) – " + string.Join(" · ", over));
         var dư = rows.Count(r => (string)r[10]! == "Dư"); var thiếu = rows.Count(r => (string)r[10]! == "Thiếu");
         filters.Add(dư == 0 && thiếu == 0 ? "Kết luận: đã cân đối đủ" : $"Kết luận: {dư} dòng dư (phải trả kho / điều chuyển trước khi đóng), {thiếu} dòng thiếu");
         return new("Quyết toán NPL theo đơn", filters,
-            new[] { "Nơi nhận", "Phạm vi", "Mã NPL", "Tên", "ĐVT", "Nhu cầu", "Đã cấp", "Bù hao hụt", "Trả / chuyển đi", "Số dư", "Kết luận" }, rows);
+            new[] { "Nơi nhận", "Loại BOM", "Mã NPL", "Tên", "ĐVT", "Nhu cầu", "Đã cấp", "Bù hao hụt", "Trả / chuyển đi", "Số dư", "Kết luận" }, rows);
+    }
+
+    /// <summary>Tiến độ cấp phát theo size: số lượng đơn hàng / đã cấp / đang nháp / còn lại cho từng loại BOM và chủng loại (hoặc bộ).</summary>
+    public ReportTable IssueProgress(long orderId)
+    {
+        var rows = new IssueService(c, orders, stock).Progress(orderId)
+            .Select(p => new object?[] { IssueScopes.Label(p.Type), p.Obj.Label, p.P.Size, p.P.Ordered, p.P.Issued, p.P.Draft, p.P.Remaining,
+                p.P.Remaining < 0 ? "Vượt đơn" : p.P.Remaining == 0 ? (p.P.Draft > 0 ? "Đủ (còn phiếu nháp)" : "Đã cấp đủ") : p.P.Issued + p.P.Draft == 0 ? "Chưa cấp" : "Đang cấp" }).ToList();
+        return new("Tiến độ cấp phát theo size", Describe(new ReportFilter(OrderId: orderId)),
+            new[] { "Loại BOM", "Chủng loại", "Size", "Số lượng đơn", "Đã cấp", "Đang nháp", "Còn lại", "Trạng thái" }, rows);
     }
 
     /// <summary>Hao hụt vượt định mức (xuất bù hao hụt) theo đơn / nơi nhận / mã NPL, so với nhu cầu theo định mức.</summary>
@@ -267,7 +279,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
             .Where(x => x.loss > 0).OrderByDescending(x => x.demand == 0 ? 0 : x.loss / x.demand)
             .Select(x => new object?[] { x.Key.order, x.Key.place, IssueScopes.Label(x.Key.scope), x.Key.mat, x.Key.name, x.Key.unit, x.demand, x.loss,
                 x.demand == 0 ? null : Math.Round(x.loss / x.demand * 100, 2) }).ToList();
-        return new("Hao hụt vượt định mức", Describe(f), new[] { "Đơn", "Nơi nhận", "Phạm vi", "Mã NPL", "Tên", "ĐVT", "Nhu cầu theo định mức", "Bù hao hụt", "Hao hụt vượt %" }, rows);
+        return new("Hao hụt vượt định mức", Describe(f), new[] { "Đơn", "Nơi nhận", "Loại BOM", "Mã NPL", "Tên", "ĐVT", "Nhu cầu theo định mức", "Bù hao hụt", "Hao hụt vượt %" }, rows);
     }
 
     /// <summary>Nhật ký thay đổi dạng bảng báo cáo (lọc + xuất Excel/PDF).</summary>

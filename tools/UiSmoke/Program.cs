@@ -81,9 +81,28 @@ Expect(x.Stock.OnHand("CHI") == 12m, "nhập + xác nhận phiếu nhập (CHI 4
 Go("Phiếu xuất (cấp phát)"); Pick(All<ComboBox>().First(), "DH-0412");
 var actual = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
 foreach (var a in actual) a.Text = "0"; Pump();
-actual[0].Text = "7,2"; Pump();
+actual[0].Text = "4,8"; Pump();
 Click("Xác nhận xuất");
-Expect(x.Stock.OnHand("CHI") == 4.8m, "xác nhận phiếu xuất (CHI 12 − 7,2)");
+Expect(x.Stock.OnHand("CHI") == 7.2m, "xác nhận phiếu xuất (CHI 12 − 4,8)");
+// Lập phiếu theo số lượng trên giao diện: tổ cắt 2 cắt phần size còn lại; chuyền may 2 may quần
+ComboBox ComboWith(string item) => All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith(item)));
+var dh0 = x.Q.Orders().First(o => o.No == "DH-0412").Id;
+Pick(ComboWith("TO-CAT-2"), "TO-CAT-2"); Pick(ComboWith("BOM Tổ cắt"), "BOM Tổ cắt");
+Click("Điền toàn bộ số còn lại");
+Shot(w, "901b_phieu_cap_theo_size");
+Click("Tạo phiếu xuất nháp");
+var pxCat2 = x.Q.Docs("OUT", dh0).FirstOrDefault(d => d.IssuePlace == "Tổ cắt 2" && d.Status == "DRAFT");
+Expect(pxCat2 is not null && x.Issue.DocQuantities(pxCat2.Id).Sum(q => q.Qty) == 150m, "lập phiếu tổ cắt 2 cho phần size còn lại (3 chủng loại × 50)");
+Expect(x.Issue.Objects(dh0, IssueScopes.ToCat).All(ob => ob.Sizes.All(p => p.Remaining == 0)), "tổ cắt đã nhận đủ số lượng đơn");
+Pick(ComboWith("CHUYEN-2"), "CHUYEN-2"); Pick(ComboWith("BOM Tổ cắt"), "BOM Sản xuất");
+var qBoxes = All<TextBox>().Where(t => t.Watermark == "0").ToList();   // AO_DO ×4, AO_XANH ×4, QUAN_DEN ×4
+qBoxes[0].Text = "5"; Pump();                                          // áo đỏ size 110/56 đã cấp hết cho chuyền 1 → phải chặn
+Click("Tạo phiếu xuất nháp");
+Expect(w.StatusText.Contains("vượt số lượng còn lại"), "chặn cấp vượt số lượng đơn theo size");
+qBoxes = All<TextBox>().Where(t => t.Watermark == "0").ToList();
+qBoxes[0].Text = ""; for (var k = 8; k < 12; k++) qBoxes[k].Text = "10"; Pump();
+Click("Tạo phiếu xuất nháp");
+Expect(x.Q.Docs("OUT", dh0).Any(d => d.IssuePlace == "Chuyền may 2" && d.Status == "DRAFT"), "lập phiếu chuyền may 2 cho 40 quần");
 Shot(w, "901_sau_xuat");
 
 Go("Kiểm tra đáp ứng"); Shot(w, "902_kiem_tra");
@@ -133,9 +152,10 @@ Pick(All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString() =
 Expect(x.Q.Audit().Count > 40, $"nhật ký có {x.Q.Audit().Count} dòng");
 // ---- Cấp phát theo nơi nhận ----
 var dh = x.Q.Orders().First(o => o.No == "DH-0412").Id;
-Go("Giao việc theo nơi nhận"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_giao_viec_theo_noi_nhan");
+Go("Tiến độ cấp phát theo size"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_tien_do_cap_theo_size");
 Go("Điều chuyển NPL dư"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_dieu_chuyen_du_chon");
 var surplusGrid = All<DataGrid>().First(); surplusGrid.SelectedIndex = 0; Pump();
+Pick(All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith("TO-CAT-2"))), "TO-CAT-2");
 RShot(Num() + "_dieu_chuyen_du_form");
 var before2 = x.Stock.CarryClosing(dh, x.Cat.MaterialId("VAI_DO"), IssueScopes.ToCat, x.Q.Places().First(p => p.Code == "TO-CAT-2").Id);
 var surplus1 = x.Issue.Surpluses(dh).First();
@@ -194,6 +214,7 @@ static void Seed(Ctx x)
     var toCat = x.Places.Add("TO-CAT", "Tổ cắt 1", PlaceKind.CaHai);
     var toCat2 = x.Places.Add("TO-CAT-2", "Tổ cắt 2", PlaceKind.CaHai);
     var chuyen = x.Places.Add("CHUYEN-1", "Chuyền may 1", PlaceKind.CaHai);
+    x.Places.Add("CHUYEN-2", "Chuyền may 2", PlaceKind.CaHai);
     var ht = x.Places.Add("HT", "Tổ hoàn thiện", PlaceKind.CaHai);
     x.Places.DefaultInTo = kho; x.Places.DefaultOutFrom = kho;
     x.Company.Name = "CÔNG TY TNHH MAY MẶC HOÀNG LONG"; x.Company.Address = "Lô B2, KCN Phố Nối A, Hưng Yên";
@@ -202,14 +223,13 @@ static void Seed(Ctx x)
     x.Places.SetDocPlaces(nk1, ncc, kho);
     x.Stock.Confirm(nk1);
     x.Stock.CreateDraft("IN", "NK-0002", new[] { ("CHI", 12m), ("NUT", 600m) });
-    // Giao việc theo nơi nhận: 2 tổ cắt chia size, chuyền may phần sản xuất, tổ hoàn thiện phần đóng gói
-    x.Issue.SetAssignment(o, toCat, IssueScopes.ToCat, new[] { new OrderLine("110/56", 40), new OrderLine("110/60", 30) });
-    x.Issue.SetAssignment(o, toCat2, IssueScopes.ToCat, new[] { new OrderLine("120/60", 30), new OrderLine("130/64", 20) });
-    x.Issue.SetAssignment(o, chuyen, IssueScopes.SanXuat, x.Orders.LoadLines(o));
-    x.Issue.SetAssignment(o, ht, IssueScopes.DongGoi, x.Orders.LoadLines(o));
-    var px = x.Issue.CreateIssueDraft(o, chuyen, IssueScopes.SanXuat, "PX-0001");    // nháp cho chuyền may (thao tác ở giao diện)
+    // Cấp theo số lượng: chuyền may 1 may áo đỏ + áo xanh (BOM sản xuất); tổ cắt 1 cắt size 110/56, 110/60 cả 3 chủng loại (BOM tổ cắt)
+    var sizes = x.Orders.LoadLines(o);
+    var px = x.Issue.CreateIssueDraft(o, chuyen, IssueScopes.SanXuat, "PX-0001",
+        sizes.SelectMany(l => new[] { new IssueQty("AO_DO", l.DefaultSize, l.Sets), new IssueQty("AO_XANH", l.DefaultSize, l.Sets) }).ToList());   // nháp (thao tác ở giao diện)
     x.Places.SetDocPlaces(px, kho, chuyen);
-    var pxc = x.Issue.CreateIssueDraft(o, toCat, IssueScopes.ToCat, "PX-0002");      // tổ cắt 1: cấp tròn cây vải → dư
+    var pxc = x.Issue.CreateIssueDraft(o, toCat, IssueScopes.ToCat, "PX-0002",
+        sizes.Where(l => l.DefaultSize.StartsWith("110")).SelectMany(l => new[] { "AO_DO", "AO_XANH", "QUAN_DEN" }.Select(v => new IssueQty(v, l.DefaultSize, l.Sets))).ToList());   // cấp tròn cây vải → dư
     x.Places.SetDocPlaces(pxc, kho, toCat);
     foreach (var l in x.Q.DocLines(pxc)) x.Issue.SetActual(pxc, l.Material, Math.Ceiling(l.Suggested ?? 0) + (l.Material == "VAI_DO" ? 2 : 0));
     x.Stock.Confirm(pxc);

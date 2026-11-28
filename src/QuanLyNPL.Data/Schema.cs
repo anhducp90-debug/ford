@@ -135,5 +135,13 @@ CREATE TABLE surplus_transfer(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQU
 CREATE TABLE surplus_transfer_line(id INTEGER PRIMARY KEY, transfer_id INTEGER NOT NULL REFERENCES surplus_transfer(id),
   material_id INTEGER NOT NULL REFERENCES material(id), qty TEXT NOT NULL);
 "
+    ,
+@"
+-- Cấp phát theo SỐ LƯỢNG: mỗi phiếu cấp ghi số lượng theo đối tượng sản xuất (chủng loại hoặc '(Bộ)') và size.
+-- Lũy kế số lượng đã cấp mỗi đối tượng/size không vượt số lượng của đơn. (Bảng assignment của bản 1.3.0 không dùng nữa.)
+CREATE TABLE issue_qty(id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL REFERENCES stock_doc(id), object TEXT NOT NULL,
+  size_code TEXT NOT NULL, qty TEXT NOT NULL, UNIQUE(doc_id,object,size_code));
+CREATE INDEX ix_issue_qty_doc ON issue_qty(doc_id);
+"
     };
 }

@@ -206,7 +206,7 @@ public sealed class OrderScreen : Screen
                 Ui.Text($"Ngày đặt {Ui.D(o.OrderDate)} · Số bộ: " + string.Join(", ", lines.Select(l => $"{l.DefaultSize}: {Ui.N(l.Sets)}"))),
                 Ui.Btn("Kiểm tra đáp ứng", () => App.Main.Open("Kiểm tra đáp ứng", new CheckScreen(o.Id))),
                 Ui.Btn("Điều chỉnh đơn", () => App.Main.Open("Điều chỉnh đơn", new AdjustScreen(o.Id))),
-                Ui.Btn("Giao việc", () => App.Main.Open("Giao việc theo nơi nhận", new AssignScreen(o.Id))),
+                Ui.Btn("Cấp phát", () => App.Main.Open("Phiếu xuất (cấp phát)", new IssueScreen(o.Id))),
                 Ui.Btn("Quyết toán", () => App.Main.Open("Quyết toán & đóng đơn", new SettleScreen(o.Id))),
                 o.Status == "OPEN"
                     ? Ui.BtnAsync("Đóng đơn", () => SettleScreen.CloseFlow(o.Id, o.No, Reload))

@@ -18,7 +18,7 @@ internal static class DocText
     public static (string, Func<DocRow, string>, bool)[] Cols => new (string, Func<DocRow, string>, bool)[]
     {
         ("Số phiếu", d => d.DocNo, false), ("Loại", Type, false), ("Khách hàng", d => d.CustomerCode, false), ("Đơn", d => d.OrderNo, false),
-        ("Nơi nhận cấp", d => d.IssuePlace, false), ("Phạm vi", d => Scope(d.Scope), false), ("Nơi xuất", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
+        ("Nơi nhận cấp", d => d.IssuePlace, false), ("Loại BOM", d => Scope(d.Scope), false), ("Nơi xuất", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
         ("Xác nhận lúc", d => d.ConfirmedAt is DateTime t ? Ui.DT(t) : "", false), ("Ghi chú", d => d.Note ?? "", false)
     };
 

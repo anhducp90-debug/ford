@@ -36,16 +36,14 @@ public class Fixture : IDisposable
         return id is null ? new PlaceService(C).Add(code, "Tổ " + code, PlaceKind.CaHai) : Convert.ToInt64(id);
     }
     public IssueService Iss => new(C, Orders, Stock);
-    public void Assign(long o, IReadOnlyList<OrderLine> sets, string place = "TO1", string scope = IssueScopes.All) => Iss.SetAssignment(o, Place(place), scope, sets);
-    /// <summary>Giao toàn bộ đơn cho nơi nhận rồi lập phiếu xuất nháp.</summary>
-    public long IssueDraft(long o, string no, string place = "TO1", string scope = IssueScopes.All)
-    {
-        Assign(o, Orders.LoadLines(o), place, scope);
-        return Iss.CreateIssueDraft(o, Place(place), scope, no);
-    }
-    public decimal Closing(long o, string mat, string place = "TO1", string scope = IssueScopes.All) => Stock.CarryClosing(o, Cat.MaterialId(mat), scope, Place(place));
-    public decimal Issued(long o, string mat, string place = "TO1", string scope = IssueScopes.All) => Stock.CarryIssued(o, Cat.MaterialId(mat), scope, Place(place));
-    public long Return(long o, string no, (string, decimal)[] lines, string place = "TO1", string scope = IssueScopes.All) => Iss.CreateReturn(o, Place(place), scope, no, lines);
+    /// <summary>Lập phiếu cấp nháp cho toàn bộ số lượng còn lại của loại BOM (mặc định Tổ cắt) cho nơi nhận.</summary>
+    public long IssueDraft(long o, string no, string place = "TO1", string type = IssueScopes.ToCat) =>
+        Iss.CreateIssueDraft(o, Place(place), type, no, Iss.Objects(o, type).SelectMany(ob => ob.Sizes.Where(p => p.Remaining > 0).Select(p => new IssueQty(ob.Code, p.Size, p.Remaining))).ToList());
+    public long IssueQty(long o, string no, string place, string type, params (string obj, string size, decimal q)[] qty) =>
+        Iss.CreateIssueDraft(o, Place(place), type, no, qty.Select(x => new IssueQty(x.obj, x.size, x.q)).ToList());
+    public decimal Closing(long o, string mat, string place = "TO1", string scope = IssueScopes.ToCat) => Stock.CarryClosing(o, Cat.MaterialId(mat), scope, Place(place));
+    public decimal Issued(long o, string mat, string place = "TO1", string scope = IssueScopes.ToCat) => Stock.CarryIssued(o, Cat.MaterialId(mat), scope, Place(place));
+    public long Return(long o, string no, (string, decimal)[] lines, string place = "TO1", string scope = IssueScopes.ToCat) => Iss.CreateReturn(o, Place(place), scope, no, lines);
 
     public void AddVersionAll(long[] ids, DateTime createdAt, BomLineInput[] lines)
     { foreach (var id in ids) Bom.AddVersion(id, createdAt, lines); }

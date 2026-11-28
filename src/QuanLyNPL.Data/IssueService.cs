@@ -3,10 +3,16 @@ using QuanLyNPL.Core;
 
 namespace QuanLyNPL.Data;
 
-public sealed record AssignmentRow(long Id, long OrderId, long PlaceId, string PlaceCode, string PlaceName, string Scope, IReadOnlyDictionary<string, decimal> Sets)
+/// <summary>Số lượng một phiếu cấp phục vụ: đối tượng sản xuất (mã chủng loại, hoặc "(Bộ)" cho BOM theo bộ) × size.</summary>
+public sealed record IssueQty(string Object, string Size, decimal Qty);
+
+/// <summary>Tiến độ cấp theo size của một đối tượng: số lượng đơn hàng, đã cấp (đã xác nhận), đang ở phiếu nháp, còn lại.</summary>
+public sealed record SizeProgress(string Size, decimal Ordered, decimal Issued, decimal Draft)
 {
-    public decimal Total => Sets.Values.Sum();
+    public decimal Remaining => Ordered - Issued - Draft;
 }
+
+public sealed record IssuableObject(string Code, string Label, IReadOnlyList<SizeProgress> Sizes);
 
 public sealed record SettlementLine(string Place, long? PlaceId, string Scope, string Material, string MaterialName, string Unit,
     decimal Demand, decimal Issued, decimal Loss, decimal Returned, decimal Balance)
@@ -16,135 +22,153 @@ public sealed record SettlementLine(string Place, long? PlaceId, string Scope, s
 
 public sealed record SurplusLine(string Material, decimal Qty);
 
-/// <summary>Đóng đơn khi còn thiếu cần người dùng xác nhận rõ.</summary>
+/// <summary>Đóng đơn khi còn thiếu (chưa cấp hết số lượng đơn hoặc nơi nhận còn thiếu NPL) cần người dùng xác nhận.</summary>
 public sealed class ShortageOnCloseException(string message) : BusinessException(message);
 
 /// <summary>
-/// Cấp phát theo NƠI NHẬN: giao việc (nơi nhận + phạm vi + số bộ theo size) → phiếu nháp theo nhu cầu còn lại của đúng nơi nhận/phạm vi →
-/// kho nhập thực cấp → xác nhận (StockService.Confirm) → bù thiếu / bù hao hụt / trả / điều chuyển dư → quyết toán khi đóng đơn.
-/// Số dư của nơi nhận này không bao giờ tự bù cho nơi nhận khác, kể cả cùng mã NPL.
+/// Cấp phát NPL theo SỐ LƯỢNG SẢN PHẨM cho NƠI NHẬN:
+/// đơn hàng = tổng cần sản xuất (phân rã theo chủng loại × size). Mỗi phiếu cấp ghi nơi nhận + loại BOM
+/// (Tổ cắt → nhà cắt; Sản xuất = BOM chủng loại → các tổ sản xuất; Đóng gói theo bộ) và số lượng từng chủng loại (hoặc bộ) theo size.
+/// Nhu cầu NPL của phiếu = định mức × số lượng. Lũy kế số lượng cấp mỗi đối tượng/size không vượt đơn hàng.
+/// Cân đối (thừa/thiếu) tính riêng theo nơi nhận + loại BOM; số dư của tổ này không dùng cho tổ khác.
 /// </summary>
 public sealed class IssueService(SqliteConnection c, OrderService orders, StockService stock)
 {
-    public const string AllScope = IssueScopes.All;
-
-    // ---------------- Giao việc ----------------
-
-    public List<AssignmentRow> Assignments(long orderId) =>
-        Db.Query(c, @"SELECT a.id,a.order_id,a.place_id,p.code,p.name,a.scope FROM assignment a JOIN place p ON p.id=a.place_id WHERE a.order_id=$o ORDER BY p.code,a.scope",
-                r => (id: r.GetInt64(0), o: r.GetInt64(1), p: r.GetInt64(2), pc: r.GetString(3), pn: r.GetString(4), s: r.GetString(5)), null, ("$o", orderId))
-            .Select(a => new AssignmentRow(a.id, a.o, a.p, a.pc, a.pn, a.s,
-                Db.Query(c, "SELECT size_code,sets FROM assignment_line WHERE assignment_id=$a ORDER BY id", r => (r.GetString(0), Db.D(r.GetString(1))), null, ("$a", a.id))
-                  .ToDictionary(x => x.Item1, x => x.Item2)))
-            .ToList();
-
-    /// <summary>Số bộ còn có thể giao cho một phạm vi tại từng size (đã trừ phần giao cho nơi khác; ALL chiếm chỗ của mọi loại).</summary>
-    public Dictionary<string, decimal> Remaining(long orderId, string scope, long? exceptPlaceId = null)
-    {
-        IssueScopes.Require(scope);
-        var ordered = orders.LoadLines(orderId).ToDictionary(l => l.DefaultSize, l => l.Sets);
-        var others = Assignments(orderId).Where(a => !(a.PlaceId == exceptPlaceId && a.Scope == scope)).ToList();
-        var types = scope == IssueScopes.All ? IssueScopes.Types : new[] { scope };
-        return ordered.ToDictionary(kv => kv.Key, kv => types.Min(t =>
-            kv.Value - others.Where(a => a.Scope == IssueScopes.All || a.Scope == t).Sum(a => a.Sets.GetValueOrDefault(kv.Key))));
-    }
-
-    /// <summary>
-    /// Giao việc (hoặc thêm đợt): đặt số bộ theo size giao cho nơi nhận với phạm vi. Tổng giao cho mọi nơi nhận không vượt số bộ của đơn
-    /// ở từng size và từng loại BOM. Giảm dưới phần đã cấp thì phần đã cấp thành số dư (cần trả / điều chuyển).
-    /// </summary>
-    public void SetAssignment(long orderId, long placeId, string scope, IReadOnlyList<OrderLine> sets, string? reason = null)
-    {
-        OrderService.RequireOpen(c, orderId);
-        IssueScopes.Require(scope);
-        var place = Db.Query(c, "SELECT kind,active,name,code FROM place WHERE id=$i", r => (kind: r.GetString(0), active: r.GetInt32(1) == 1, name: r.GetString(2), code: r.GetString(3)), null, ("$i", placeId)).SingleOrDefault();
-        if (place == default) throw new BusinessException("Nơi nhận không tồn tại.");
-        if (!place.active) throw new BusinessException($"{place.name} đã ngừng sử dụng.");
-        if (place.kind == "XUAT") throw new BusinessException($"{place.name} chỉ là nơi xuất, không nhận cấp phát.");
-        var ordered = orders.LoadLines(orderId).ToDictionary(l => l.DefaultSize, l => l.Sets);
-        var errs = new List<string>();
-        if (sets.GroupBy(s => s.DefaultSize).Any(g => g.Count() > 1)) errs.Add("Trùng size.");
-        var remaining = Remaining(orderId, scope, placeId);
-        foreach (var s in sets)
-        {
-            if (s.Sets < 0) errs.Add($"Size {s.DefaultSize}: số bộ âm.");
-            else if (!ordered.ContainsKey(s.DefaultSize)) { if (s.Sets > 0) errs.Add($"Size {s.DefaultSize} không có trong đơn."); }
-            else if (s.Sets > remaining[s.DefaultSize]) errs.Add($"Size {s.DefaultSize}: giao {AuditLog.N(s.Sets)} bộ vượt phần còn giao được {AuditLog.N(remaining[s.DefaultSize])} bộ ({IssueScopes.Label(scope)}).");
-        }
-        if (errs.Count > 0) throw new BusinessException(string.Join("\n", errs));
-        var old = Assignments(orderId).FirstOrDefault(a => a.PlaceId == placeId && a.Scope == scope);
-        using var tx = c.BeginTransaction(deferred: false);
-        var aid = old?.Id ?? Db.Insert(c, "INSERT INTO assignment(order_id,place_id,scope,created_at) VALUES($o,$p,$s,$t)", tx, ("$o", orderId), ("$p", placeId), ("$s", scope), ("$t", Db.Date(DateTime.Now)));
-        Db.Exec(c, "DELETE FROM assignment_line WHERE assignment_id=$a", tx, ("$a", aid));
-        foreach (var s in sets.Where(s => ordered.ContainsKey(s.DefaultSize)))
-            Db.Exec(c, "INSERT INTO assignment_line(assignment_id,size_code,sets) VALUES($a,$s,$q)", tx, ("$a", aid), ("$s", s.DefaultSize), ("$q", Db.D(s.Sets)));
-        string Fmt(IEnumerable<KeyValuePair<string, decimal>> d) => string.Join("; ", d.Where(x => x.Value != 0).Select(x => $"{x.Key}: {AuditLog.N(x.Value)}"));
-        AuditLog.Write(c, "order", old is null ? "Giao việc" : "Sửa giao việc",
-            $"{Db.Scalar(c, "SELECT order_no FROM \"order\" WHERE id=$o", tx, ("$o", orderId))} / {place.code} / {IssueScopes.Label(scope)}",
-            old is null ? null : Fmt(old.Sets), Fmt(sets.Select(s => new KeyValuePair<string, decimal>(s.DefaultSize, s.Sets))), reason, orderId, tx);
-        tx.Commit();
-    }
-
-    // ---------------- Nhu cầu theo nơi nhận ----------------
-
-    /// <summary>Nhu cầu của đúng nơi nhận + phạm vi: số bộ đã giao × định mức các BOM thuộc phạm vi (làm tròn 2 số lẻ mỗi mã).</summary>
-    public Dictionary<string, decimal> KeyDemand(long orderId, long placeId, string scope)
-    {
-        var a = Assignments(orderId).FirstOrDefault(x => x.PlaceId == placeId && x.Scope == scope)
-            ?? throw new BusinessException("Chưa giao việc cho nơi nhận này với phạm vi " + IssueScopes.Label(scope) + ".");
-        var lines = a.Sets.Where(kv => kv.Value > 0).Select(kv => new OrderLine(kv.Key, kv.Value)).ToList();
-        if (lines.Count == 0) return new();
-        var snap = orders.LoadSnapshot(orderId);
-        var d = OrderService.Calculate(snap, lines);
-        if (!d.IsComplete) throw new BusinessException("Dữ liệu chưa đủ để cấp phát:\n" + string.Join("\n", d.Issues.Select(i => i.Message).Distinct()));
-        var types = BomTypes(snap);
-        return d.Sources.Where(s => IssueScopes.Covers(scope, types.GetValueOrDefault(s.BomId))).GroupBy(s => s.MaterialCode)
-            .ToDictionary(g => g.Key, g => DemandCalculator.Round(g.Sum(s => s.Qty)));
-    }
+    // ---------------- Đối tượng & tiến độ cấp theo size ----------------
 
     Dictionary<string, string?> BomTypes(OrderSnapshot snap) => snap.Boms.ToDictionary(b => b.Id, b => b.Type ??
         Db.Scalar(c, "SELECT type FROM bom WHERE id=$i", null, ("$i", long.TryParse(b.Id, out var id) ? id : 0)) as string);
 
+    /// <summary>
+    /// Các đối tượng cấp được cho một loại BOM, kèm tiến độ theo size: chủng loại có BOM loại đó (số lượng = số bộ × SL/bộ),
+    /// và "(Bộ)" nếu loại đó khai báo theo bộ (số lượng = số bộ).
+    /// </summary>
+    public List<IssuableObject> Objects(long orderId, string type)
+    {
+        IssueScopes.Require(type);
+        var snap = orders.LoadSnapshot(orderId);
+        var types = BomTypes(snap);
+        var boms = snap.Boms.Where(b => types.GetValueOrDefault(b.Id) == type).ToList();
+        var lines = orders.LoadLines(orderId);
+        var issued = IssuedQuantities(orderId, type);
+        var result = new List<IssuableObject>();
+        SizeProgress P(string obj, string size, decimal ordered) =>
+            new(size, ordered, issued.GetValueOrDefault((obj, size, true)), issued.GetValueOrDefault((obj, size, false)));
+        if (boms.Any(b => b.PerSet))
+            result.Add(new IssuableObject(IssueScopes.SetObject, "Cả bộ", lines.Select(l => P(IssueScopes.SetObject, l.DefaultSize, l.Sets)).ToList()));
+        var variantCodes = boms.Any(b => !b.PerSet && b.ScopeVariant is null)
+            ? snap.Variants.Select(v => v.Code).ToList()
+            : boms.Where(b => !b.PerSet && b.ScopeVariant is not null).Select(b => b.ScopeVariant!).Distinct().ToList();
+        var names = Db.Query(c, "SELECT v.code,v.name FROM variant v JOIN \"order\" o ON o.product_id=v.product_id WHERE o.id=$o", r => (r.GetString(0), r.GetString(1)), null, ("$o", orderId))
+            .ToDictionary(x => x.Item1, x => x.Item2);
+        foreach (var v in snap.Variants.Where(v => variantCodes.Contains(v.Code)))
+            result.Add(new IssuableObject(v.Code, names.GetValueOrDefault(v.Code, v.Code), lines.Select(l => P(v.Code, l.DefaultSize, l.Sets * v.QtyPerSet)).ToList()));
+        return result;
+    }
+
+    /// <summary>Số lượng đã đưa vào phiếu cấp (true = đã xác nhận, false = đang nháp) theo đối tượng/size.</summary>
+    Dictionary<(string obj, string size, bool confirmed), decimal> IssuedQuantities(long orderId, string type, SqliteTransaction? tx = null) =>
+        Db.Query(c, @"SELECT q.object,q.size_code,d.status,q.qty FROM issue_qty q JOIN stock_doc d ON d.id=q.doc_id
+                      WHERE d.order_id=$o AND d.scope=$t AND d.type='OUT' AND d.ref_doc_id IS NULL",
+                r => (obj: r.GetString(0), size: r.GetString(1), conf: r.GetString(2) == "CONFIRMED", q: Db.D(r.GetString(3))), tx, ("$o", orderId), ("$t", type))
+            .GroupBy(x => (x.obj, x.size, x.conf)).ToDictionary(g => g.Key, g => g.Sum(x => x.q));
+
+    /// <summary>Số lượng ghi trên một phiếu cấp.</summary>
+    public List<IssueQty> DocQuantities(long docId) =>
+        Db.Query(c, "SELECT object,size_code,qty FROM issue_qty WHERE doc_id=$d ORDER BY id", r => new IssueQty(r.GetString(0), r.GetString(1), Db.D(r.GetString(2))), null, ("$d", docId));
+
+    /// <summary>Nhu cầu NPL (chưa làm tròn) của một tập số lượng: định mức các BOM thuộc loại × số lượng chủng loại/bộ theo size.</summary>
+    public (Dictionary<string, decimal> demand, List<string> issues) DemandFor(long orderId, string type, IReadOnlyList<IssueQty> qty)
+    {
+        var snap = orders.LoadSnapshot(orderId);
+        var types = BomTypes(snap);
+        var boms = snap.Boms.Where(b => types.GetValueOrDefault(b.Id) == type).ToList();
+        var demand = new Dictionary<string, decimal>(); var issues = new List<string>();
+        foreach (var g in qty.Where(q => q.Qty > 0).GroupBy(q => q.Object))
+        {
+            var isSet = g.Key == IssueScopes.SetObject;
+            var bs = boms.Where(b => isSet ? b.PerSet : !b.PerSet && (b.ScopeVariant == g.Key || b.ScopeVariant is null)).ToList();
+            var r = DemandCalculator.Calculate(
+                g.Select(q => new OrderLine(q.Size, q.Qty)).ToList(),
+                isSet ? Array.Empty<VariantConfig>() : new[] { new VariantConfig(g.Key, 1m) },
+                isSet ? new SizeMap() : g.Aggregate(new SizeMap(), (m, q) => m.Add(g.Key, q.Size, q.Size)),
+                bs.Select(b => new Bom(b.Id, b.ScopeVariant, b.PerSet, b.Name)),
+                bs.SelectMany(b => b.Lines.Select(l => new BomLine(b.Id, l.Material, l.Size, l.Usage, l.Waste, l.Variant))));
+            issues.AddRange(r.Issues.Select(i => i.Message));
+            if (bs.Count == 0) issues.Add($"Chưa có BOM {IssueScopes.Label(type)} cho {(isSet ? "cả bộ" : "chủng loại " + g.Key)}.");
+            foreach (var s in r.Sources) demand[s.MaterialCode] = demand.GetValueOrDefault(s.MaterialCode) + s.Qty;
+        }
+        return (demand, issues.Distinct().ToList());
+    }
+
     // ---------------- Phiếu cấp ----------------
 
     /// <summary>
-    /// Phiếu xuất nháp cho một nơi nhận + phạm vi: đề xuất = max(0, nhu cầu kỳ − số dư của ĐÚNG nơi nhận/phạm vi).
-    /// Mỗi nơi nhận + phạm vi tối đa một phiếu nháp; các nơi nhận khác lập song song được.
+    /// Phiếu xuất nháp cấp NPL cho một nơi nhận theo loại BOM và số lượng sản phẩm theo size.
+    /// Kiểm tra: lũy kế số lượng (đã xác nhận + nháp) của từng đối tượng/size không vượt đơn hàng.
+    /// Đề xuất = max(0, nhu cầu của số lượng này − số dư của nơi nhận/loại BOM); NPL nơi nhận đang thiếu từ lần trước được cộng vào.
     /// </summary>
-    public long CreateIssueDraft(long orderId, long placeId, string scope, string docNo)
+    public long CreateIssueDraft(long orderId, long placeId, string type, string docNo, IReadOnlyList<IssueQty> quantities)
     {
         OrderService.RequireOpen(c, orderId);
-        var demand = KeyDemand(orderId, placeId, scope);
+        IssueScopes.Require(type);
+        RequireReceiver(placeId);
         var drafts = Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE order_id=$o AND issue_place_id=$p AND scope=$s AND type='OUT' AND status='DRAFT' AND ref_doc_id IS NULL",
-            null, ("$o", orderId), ("$p", placeId), ("$s", scope)));
-        if (drafts > 0) throw new BusinessException("Nơi nhận này đã có phiếu xuất nháp cùng phạm vi chưa xác nhận.");
+            null, ("$o", orderId), ("$p", placeId), ("$s", type)));
+        if (drafts > 0) throw new BusinessException("Nơi nhận này đã có phiếu xuất nháp cùng loại BOM chưa xác nhận.");
+        var qty = quantities.Where(q => q.Qty != 0).ToList();
+        var errs = new List<string>();
+        if (qty.Any(q => q.Qty < 0)) errs.Add("Số lượng không được âm.");
+        if (qty.GroupBy(q => (q.Object, q.Size)).Any(g => g.Count() > 1)) errs.Add("Trùng đối tượng/size.");
+        var objects = Objects(orderId, type).ToDictionary(o => o.Code);
+        foreach (var q in qty.Where(q => q.Qty > 0))
+        {
+            if (!objects.TryGetValue(q.Object, out var ob)) { errs.Add($"{q.Object}: không có BOM {IssueScopes.Label(type)}."); continue; }
+            var sp = ob.Sizes.FirstOrDefault(s => s.Size == q.Size);
+            if (sp is null) errs.Add($"{ob.Label} size {q.Size}: không có trong đơn.");
+            else if (q.Qty > sp.Remaining)
+                errs.Add($"{ob.Label} size {q.Size}: cấp {AuditLog.N(q.Qty)} vượt số lượng còn lại {AuditLog.N(sp.Remaining)} (đơn {AuditLog.N(sp.Ordered)}, đã cấp {AuditLog.N(sp.Issued)}, đang nháp {AuditLog.N(sp.Draft)}).");
+        }
+        var (raw, issues) = DemandFor(orderId, type, qty);
+        errs.AddRange(issues.Select(i => "Dữ liệu chưa đủ: " + i));
+        if (errs.Count > 0) throw new BusinessException(string.Join("\n", errs));
+        var demand = raw.ToDictionary(kv => kv.Key, kv => DemandCalculator.Round(kv.Value));
         var cat = new CatalogRepository(c);
-        // Mã đã có trong sổ nhưng nay không còn nhu cầu (giảm giao việc) vẫn đưa vào để sổ ghi nhận nhu cầu kỳ âm.
-        var inLedger = Db.Query(c, "SELECT DISTINCT m.code FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o AND l.place_id=$p AND l.scope=$s",
-            r => r.GetString(0), null, ("$o", orderId), ("$p", placeId), ("$s", scope));
-        var codes = demand.Keys.Union(inLedger).OrderBy(x => x, StringComparer.Ordinal).ToList();
-        if (codes.Count == 0) throw new BusinessException("Nơi nhận chưa có nhu cầu NPL để cấp (kiểm tra số bộ giao và BOM của phạm vi).");
+        // NPL nơi nhận đang thiếu từ lần cấp trước (số dư âm) cũng được đưa vào để cấp bù
+        var owed = Db.Query(c, "SELECT DISTINCT m.code FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o AND l.place_id=$p AND l.scope=$s",
+                r => r.GetString(0), null, ("$o", orderId), ("$p", placeId), ("$s", type))
+            .Where(m => !demand.ContainsKey(m) && stock.CarryClosing(orderId, cat.MaterialId(m), type, placeId) < 0).ToList();
+        var codes = demand.Keys.Union(owed).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        if (qty.Count == 0 && owed.Count == 0) throw new BusinessException("Chưa nhập số lượng cấp.");
         var mats = codes.ToDictionary(k => k, cat.MaterialId);
 
         using var tx = c.BeginTransaction(deferred: false);
         var id = Db.Insert(c, @"INSERT INTO stock_doc(type,doc_no,order_id,scope,issue_place_id,to_place_id,created_at,customer_id)
                                 VALUES('OUT',$n,$o,$s,$p,$p,$d,(SELECT customer_id FROM ""order"" WHERE id=$o))", tx,
-            ("$n", docNo), ("$o", orderId), ("$s", scope), ("$p", placeId), ("$d", Db.Date(DateTime.Now)));
-        var lines = 0;
+            ("$n", docNo), ("$o", orderId), ("$s", type), ("$p", placeId), ("$d", Db.Date(DateTime.Now)));
+        foreach (var q in qty)
+            Db.Exec(c, "INSERT INTO issue_qty(doc_id,object,size_code,qty) VALUES($d,$o,$s,$q)", tx, ("$d", id), ("$o", q.Object), ("$s", q.Size), ("$q", Db.D(q.Qty)));
         foreach (var code in codes)
         {
             var mid = mats[code];
-            var period = demand.GetValueOrDefault(code) - stock.CarryAccountedDemand(orderId, mid, scope, placeId, tx);
-            var suggested = DemandCalculator.Round(Math.Max(0m, period - stock.CarryClosing(orderId, mid, scope, placeId, tx)));
-            if (period == 0 && suggested == 0 && !demand.ContainsKey(code)) continue;
+            var period = demand.GetValueOrDefault(code);
+            var suggested = DemandCalculator.Round(Math.Max(0m, period - stock.CarryClosing(orderId, mid, type, placeId, tx)));
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty,qty_suggested,demand,entered) VALUES($d,$m,'0',$s,$p,0)", tx,
                 ("$d", id), ("$m", mid), ("$s", Db.D(suggested)), ("$p", Db.D(period)));
-            lines++;
         }
         AuditLog.Write(c, "stock_doc", "Lập phiếu nháp", docNo, null,
-            $"Cấp phát · nơi nhận {Db.Scalar(c, "SELECT name FROM place WHERE id=$p", tx, ("$p", placeId))} · {IssueScopes.Label(scope)} · {lines} mã NPL", null, id, tx);
+            $"Cấp phát · {Db.Scalar(c, "SELECT name FROM place WHERE id=$p", tx, ("$p", placeId))} · {IssueScopes.Label(type)} · " +
+            string.Join("; ", qty.Select(q => $"{(q.Object == IssueScopes.SetObject ? "Bộ" : q.Object)}/{q.Size}: {AuditLog.N(q.Qty)}")), null, id, tx);
         tx.Commit();
         return id;
+    }
+
+    void RequireReceiver(long placeId)
+    {
+        var place = Db.Query(c, "SELECT kind,active,name FROM place WHERE id=$i", r => (kind: r.GetString(0), active: r.GetInt32(1) == 1, name: r.GetString(2)), null, ("$i", placeId)).SingleOrDefault();
+        if (place == default) throw new BusinessException("Nơi nhận không tồn tại.");
+        if (!place.active) throw new BusinessException($"{place.name} đã ngừng sử dụng.");
+        if (place.kind == "XUAT") throw new BusinessException($"{place.name} chỉ là nơi xuất, không nhận cấp phát.");
     }
 
     /// <summary>Kho nhập thực cấp. 0 được giữ nguyên (không tự thay bằng đề xuất). Trả về các cảnh báo (không chặn).</summary>
@@ -177,10 +201,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
         return (o.order.Value, o.scope, o.place, o.to);
     }
 
-    /// <summary>
-    /// Cảnh báo trước khi lập xuất bù. Bù thiếu: không vượt phần đang thiếu của đúng nơi nhận/phạm vi.
-    /// Bù hao hụt: NPL phải có trong định mức của nơi nhận/phạm vi đó.
-    /// </summary>
+    /// <summary>Cảnh báo trước khi lập xuất bù. Bù thiếu: không vượt phần đang thiếu của nơi nhận. Bù hao hụt: NPL phải có trong định mức đã cấp cho nơi nhận.</summary>
     public List<string> SupplementWarnings(long refDocId, IReadOnlyList<(string material, decimal qty)> lines, SupplementKind kind)
     {
         var (order, scope, place, _) = SourceIssue(refDocId);
@@ -200,7 +221,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
         return w;
     }
 
-    /// <summary>Xuất bù: phiếu bổ sung liên kết phiếu cấp gốc, cùng đơn / nơi nhận / phạm vi. Loại bù quyết định cách ghi sổ cân đối.</summary>
+    /// <summary>Xuất bù: phiếu bổ sung liên kết phiếu cấp gốc, cùng đơn / nơi nhận / loại BOM. Loại bù quyết định cách ghi sổ cân đối.</summary>
     public long CreateSupplement(long refDocId, string docNo, IReadOnlyList<(string material, decimal qty)> lines, SupplementKind kind = SupplementKind.BuThieu)
     {
         var (order, scope, place, toPlace) = SourceIssue(refDocId);
@@ -214,41 +235,50 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     // ---------------- Trả NPL ----------------
 
     /// <summary>
-    /// Trả NPL từ một nơi nhận về kho: khi xác nhận vừa tăng tồn vừa giảm lượng đã cấp của ĐÚNG nơi nhận/phạm vi
+    /// Trả NPL từ một nơi nhận về kho: khi xác nhận vừa tăng tồn vừa giảm lượng đã cấp của ĐÚNG nơi nhận/loại BOM
     /// (một nghiệp vụ, không tính hai lần). Không trả vượt lượng nơi đó đã nhận.
     /// </summary>
     public long CreateReturn(long orderId, long placeId, string scope, string docNo, IReadOnlyList<(string material, decimal qty)> lines)
     {
         OrderService.RequireOpen(c, orderId);
-        IssueScopes.Require(scope);
+        if (!IssueScopes.Types.Contains(scope) && !LedgerKeys(orderId).Any(k => k.place == placeId && k.scope == scope))
+            throw new BusinessException("Loại BOM cấp phát không hợp lệ: " + scope);
         var id = stock.CreateDraft("RETURN", docNo, lines, orderId);
         Db.Exec(c, "UPDATE stock_doc SET scope=$s, issue_place_id=$p, from_place_id=$p WHERE id=$i", null, ("$s", scope), ("$p", placeId), ("$i", id));
         return id;
     }
 
+    /// <summary>Các khóa (nơi nhận, loại BOM) đã có trong sổ cân đối của đơn.</summary>
+    public List<(long? place, string placeName, string scope)> LedgerKeys(long orderId) =>
+        Db.Query(c, @"SELECT DISTINCT l.place_id,COALESCE(p.name,'(chưa có nơi nhận)'),l.scope FROM carry_ledger l LEFT JOIN place p ON p.id=l.place_id WHERE l.order_id=$o ORDER BY 2,3",
+            r => (r.IsDBNull(0) ? (long?)null : r.GetInt64(0), r.GetString(1), r.GetString(2)), null, ("$o", orderId));
+
     // ---------------- Điều chuyển NPL dư ----------------
 
     /// <summary>
-    /// Điều chuyển NPL DƯ đang ở một nơi nhận (đơn A / nơi nhận / phạm vi) sang nơi nhận khác hoặc đơn khác cùng khách hàng.
-    /// Chỉ chuyển trong phạm vi số dư dương của nguồn; không đổi tồn kho (NPL đã ở xưởng); ghi sổ cân đối cả hai phía trong một giao dịch.
+    /// Điều chuyển NPL DƯ đang ở một nơi nhận (đơn / nơi nhận / loại BOM) sang nơi nhận khác hoặc đơn khác cùng khách hàng.
+    /// Chỉ trong phạm vi số dư dương của nguồn; NPL phải có trong BOM loại đích của đơn nhận; không đổi tồn kho; ghi sổ hai phía trong một giao dịch.
+    /// Phần dư được trừ vào đề xuất các lần cấp sau của nơi nhận đích.
     /// </summary>
     public long TransferSurplus(string docNo, long fromOrderId, long fromPlaceId, string fromScope, long toOrderId, long toPlaceId, string toScope,
         IReadOnlyList<SurplusLine> lines, string? reason = null)
     {
         if (fromOrderId == toOrderId && fromPlaceId == toPlaceId && fromScope == toScope) throw new BusinessException("Nơi chuyển và nơi nhận phải khác nhau.");
         if (lines.Count == 0) throw new BusinessException("Chưa có dòng nào.");
+        IssueScopes.Require(toScope);
         OrderService.RequireOpen(c, fromOrderId); OrderService.RequireOpen(c, toOrderId);
+        RequireReceiver(toPlaceId);
         long Cust(long o) => Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", o)));
         if (Cust(fromOrderId) != Cust(toOrderId)) throw new BusinessException("Chỉ điều chuyển giữa các đơn cùng khách hàng; khác khách hàng dùng Chuyển NPL giữa khách hàng.");
-        if (!Assignments(toOrderId).Any(a => a.PlaceId == toPlaceId && a.Scope == toScope))
-            throw new BusinessException("Đơn nhận chưa giao việc cho nơi nhận / phạm vi này.");
+        var snap = orders.LoadSnapshot(toOrderId);
+        var types = BomTypes(snap);
+        var targetMats = snap.Boms.Where(b => types.GetValueOrDefault(b.Id) == toScope).SelectMany(b => b.Lines.Select(l => l.Material)).ToHashSet();
         var cat = new CatalogRepository(c);
         var errs = new List<string>();
-        var targetDemand = KeyDemand(toOrderId, toPlaceId, toScope);
         foreach (var (l, i) in lines.Select((l, i) => (l, i + 1)))
         {
             if (l.Qty <= 0) { errs.Add($"Dòng {i}: số lượng phải dương."); continue; }
-            if (!targetDemand.ContainsKey(l.Material)) { errs.Add($"Dòng {i}: {l.Material} không có trong định mức của nơi nhận đích."); continue; }
+            if (!targetMats.Contains(l.Material)) { errs.Add($"Dòng {i}: {l.Material} không có trong BOM {IssueScopes.Label(toScope)} của đơn nhận."); continue; }
             var surplus = stock.CarryClosing(fromOrderId, cat.MaterialId(l.Material), fromScope, fromPlaceId);
             if (l.Qty > surplus) errs.Add($"Dòng {i}: {l.Material} chuyển {AuditLog.N(l.Qty)} vượt số dư {AuditLog.N(Math.Max(0, surplus))} của nơi chuyển.");
         }
@@ -281,13 +311,40 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
             ("$o", order), ("$m", mid), ("$s", scope), ("$p", place), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$cl", Db.D(opening + issued)), ("$st", transferId), ("$t", now));
     }
 
-    /// <summary>Danh sách số dư đang DƯ (dương) của một đơn theo nơi nhận / phạm vi / mã NPL – nguồn cho điều chuyển.</summary>
+    /// <summary>Số dư đang DƯ (dương) của một đơn theo nơi nhận / loại BOM / mã NPL – nguồn cho điều chuyển và trả kho.</summary>
     public List<(long PlaceId, string Place, string Scope, string Material, decimal Surplus)> Surpluses(long orderId) =>
-        Settlement(orderId).Where(s => s.Balance > 0 && s.PlaceId is not null).Select(s => (s.PlaceId!.Value, s.Place, s.Scope, s.Material, s.Balance)).ToList();
+        Settlement(orderId).Where(s => Math.Round(s.Balance, 4) > 0 && s.PlaceId is not null).Select(s => (s.PlaceId!.Value, s.Place, s.Scope, s.Material, s.Balance)).ToList();
+
+    // ---------------- Quyết toán ----------------
+
+    /// <summary>Tiến độ cấp theo size của mọi loại BOM và đối tượng: đơn hàng / đã cấp / đang nháp / còn lại.</summary>
+    public List<(string Type, IssuableObject Obj, SizeProgress P)> Progress(long orderId) =>
+        IssueScopes.Types.SelectMany(t => Objects(orderId, t).SelectMany(o => o.Sizes.Select(p => (t, o, p)))).ToList();
 
     /// <summary>
-    /// Đóng đơn có quyết toán: còn DƯ ở nơi nhận nào thì không cho đóng (phải trả kho hoặc điều chuyển);
-    /// còn THIẾU thì chỉ đóng khi người dùng xác nhận (allowShortage).
+    /// Quyết toán NPL theo nơi nhận / loại BOM / mã NPL từ sổ cân đối:
+    /// nhu cầu (định mức × số lượng đã cấp), đã cấp (không gồm hao hụt), bù hao hụt, trả/chuyển đi, số dư (= số dư cuối mới nhất).
+    /// </summary>
+    public List<SettlementLine> Settlement(long orderId)
+    {
+        var rows = Db.Query(c, @"SELECT l.place_id,COALESCE(p.name,'(chưa có nơi nhận)'),l.scope,m.code,m.name,m.unit,l.issued,l.loss,l.demand
+                                 FROM carry_ledger l JOIN material m ON m.id=l.material_id LEFT JOIN place p ON p.id=l.place_id WHERE l.order_id=$o",
+            r => (pid: r.IsDBNull(0) ? (long?)null : r.GetInt64(0), place: r.GetString(1), scope: r.GetString(2), mat: r.GetString(3), name: r.GetString(4), unit: r.GetString(5),
+                  issued: Db.D(r.GetString(6)), loss: Db.D(r.GetString(7)), demand: Db.D(r.GetString(8))), null, ("$o", orderId));
+        return rows.GroupBy(r => (r.pid, r.place, r.scope, r.mat, r.name, r.unit))
+            .Select(g =>
+            {
+                var issued = g.Where(r => r.issued > 0).Sum(r => r.issued);
+                var returned = -g.Where(r => r.issued < 0).Sum(r => r.issued);
+                var loss = g.Sum(r => r.loss); var demand = g.Sum(r => r.demand);
+                return new SettlementLine(g.Key.place, g.Key.pid, g.Key.scope, g.Key.mat, g.Key.name, g.Key.unit, demand, issued - loss, loss, returned, issued - loss - returned - demand);
+            })
+            .OrderBy(r => r.Place).ThenBy(r => r.Scope).ThenBy(r => r.Material, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// Đóng đơn có quyết toán: nơi nhận còn DƯ thì không cho đóng (trả kho hoặc điều chuyển);
+    /// còn THIẾU (nơi nhận thiếu NPL hoặc chưa cấp hết số lượng đơn) thì chỉ đóng khi người dùng xác nhận.
     /// </summary>
     public void CloseOrder(long orderId, bool allowShortage = false)
     {
@@ -296,50 +353,11 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
         if (surplus.Count > 0)
             throw new BusinessException("Còn NPL dư, cần trả kho hoặc điều chuyển trước khi đóng đơn:\n" +
                 string.Join("\n", surplus.Select(x => $"  {x.Place} / {IssueScopes.Label(x.Scope)} / {x.Material}: dư {AuditLog.N(x.Balance)} {x.Unit}")));
-        var shortage = s.Where(x => Math.Round(x.Balance, 2) < 0).ToList();
-        if (shortage.Count > 0 && !allowShortage)
-            throw new ShortageOnCloseException("Đơn còn NPL chưa cấp đủ:\n" +
-                string.Join("\n", shortage.Select(x => $"  {x.Place} / {IssueScopes.Label(x.Scope)} / {x.Material}: thiếu {AuditLog.N(-x.Balance)} {x.Unit}")));
+        var msgs = s.Where(x => Math.Round(x.Balance, 2) < 0)
+            .Select(x => $"  {x.Place} / {IssueScopes.Label(x.Scope)} / {x.Material}: thiếu {AuditLog.N(-x.Balance)} {x.Unit}").ToList();
+        msgs.AddRange(Progress(orderId).Where(p => p.P.Ordered - p.P.Issued > 0)
+            .Select(p => $"  {IssueScopes.Label(p.Type)} / {p.Obj.Label} size {p.P.Size}: chưa cấp {AuditLog.N(p.P.Ordered - p.P.Issued)} / {AuditLog.N(p.P.Ordered)}"));
+        if (msgs.Count > 0 && !allowShortage) throw new ShortageOnCloseException("Đơn còn chưa cấp đủ:\n" + string.Join("\n", msgs));
         orders.SetStatus(orderId, false);
-    }
-
-    // ---------------- Quyết toán ----------------
-
-    /// <summary>
-    /// Quyết toán NPL của đơn theo nơi nhận / phạm vi / mã NPL:
-    /// Số dư = đã cấp ròng (cấp + bù thiếu + nhận điều chuyển − trả − chuyển đi) − nhu cầu hiện tại theo giao việc. Bù hao hụt ghi riêng (đã tiêu hao).
-    /// </summary>
-    public List<SettlementLine> Settlement(long orderId)
-    {
-        var rows = Db.Query(c, @"SELECT l.place_id,COALESCE(p.name,'(chưa có nơi nhận)'),l.scope,m.code,m.name,m.unit,l.issued,l.loss,l.demand
-                                 FROM carry_ledger l JOIN material m ON m.id=l.material_id LEFT JOIN place p ON p.id=l.place_id WHERE l.order_id=$o",
-            r => (pid: r.IsDBNull(0) ? (long?)null : r.GetInt64(0), place: r.GetString(1), scope: r.GetString(2), mat: r.GetString(3), name: r.GetString(4), unit: r.GetString(5),
-                  issued: Db.D(r.GetString(6)), loss: Db.D(r.GetString(7)), demand: Db.D(r.GetString(8))), null, ("$o", orderId));
-        var keys = rows.Select(r => (r.pid, r.place, r.scope)).Distinct().ToList();
-        // Thêm các nơi nhận đã giao việc nhưng chưa cấp lần nào
-        foreach (var a in Assignments(orderId)) if (!keys.Any(k => k.pid == a.PlaceId && k.scope == a.Scope)) keys.Add((a.PlaceId, a.PlaceName, a.Scope));
-        var result = new List<SettlementLine>();
-        foreach (var k in keys)
-        {
-            Dictionary<string, decimal> demandNow;
-            try { demandNow = k.pid is long p && Assignments(orderId).Any(a => a.PlaceId == p && a.Scope == k.scope) ? KeyDemand(orderId, p, k.scope) : new(); }
-            catch (BusinessException) { demandNow = new(); }
-            var kr = rows.Where(r => r.pid == k.pid && r.scope == k.scope).ToList();
-            var legacy = k.pid is null || !IssueScopes.Values.Contains(k.scope);
-            foreach (var mat in kr.Select(r => r.mat).Union(demandNow.Keys).Distinct().OrderBy(x => x, StringComparer.Ordinal))
-            {
-                var mr = kr.Where(r => r.mat == mat).ToList();
-                var info = mr.FirstOrDefault();
-                var (name, unit) = info.mat is not null ? (info.name, info.unit)
-                    : Db.Query(c, "SELECT name,unit FROM material WHERE code=$c", r => (r.GetString(0), r.GetString(1)), null, ("$c", mat)).Single();
-                var issued = mr.Where(r => r.issued > 0).Sum(r => r.issued);
-                var returned = -mr.Where(r => r.issued < 0).Sum(r => r.issued);
-                var loss = mr.Sum(r => r.loss);
-                // Sổ cũ (trước khi có nơi nhận) dùng nhu cầu đã tính vào sổ
-                var demand = legacy ? mr.Sum(r => r.demand) : demandNow.GetValueOrDefault(mat);
-                result.Add(new SettlementLine(k.place, k.pid, k.scope, mat, name, unit, demand, issued - loss, loss, returned, issued - loss - returned - demand));
-            }
-        }
-        return result.OrderBy(r => r.Place).ThenBy(r => r.Scope).ThenBy(r => r.Material, StringComparer.Ordinal).ToList();
     }
 }
