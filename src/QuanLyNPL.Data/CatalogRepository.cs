@@ -96,36 +96,10 @@ public sealed class CatalogRepository(SqliteConnection c)
         return AddGrid(newCode, newName, items);
     }
 
-    /// <summary>
-    /// Bảng quy đổi đầy đủ của mã hàng: chủng loại cùng lưới mặc định → tương ứng 1-1 (tự động);
-    /// chủng loại khác lưới → theo bảng quy đổi đã khai báo.
-    /// </summary>
-    public List<(string variant, string defaultSize, string variantSize)> EffectiveSizeMap(long productId)
-    {
-        var defGrid = Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId)) ?? throw new BusinessException("Mã hàng không tồn tại."));
-        var defSizes = GridSizes(defGrid);
-        var result = new List<(string, string, string)>();
-        foreach (var (vid, code, grid) in Db.Query(c, "SELECT id,code,grid_id FROM variant WHERE product_id=$p ORDER BY id", r => (r.GetInt64(0), r.GetString(1), r.GetInt64(2)), null, ("$p", productId)))
-        {
-            if (grid == defGrid) { result.AddRange(defSizes.Select(s => (code, s, s))); continue; }
-            result.AddRange(Db.Query(c, "SELECT default_size_code,variant_size_code FROM size_map WHERE variant_id=$v", r => (code, r.GetString(0), r.GetString(1)), null, ("$v", vid)));
-        }
-        return result;
-    }
-
-    /// <summary>Các ô quy đổi còn thiếu (chủng loại khác lưới mặc định chưa chọn size cho một size mặc định).</summary>
-    public List<(string variant, string defaultSize)> MissingSizeMaps(long productId)
-    {
-        var defGrid = Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId))!);
-        var have = EffectiveSizeMap(productId).Select(m => (m.variant, m.defaultSize)).ToHashSet();
-        var variants = Db.Query(c, "SELECT code FROM variant WHERE product_id=$p AND grid_id<>$g ORDER BY id", r => r.GetString(0), null, ("$p", productId), ("$g", defGrid));
-        return variants.SelectMany(v => GridSizes(defGrid).Select(s => (v, s))).Where(x => !have.Contains(x)).ToList();
-    }
-
     public List<string> GridSizes(long gridId) =>
         Db.Query(c, "SELECT size_code FROM size_grid_item WHERE grid_id=$g ORDER BY id", r => r.GetString(0), null, ("$g", gridId));
 
-    /// <summary>Khai báo mã hàng: chọn khách hàng sở hữu và lưới size mặc định.</summary>
+    /// <summary>Khai báo mã hàng: chọn khách hàng sở hữu và lưới size (dùng cho đơn hàng, mọi chủng loại và BOM).</summary>
     public long AddProduct(long customerId, string code, string name, long defaultGridId)
     {
         RequireActiveCustomer(customerId);
@@ -148,32 +122,18 @@ public sealed class CatalogRepository(SqliteConnection c)
         Convert.ToInt64(Db.Scalar(c, "SELECT p.customer_id FROM variant v JOIN product p ON p.id=v.product_id WHERE v.id=$v", null, ("$v", variantId)) ?? throw new BusinessException("Chủng loại không tồn tại."));
 
     /// <summary>Khai báo chủng loại: chọn mã hàng, khách hàng tự kế thừa theo mã hàng.</summary>
-    /// <param name="gridId">Lưới size của chủng loại; bỏ trống = lưới mặc định của mã hàng (size tự tương ứng, không cần quy đổi).</param>
-    public long AddVariant(long productId, string code, string name, string group, decimal qtyPerSet, long? gridId = null)
+    /// <remarks>
+    /// Chủng loại dùng lưới size của mã hàng; hệ thống không quy đổi size.
+    /// Định mức theo quy ước size khác phải được quy đổi ngoài hệ thống trước khi khai báo BOM.
+    /// </remarks>
+    public long AddVariant(long productId, string code, string name, string group, decimal qtyPerSet)
     {
         if (qtyPerSet <= 0) throw new BusinessException("Số lượng trong bộ phải lớn hơn 0.");
         var pActive = Db.Scalar(c, "SELECT active FROM product WHERE id=$p", null, ("$p", productId)) ?? throw new BusinessException("Mã hàng không tồn tại.");
         if (Convert.ToInt32(pActive) != 1) throw new BusinessException("Mã hàng đã ngừng sử dụng.");
-        var grid = gridId ?? Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId)));
+        var grid = Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId)));
         return Db.Insert(c, "INSERT INTO variant(product_id,code,name,group_name,qty_per_set,grid_id) VALUES($p,$k,$n,$g,$q,$gr)", null,
             ("$p", productId), ("$k", code), ("$n", name), ("$g", group), ("$q", Db.D(qtyPerSet)), ("$gr", grid));
     }
 
-    /// <summary>
-    /// Quy đổi size cho chủng loại có quy ước size KHÁC lưới mặc định của mã hàng:
-    /// với mỗi size mặc định, chọn size tương ứng của chủng loại (nhiều size mặc định có thể về cùng một size).
-    /// Chủng loại dùng lưới mặc định thì size tự tương ứng, không quy đổi.
-    /// </summary>
-    public void SetSizeMap(long variantId, string defaultSize, string variantSize)
-    {
-        var (defGrid, varGrid) = Db.Query(c,
-            "SELECT p.default_grid_id, v.grid_id FROM variant v JOIN product p ON p.id=v.product_id WHERE v.id=$v",
-            r => (r.GetInt64(0), r.GetInt64(1)), null, ("$v", variantId)).Single();
-        if (defGrid == varGrid) throw new BusinessException("Chủng loại dùng lưới size mặc định của mã hàng: size tự tương ứng, không cần quy đổi.");
-        if (!GridSizes(defGrid).Contains(defaultSize)) throw new BusinessException($"Size {defaultSize} không thuộc lưới mặc định.");
-        if (!GridSizes(varGrid).Contains(variantSize)) throw new BusinessException($"Size {variantSize} không thuộc lưới của chủng loại.");
-        Db.Exec(c, "INSERT INTO size_map(variant_id,default_size_code,variant_size_code) VALUES($v,$d,$s) " +
-                   "ON CONFLICT(variant_id,default_size_code) DO UPDATE SET variant_size_code=$s", null,
-            ("$v", variantId), ("$d", defaultSize), ("$s", variantSize));
-    }
 }

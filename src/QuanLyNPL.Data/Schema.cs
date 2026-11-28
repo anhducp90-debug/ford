@@ -96,5 +96,10 @@ UPDATE bom SET type='SAN_XUAT', name=replace(name,' – Chủng loại',' – S�
 CREATE UNIQUE INDEX ux_bom_variant_type ON bom(scope_variant_id,type) WHERE scope_variant_id IS NOT NULL AND type IN ('TO_CAT','SAN_XUAT','DONG_GOI');
 CREATE UNIQUE INDEX ux_bom_set_type ON bom(product_id,type) WHERE per_set=1;
 "
+    ,
+@"
+-- Bỏ quy đổi size: mọi chủng loại dùng lưới size của mã hàng. Bảng size_map giữ lại để tra cứu lịch sử, không dùng nữa.
+UPDATE variant SET grid_id=(SELECT p.default_grid_id FROM product p WHERE p.id=variant.product_id);
+"
     };
 }

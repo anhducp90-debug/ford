@@ -227,11 +227,11 @@ public class ExcelTests
         var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ms = Book(ws => {
             ws.Cell(2, 1).SetValue("VAI"); ws.Cell(2, 2).SetValue("*"); ws.Cell(2, 3).SetValue(1.25m); ws.Cell(2, 4).SetValue(3m);
-            ws.Cell(3, 1).SetValue("VAI"); ws.Cell(3, 2).SetValue("M"); ws.Cell(3, 3).SetValue("1,5");           // dấu phẩy
+            ws.Cell(3, 1).SetValue("VAI"); ws.Cell(3, 2).SetValue("110/60"); ws.Cell(3, 3).SetValue("1,5");           // dấu phẩy
             ws.Cell(4, 1).SetValue("CHI"); ws.Cell(4, 2).SetValue("*"); ws.Cell(4, 3).SetValue(0.1m); ws.Cell(4, 5).SetValue("AO"); });
         var v = BomExcel.Import(f.Bom, bom, ms, new DateTime(2026, 1, 1));
         Assert.Equal(3L, Db.Scalar(f.C, "SELECT COUNT(*) FROM bom_line WHERE bom_version_id=" + v));
-        Assert.Equal("1.5", Db.Scalar(f.C, "SELECT usage FROM bom_line WHERE bom_version_id=" + v + " AND size_code='M'"));
+        Assert.Equal("1.5", Db.Scalar(f.C, "SELECT usage FROM bom_line WHERE bom_version_id=" + v + " AND size_code='110/60'"));
     }
 
     [Fact]

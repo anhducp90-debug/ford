@@ -14,7 +14,7 @@ public static class BomExcel
         var repo = new BomRepository(c); var info = repo.Info(bomId);
         var cust = (string)Db.Scalar(c, "SELECT code FROM customer WHERE id=$i", null, ("$i", info.CustomerId))!;
         var prod = (string)Db.Scalar(c, "SELECT code FROM product WHERE id=$i", null, ("$i", info.ProductId))!;
-        WriteTemplate(output, cust, prod, info.PerSet ? "(theo bộ – size mặc định của mã hàng)" : info.VariantCode, info.Name, repo.Sizes(bomId));
+        WriteTemplate(output, cust, prod, info.PerSet ? "(theo bộ)" : info.VariantCode, info.Name, repo.Sizes(bomId));
     }
 
     public static void WriteTemplate(Stream output, string customer, string product, string variant, string bomName, IEnumerable<string> sizes)
@@ -28,7 +28,8 @@ public static class BomExcel
         var guide = new[] {
             $"Khách hàng: {customer}", $"Mã hàng: {product}", $"Chủng loại: {variant}", $"BOM: {bomName}",
             "", "size_code = '*' là định mức nền; dòng size cụ thể ghi đè dòng nền cho đúng size đó.",
-            "usage ≥ 0; waste_percent ≥ 0 (để trống = 0). Chỉ dùng NPL của khách hàng trên và size trong sheet DANH SÁCH SIZE.",
+            "usage ≥ 0; waste_percent ≥ 0 (để trống = 0). Chỉ dùng NPL của khách hàng trên và size trong sheet DANH SÁCH SIZE (size của mã hàng).",
+            "Hệ thống không quy đổi size: định mức theo quy ước size khác phải quy đổi sang size của mã hàng trước khi nhập.",
             "Nếu có bất kỳ lỗi nào, không ghi dòng nào; phần mềm báo số dòng và nguyên nhân.",
             "Mỗi lần nhập tạo phiên bản BOM mới thay thế toàn bộ định mức của BOM này; phiên bản cũ vẫn được giữ." };
         for (var i = 0; i < guide.Length; i++) g.Cell(i + 1, 1).SetValue(guide[i]);

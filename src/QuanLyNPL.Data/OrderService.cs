@@ -61,8 +61,9 @@ public sealed class OrderService(SqliteConnection c)
         var variants = Db.Query(c, "SELECT id,code,qty_per_set FROM variant WHERE product_id=$p ORDER BY code",
             r => (id: r.GetInt64(0), code: r.GetString(1), qty: Db.D(r.GetString(2))), null, ("$p", productId));
         var code = variants.ToDictionary(v => v.id, v => v.code);
-        // Chủng loại cùng lưới mặc định: size tự tương ứng; chủng loại khác lưới: theo bảng quy đổi.
-        var maps = new CatalogRepository(c).EffectiveSizeMap(productId).Select(m => new SnapshotMap(m.variant, m.defaultSize, m.variantSize)).ToList();
+        // Không quy đổi size: mọi chủng loại dùng size của mã hàng (size của chủng loại = size trên đơn).
+        var gridSizes = new CatalogRepository(c).GridSizes(Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId))));
+        var maps = variants.SelectMany(v => gridSizes.Select(s => new SnapshotMap(v.code, s, s))).ToList();
 
         var boms = new List<SnapshotBom>();
         var bomRows = Db.Query(c, "SELECT id,name,scope_variant_id,per_set FROM bom WHERE product_id=$p ORDER BY id",

@@ -17,10 +17,8 @@ public class Fixture : IDisposable
         Grid = Cat.AddGrid("G_VOC", "Vóc/Cao", new[] { ("110/56", "110", "56"), ("110/60", "110", "60"), ("120/60", "120", "60") });
         var gSml = Cat.AddGrid("G_SML", "S M L", new[] { ("S", (string?)null, (string?)null), ("M", null, null), ("L", null, null) });
         Prod = Cat.AddProduct(Cust, "MH1", "Bộ đồng phục", Grid);
-        VAo = Cat.AddVariant(Prod, "AO", "Áo đỏ", "Áo", 1, gSml);
-        VQuan = Cat.AddVariant(Prod, "QUAN", "Quần đen", "Quần", 1, gSml);
-        foreach (var (d, ao, q) in new[] { ("110/56", "S", "S"), ("110/60", "S", "M"), ("120/60", "M", "M") })
-        { Cat.SetSizeMap(VAo, d, ao); Cat.SetSizeMap(VQuan, d, q); }
+        VAo = Cat.AddVariant(Prod, "AO", "Áo đỏ", "Áo", 1);
+        VQuan = Cat.AddVariant(Prod, "QUAN", "Quần đen", "Quần", 1);
     }
 
     /// <summary>BOM Tổ cắt cho từng chủng loại với cùng định mức (tương đương định mức chung cho cả mã hàng).</summary>
@@ -62,10 +60,6 @@ public class DataTests : IClassFixture<Fixture>
     }
 
     [Fact]
-    public void SizeMap_RejectsSizeOutsideGrid() =>
-        Assert.Throws<BusinessException>(() => f.Cat.SetSizeMap(f.VAo, "999", "S"));
-
-    [Fact]
     public void BomImport_AllOrNothing_ReportsRows()
     {
         using var f = new Fixture();
@@ -84,13 +78,13 @@ public class DataTests : IClassFixture<Fixture>
         var bomAo = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var bomQuan = f.Bom.CreateBom(f.VQuan, BomType.ToCat);
         f.Bom.AddVersion(bomAo, d0, new[] { new BomLineInput("VAI", "*", 1.0m) });
-        f.Bom.AddVersion(bomQuan, d0, new[] { new BomLineInput("VAI", "*", 1.0m), new BomLineInput("VAI", "M", 1.5m) });
-        // đơn: 10 bộ 110/56 -> áo S, quần S ; 5 bộ 110/60 -> áo S, quần M
+        f.Bom.AddVersion(bomQuan, d0, new[] { new BomLineInput("VAI", "*", 1.0m), new BomLineInput("VAI", "110/60", 1.5m) });
+        // đơn: 10 bộ 110/56 + 5 bộ 110/60; size chủng loại = size của mã hàng
         var oid = f.Orders.CreateOrder(f.Prod, "DH-" + Guid.NewGuid().ToString("N")[..6], new DateTime(2026, 2, 1),
             new[] { new OrderLine("110/56", 10), new OrderLine("110/60", 5) });
         var before = f.Orders.CalculateDemand(oid);
         Assert.True(before.IsComplete);
-        // Áo: 15 × 1 = 15 ; Quần S: 10 × 1 (nền) ; Quần M: 5 × 1.5 (ghi đè) = 7.5 → 32.5
+        // Áo: 15 × 1 = 15 ; Quần 110/56: 10 × 1 (nền) ; Quần 110/60: 5 × 1.5 (ghi đè) = 7.5 → 32.5
         Assert.Equal(32.5m, before.TotalByMaterial["VAI"]);
 
         // BOM đổi sau đó: đơn cũ không đổi

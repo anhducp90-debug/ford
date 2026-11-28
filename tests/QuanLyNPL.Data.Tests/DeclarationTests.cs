@@ -15,7 +15,7 @@ public class DeclarationTests
         Assert.Throws<BusinessException>(() => f.Cat.AddProduct(kh2, "X", "x", f.Grid));
         Assert.Equal(f.Cust, f.Cat.VariantCustomerId(f.VAo));
         Db.Exec(f.C, "UPDATE product SET active=0 WHERE id=" + f.Prod);
-        Assert.Throws<BusinessException>(() => f.Cat.AddVariant(f.Prod, "V3", "v3", "Áo", 1, f.Grid));
+        Assert.Throws<BusinessException>(() => f.Cat.AddVariant(f.Prod, "V3", "v3", "Áo", 1));
     }
 
     [Fact]
@@ -31,17 +31,17 @@ public class DeclarationTests
         Assert.Throws<BusinessException>(() => f.Bom.CreateBom(f.VAo, BomType.ToCat));      // trùng loại → thêm phiên bản
         Assert.Equal(cut, f.Bom.Find(f.VAo, BomType.ToCat));
         Assert.Null(f.Bom.Find(f.VQuan, BomType.ToCat));
-        Assert.Equal(new[] { "S", "M", "L" }, f.Bom.Sizes(cut));
+        Assert.Equal(new[] { "110/56", "110/60", "120/60" }, f.Bom.Sizes(cut));   // size của mã hàng
     }
 
     [Fact]
-    public void Bom_SizeMustBelongToVariantGrid_AndNoDuplicateLines()
+    public void Bom_SizeMustBelongToProductGrid_AndNoDuplicateLines()
     {
         using var f = new Fixture();
         var b = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ex = Assert.Throws<BusinessException>(() => f.Bom.AddVersion(b, DateTime.Now, new[] {
-            new BomLineInput("VAI", "110/56", 1m), new BomLineInput("VAI", "*", 1m), new BomLineInput("VAI", "*", 2m) }));
-        Assert.Contains("Dòng 1", ex.Message); Assert.Contains("lưới của chủng loại", ex.Message);
+            new BomLineInput("VAI", "S", 1m), new BomLineInput("VAI", "*", 1m), new BomLineInput("VAI", "*", 2m) }));
+        Assert.Contains("Dòng 1", ex.Message); Assert.Contains("lưới size của mã hàng", ex.Message);
         Assert.Contains("Dòng 3", ex.Message); Assert.Contains("trùng", ex.Message);
         Assert.Throws<BusinessException>(() => f.Bom.AddVersion(b, DateTime.Now, Array.Empty<BomLineInput>()));
     }
@@ -73,7 +73,7 @@ public class DeclarationTests
         var guide = wb.Worksheet("HƯỚNG DẪN");
         Assert.Equal("Khách hàng: KH1", guide.Cell(1, 1).GetString());
         Assert.Equal("Chủng loại: QUAN", guide.Cell(3, 1).GetString());
-        Assert.Equal("L", wb.Worksheet("DANH SÁCH SIZE").Cell(4, 1).GetString());
+        Assert.Equal("120/60", wb.Worksheet("DANH SÁCH SIZE").Cell(4, 1).GetString());
         Assert.Equal(4, wb.Worksheet("BOM").LastColumnUsed()!.ColumnNumber());
     }
 
@@ -136,7 +136,7 @@ public class PerSetBomDataTests
         using var f = new Fixture();
         var pack = f.Bom.CreateSetBom(f.Prod, BomType.DongGoi);
         Assert.Equal(new[] { "110/56", "110/60", "120/60" }, f.Bom.Sizes(pack));
-        Assert.Throws<BusinessException>(() => f.Bom.AddVersion(pack, DateTime.Now, new[] { new BomLineInput("CHI", "S", 1m) }));   // size chủng loại không hợp lệ cho BOM theo bộ
+        Assert.Throws<BusinessException>(() => f.Bom.AddVersion(pack, DateTime.Now, new[] { new BomLineInput("CHI", "S", 1m) }));   // size ngoài lưới của mã hàng
         f.Bom.AddVersion(pack, new DateTime(2026, 1, 1), new[] { new BomLineInput("KHOA", "*", 1m), new BomLineInput("KHOA", "120/60", 2m) });
         var cut = f.Bom.CreateSetBom(f.Prod, BomType.ToCat);
         f.Bom.AddVersion(cut, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 2.5m) });
@@ -263,7 +263,7 @@ public class TransferTests
         var (f, t, kh2) = Setup();
         var grid = (long)Db.Scalar(f.C, "SELECT id FROM size_grid WHERE code='G_SML'")!;
         var p2 = f.Cat.AddProduct(kh2, "MH2", "Mã KH2", grid);
-        var v2 = f.Cat.AddVariant(p2, "AO2", "Áo KH2", "Áo", 1, grid);
+        var v2 = f.Cat.AddVariant(p2, "AO2", "Áo KH2", "Áo", 1);
         f.Bom.AddVersion(f.Bom.CreateBom(v2, BomType.ToCat), new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI2", "*", 1m) });
         var o2 = f.Orders.CreateOrder(p2, "O2", new DateTime(2026, 2, 1), new[] { new OrderLine("S", 20) });
         Assert.Equal(FulfillStatus.Short, f.Stock.CheckOrder(o2, f.Orders).Status);
@@ -272,65 +272,35 @@ public class TransferTests
     }
 }
 
-public class SizeConventionTests
+public class NoSizeConversionTests
 {
-    // Mã hàng lưới mặc định Vóc/Chiều cao. Quần dùng lưới mặc định (tự tương ứng); áo dùng S M L (quy đổi).
-    static (Fixture f, long prod, long ao, long quan) Setup()
-    {
-        var f = new Fixture();
-        var sml = (long)Db.Scalar(f.C, "SELECT id FROM size_grid WHERE code='G_SML'")!;
-        var prod = f.Cat.AddProduct(f.Cust, "MH2", "Bộ 2", f.Grid);
-        var quan = f.Cat.AddVariant(prod, "QUAN2", "Quần", "Quần", 1);                 // không chọn lưới → lưới mặc định
-        var ao = f.Cat.AddVariant(prod, "AO2", "Áo", "Áo", 1, sml);
-        return (f, prod, ao, quan);
-    }
-
     [Fact]
-    public void VariantWithoutGrid_UsesDefaultGrid_IdentityMap_NoManualMapAllowed()
+    public void Variants_UseProductGrid_BreakdownKeepsOrderSize()
     {
-        var (f, prod, ao, quan) = Setup();
-        Assert.Equal(f.Grid, (long)Db.Scalar(f.C, "SELECT grid_id FROM variant WHERE id=" + quan)!);
-        Assert.Throws<BusinessException>(() => f.Cat.SetSizeMap(quan, "110/56", "110/60"));
-        var eff = f.Cat.EffectiveSizeMap(prod);
-        Assert.Contains(("QUAN2", "120/60", "120/60"), eff);
-        Assert.DoesNotContain(eff, m => m.variant == "AO2");                          // áo chưa quy đổi
-    }
-
-    [Fact]
-    public void MissingMaps_OnlyForVariantsWithOtherConvention()
-    {
-        var (f, prod, ao, quan) = Setup();
-        Assert.Equal(3, f.Cat.MissingSizeMaps(prod).Count);
-        Assert.All(f.Cat.MissingSizeMaps(prod), m => Assert.Equal("AO2", m.variant));
-        f.Cat.SetSizeMap(ao, "110/56", "S"); f.Cat.SetSizeMap(ao, "110/60", "S");    // nhiều size quần → cùng áo S
-        Assert.Equal(new[] { ("AO2", "120/60") }, f.Cat.MissingSizeMaps(prod));
-    }
-
-    [Fact]
-    public void Demand_QuanBySameSize_AoByMappedSize()
-    {
-        var (f, prod, ao, quan) = Setup();
-        f.Cat.SetSizeMap(ao, "110/56", "S"); f.Cat.SetSizeMap(ao, "110/60", "S"); f.Cat.SetSizeMap(ao, "120/60", "M");
+        using var f = new Fixture();
+        Assert.Equal(f.Grid, (long)Db.Scalar(f.C, "SELECT grid_id FROM variant WHERE id=" + f.VAo)!);
         var d = new DateTime(2026, 1, 1);
-        f.Bom.AddVersion(f.Bom.CreateBom(quan, BomType.ToCat), d, new[] { new BomLineInput("VAI", "*", 1m), new BomLineInput("VAI", "120/60", 1.2m) });
-        f.Bom.AddVersion(f.Bom.CreateBom(ao, BomType.ToCat), d, new[] { new BomLineInput("VAI", "S", 1.5m), new BomLineInput("VAI", "M", 1.6m) });
-        var o = f.Orders.CreateOrder(prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10), new OrderLine("110/60", 10), new OrderLine("120/60", 5) });
+        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.ToCat), d, new[] { new BomLineInput("VAI", "*", 1.5m), new BomLineInput("VAI", "120/60", 1.6m) });
+        f.Bom.AddVersion(f.Bom.CreateBom(f.VQuan, BomType.ToCat), d, new[] { new BomLineInput("VAI", "*", 1m), new BomLineInput("VAI", "120/60", 1.2m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10), new OrderLine("110/60", 10), new OrderLine("120/60", 5) });
         var r = f.Orders.CalculateDemand(o);
         Assert.True(r.IsComplete);
-        Assert.Contains(r.Breakdown, b => b.Variant == "AO2" && b.VariantSize == "S" && b.Qty == 20m);
-        Assert.Contains(r.Breakdown, b => b.Variant == "QUAN2" && b.VariantSize == "120/60" && b.Qty == 5m);
-        // quần: 20×1 + 5×1.2 = 26 ; áo: 20×1.5 + 5×1.6 = 38
-        Assert.Equal(64m, r.TotalByMaterial["VAI"]);
-        Assert.Equal(new[] { "110/56", "110/60", "120/60" }, f.Bom.Sizes(f.Bom.Find(quan, BomType.ToCat)!.Value));
+        Assert.Equal(6, r.Breakdown.Count);                                              // 2 chủng loại × 3 size, không gộp size
+        Assert.All(r.Breakdown, b => Assert.Contains(b.VariantSize, new[] { "110/56", "110/60", "120/60" }));
+        Assert.Equal(64m, r.TotalByMaterial["VAI"]);                                     // áo 20×1.5+5×1.6=38 ; quần 20×1+5×1.2=26
     }
 
     [Fact]
-    public void Order_BlockedUntilMappingComplete()
+    public void Migration6_MovesVariantsToProductGrid()
     {
-        var (f, prod, ao, quan) = Setup();
-        f.Bom.AddVersion(f.Bom.CreateBom(quan, BomType.ToCat), new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        f.Bom.AddVersion(f.Bom.CreateBom(ao, BomType.ToCat), new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        var o = f.Orders.CreateOrder(prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 1) });
-        Assert.Contains(f.Orders.CalculateDemand(o).Issues, i => i.Kind == IssueKind.MissingSizeMap);
+        using var c = new SqliteConnection("Data Source=:memory:"); c.Open();
+        Db.Exec(c, "PRAGMA foreign_keys=ON;");
+        for (var i = 0; i < 5; i++) Db.Exec(c, Schema.Migrations[i]);
+        Db.Exec(c, "PRAGMA user_version=5;");
+        Db.Exec(c, @"INSERT INTO customer(id,code,name) VALUES(1,'K','K'); INSERT INTO size_grid(id,code,name) VALUES(1,'G1','G1'),(2,'G2','G2');
+                     INSERT INTO product(id,customer_id,code,name,default_grid_id) VALUES(1,1,'P','P',1);
+                     INSERT INTO variant(id,product_id,code,name,qty_per_set,grid_id) VALUES(1,1,'AO','Áo','1',2);");
+        Db.Migrate(c);
+        Assert.Equal(1L, Db.Scalar(c, "SELECT grid_id FROM variant WHERE id=1"));
     }
 }

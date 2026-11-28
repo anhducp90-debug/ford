@@ -77,15 +77,12 @@ public sealed class BomRepository(SqliteConnection c)
             r => new BomInfo(r.GetInt64(0), r.IsDBNull(1) ? 0 : r.GetInt64(1), r.IsDBNull(2) ? "" : r.GetString(2), r.GetInt64(3), r.GetInt64(4), r.GetString(5), r.GetString(6), r.GetInt32(7) == 1),
             null, ("$b", bomId)).SingleOrDefault() ?? throw new BusinessException("BOM không tồn tại.");
 
-    /// <summary>Size hợp lệ cho BOM: theo bộ = lưới mặc định của mã hàng; theo chủng loại = lưới của chủng loại.</summary>
+    /// <summary>Size hợp lệ cho mọi BOM (theo bộ hay theo chủng loại) = lưới size của mã hàng. Không quy đổi size trong hệ thống.</summary>
     public List<string> Sizes(long bomId)
     {
         var info = Info(bomId);
-        if (info.PerSet)
-            return Db.Query(c, "SELECT i.size_code FROM size_grid_item i JOIN product p ON p.default_grid_id=i.grid_id WHERE p.id=$p ORDER BY i.id",
-                r => r.GetString(0), null, ("$p", info.ProductId));
-        return Db.Query(c, "SELECT i.size_code FROM size_grid_item i JOIN variant v ON v.grid_id=i.grid_id WHERE v.id=$v ORDER BY i.id",
-            r => r.GetString(0), null, ("$v", info.VariantId));
+        return Db.Query(c, "SELECT i.size_code FROM size_grid_item i JOIN product p ON p.default_grid_id=i.grid_id WHERE p.id=$p ORDER BY i.id",
+            r => r.GetString(0), null, ("$p", info.ProductId));
     }
 
     /// <summary>
@@ -95,9 +92,7 @@ public sealed class BomRepository(SqliteConnection c)
     public long AddVersion(long bomId, DateTime createdAt, IReadOnlyList<BomLineInput> lines, IReadOnlyList<int>? rowLabels = null)
     {
         var info = Info(bomId);
-        var sizes = info.PerSet || info.VariantId != 0 ? Sizes(bomId)
-            : Db.Query(c, "SELECT DISTINCT i.size_code FROM size_grid_item i JOIN variant v ON v.grid_id=i.grid_id WHERE v.product_id=$p", r => r.GetString(0), null, ("$p", info.ProductId))
-            ;
+        var sizes = Sizes(bomId);
         var mats = Db.Query(c, "SELECT code,id,active,customer_id FROM material",
                 r => (code: r.GetString(0), id: r.GetInt64(1), active: r.GetInt32(2) == 1, cust: r.IsDBNull(3) ? (long?)null : r.GetInt64(3)))
             .ToDictionary(x => x.code);
@@ -113,7 +108,7 @@ public sealed class BomRepository(SqliteConnection c)
             else if (m.cust != info.CustomerId) errors.Add($"Dòng {row}: mã NPL '{l.MaterialCode}' thuộc khách hàng khác với mã hàng");
             if (l.Usage < 0) errors.Add($"Dòng {row}: định mức âm");
             if (l.WastePercent < 0) errors.Add($"Dòng {row}: hao hụt âm");
-            if (l.SizeCode != "*" && !sizes.Contains(l.SizeCode)) errors.Add($"Dòng {row}: size '{l.SizeCode}' không thuộc lưới {(info.PerSet ? "size mặc định của mã hàng" : "của chủng loại")}");
+            if (l.SizeCode != "*" && !sizes.Contains(l.SizeCode)) errors.Add($"Dòng {row}: size '{l.SizeCode}' không thuộc lưới size của mã hàng");
             if (!seen.Add((l.MaterialCode, l.SizeCode))) errors.Add($"Dòng {row}: trùng (NPL, size) với dòng trước");
         }
         if (errors.Count > 0) throw new BusinessException(string.Join("\n", errors));
