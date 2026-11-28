@@ -14,13 +14,16 @@ public sealed class OrderService(SqliteConnection c)
 {
     static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
-    public long CreateOrder(long customerId, long productId, string orderNo, DateTime orderDate,
+    /// <summary>Lập đơn: chọn mã hàng, khách hàng tự lấy theo mã hàng.</summary>
+    public long CreateOrder(long productId, string orderNo, DateTime orderDate,
         IReadOnlyList<OrderLine> lines, DateTime? dueDate = null)
     {
-        var prod = Db.Query(c, "SELECT customer_id, default_grid_id FROM product WHERE id=$p",
-            r => (cust: r.GetInt64(0), grid: r.GetInt64(1)), null, ("$p", productId)).SingleOrDefault();
+        var prod = Db.Query(c, "SELECT p.customer_id, p.default_grid_id, p.active, k.active FROM product p JOIN customer k ON k.id=p.customer_id WHERE p.id=$p",
+            r => (cust: r.GetInt64(0), grid: r.GetInt64(1), pActive: r.GetInt32(2) == 1, kActive: r.GetInt32(3) == 1), null, ("$p", productId)).SingleOrDefault();
         if (prod == default) throw new BusinessException("Mã hàng không tồn tại.");
-        if (prod.cust != customerId) throw new BusinessException("Mã hàng không thuộc khách hàng đã chọn.");
+        if (!prod.pActive) throw new BusinessException("Mã hàng đã ngừng sử dụng.");
+        if (!prod.kActive) throw new BusinessException("Khách hàng của mã hàng đã ngừng sử dụng.");
+        var customerId = prod.cust;
         if (lines.Count == 0) throw new BusinessException("Đơn hàng chưa có dòng nào.");
         ValidateLines(prod.grid, lines);
 

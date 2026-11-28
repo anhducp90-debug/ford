@@ -10,9 +10,8 @@ public class IssueTests
     static (Fixture f, IssueService iss, long order) Setup(decimal stockIn = 100m)
     {
         var f = new Fixture();
-        var b = f.Bom.CreateBom(f.Prod, "B");
-        f.Bom.AddVersion(b, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        var o = f.Orders.CreateOrder(f.Cust, f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
+        var b = f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        var o = f.Orders.CreateOrder(f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", stockIn) }));
         return (f, new IssueService(f.C, f.Orders, f.Stock), o);
     }
@@ -117,7 +116,7 @@ public class IssueTests
     public void Incomplete_Data_NoIssueDraft()
     {
         using var f = new Fixture();
-        var o = f.Orders.CreateOrder(f.Cust, f.Prod, "D", DateTime.Now, new[] { new OrderLine("110/56", 1) });   // chưa có BOM
+        var o = f.Orders.CreateOrder(f.Prod, "D", DateTime.Now, new[] { new OrderLine("110/56", 1) });   // chưa có BOM
         Assert.Throws<BusinessException>(() => new IssueService(f.C, f.Orders, f.Stock).CreateIssueDraft(o, "X"));
     }
 
@@ -215,7 +214,7 @@ public class ExcelTests
     public void Template_HasThreeSheets_AndSizeList()
     {
         var ms = new MemoryStream();
-        BomExcel.WriteTemplate(ms, "KH1", "MH1", "BOM cắt", null, new[] { "S", "M" }); ms.Position = 0;
+        BomExcel.WriteTemplate(ms, "KH1", "MH1", "AO", "AO – Tổ cắt", new[] { "S", "M" }); ms.Position = 0;
         using var wb = new XLWorkbook(ms);
         Assert.Equal(new[] { "BOM", "HƯỚNG DẪN", "DANH SÁCH SIZE" }, wb.Worksheets.Select(w => w.Name));
         Assert.Equal("M", wb.Worksheet("DANH SÁCH SIZE").Cell(3, 1).GetString());
@@ -225,7 +224,7 @@ public class ExcelTests
     public void Import_Valid_CreatesNewVersion()
     {
         using var f = new Fixture();
-        var bom = f.Bom.CreateBom(f.Prod, "B");
+        var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ms = Book(ws => {
             ws.Cell(2, 1).SetValue("VAI"); ws.Cell(2, 2).SetValue("*"); ws.Cell(2, 3).SetValue(1.25m); ws.Cell(2, 4).SetValue(3m);
             ws.Cell(3, 1).SetValue("VAI"); ws.Cell(3, 2).SetValue("M"); ws.Cell(3, 3).SetValue("1,5");           // dấu phẩy
@@ -239,7 +238,7 @@ public class ExcelTests
     public void Import_AnyError_WritesNothing_AndReportsExcelRows()
     {
         using var f = new Fixture();
-        var bom = f.Bom.CreateBom(f.Prod, "B");
+        var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ms = Book(ws => {
             ws.Cell(2, 1).SetValue("VAI"); ws.Cell(2, 2).SetValue("*"); ws.Cell(2, 3).SetValue(1m);
             ws.Cell(3, 1).SetValue("KHONGCO"); ws.Cell(3, 2).SetValue("*"); ws.Cell(3, 3).SetValue(1m);   // NPL lạ (lỗi nghiệp vụ)
@@ -262,7 +261,7 @@ public class ExcelTests
     public void Import_RejectsWrongHeader_Duplicates_AndEmpty()
     {
         using var f = new Fixture();
-        var bom = f.Bom.CreateBom(f.Prod, "B");
+        var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         using (var wb = new XLWorkbook()) { wb.AddWorksheet("BOM").Cell(1, 1).SetValue("sai"); var m = new MemoryStream(); wb.SaveAs(m); m.Position = 0;
             Assert.Throws<BusinessException>(() => BomExcel.Import(f.Bom, bom, m, DateTime.Now)); }
         var dup = Book(ws => { for (var r = 2; r <= 3; r++) { ws.Cell(r, 1).SetValue("VAI"); ws.Cell(r, 2).SetValue("*"); ws.Cell(r, 3).SetValue(1m); } });

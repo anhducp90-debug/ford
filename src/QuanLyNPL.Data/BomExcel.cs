@@ -3,12 +3,21 @@ using ClosedXML.Excel;
 
 namespace QuanLyNPL.Data;
 
-/// <summary>Mẫu và đọc file Excel BOM. Cột: material_code, size_code, usage, waste_percent, variant_code. '*' là định mức nền.</summary>
+/// <summary>Mẫu và đọc file Excel BOM của MỘT BOM (một chủng loại + một loại). Cột: material_code, size_code, usage, waste_percent. '*' là định mức nền.</summary>
 public static class BomExcel
 {
-    public static readonly string[] Headers = { "material_code", "size_code", "usage", "waste_percent", "variant_code" };
+    public static readonly string[] Headers = { "material_code", "size_code", "usage", "waste_percent" };
 
-    public static void WriteTemplate(Stream output, string customer, string product, string bomName, string? variant, IEnumerable<string> sizes)
+    /// <summary>Mẫu cho BOM đã khai báo: khách hàng, mã hàng, chủng loại, loại BOM và danh sách size lấy từ hệ thống.</summary>
+    public static void WriteTemplate(Microsoft.Data.Sqlite.SqliteConnection c, long bomId, Stream output)
+    {
+        var repo = new BomRepository(c); var info = repo.Info(bomId);
+        var cust = (string)Db.Scalar(c, "SELECT code FROM customer WHERE id=$i", null, ("$i", info.CustomerId))!;
+        var prod = (string)Db.Scalar(c, "SELECT code FROM product WHERE id=$i", null, ("$i", info.ProductId))!;
+        WriteTemplate(output, cust, prod, info.VariantCode, info.Name, repo.Sizes(bomId));
+    }
+
+    public static void WriteTemplate(Stream output, string customer, string product, string variant, string bomName, IEnumerable<string> sizes)
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("BOM");
@@ -17,9 +26,9 @@ public static class BomExcel
         ws.Columns().AdjustToContents();
         var g = wb.AddWorksheet("HƯỚNG DẪN");
         var guide = new[] {
-            $"Khách hàng: {customer}", $"Mã hàng: {product}", $"BOM: {bomName}", $"Chủng loại: {variant ?? "(toàn mã hàng)"}",
+            $"Khách hàng: {customer}", $"Mã hàng: {product}", $"Chủng loại: {variant}", $"BOM: {bomName}",
             "", "size_code = '*' là định mức nền; dòng size cụ thể ghi đè dòng nền cho đúng size đó.",
-            "usage ≥ 0; waste_percent ≥ 0 (để trống = 0); variant_code để trống nếu áp dụng theo phạm vi BOM.",
+            "usage ≥ 0; waste_percent ≥ 0 (để trống = 0). Chỉ dùng NPL của khách hàng trên và size trong sheet DANH SÁCH SIZE.",
             "Nếu có bất kỳ lỗi nào, không ghi dòng nào; phần mềm báo số dòng và nguyên nhân.",
             "Mỗi lần nhập tạo phiên bản BOM mới thay thế toàn bộ định mức của BOM này; phiên bản cũ vẫn được giữ." };
         for (var i = 0; i < guide.Length; i++) g.Cell(i + 1, 1).SetValue(guide[i]);
@@ -40,13 +49,12 @@ public static class BomExcel
                 errors.Add($"Cột {i + 1} phải là '{Headers[i]}'.");
         if (errors.Count > 0) return (lines, rows, errors);
 
-        var seen = new HashSet<(string, string, string)>();
+        var seen = new HashSet<(string, string)>();
         var last = ws.LastRowUsed()?.RowNumber() ?? 1;
         for (var r = 2; r <= last; r++)
         {
-            if (Enumerable.Range(1, 5).All(c => ws.Cell(r, c).IsEmpty())) continue;
+            if (Enumerable.Range(1, 4).All(c => ws.Cell(r, c).IsEmpty())) continue;
             var mat = ws.Cell(r, 1).GetString().Trim(); var size = ws.Cell(r, 2).GetString().Trim();
-            var vcode = ws.Cell(r, 5).GetString().Trim();
             var ok = true;
             if (mat == "") { errors.Add($"Dòng {r}: thiếu material_code"); ok = false; }
             if (size == "") { errors.Add($"Dòng {r}: thiếu size_code"); ok = false; }
@@ -54,8 +62,8 @@ public static class BomExcel
             var waste = 0m;
             if (!ws.Cell(r, 4).IsEmpty() && !TryNum(ws.Cell(r, 4), out waste)) { errors.Add($"Dòng {r}: waste_percent không phải số"); ok = false; }
             if (!ok) continue;
-            if (!seen.Add((mat, size, vcode))) { errors.Add($"Dòng {r}: trùng (NPL, size, chủng loại) với dòng trước"); continue; }
-            lines.Add(new BomLineInput(mat, size, usage, waste, vcode == "" ? null : vcode)); rows.Add(r);
+            if (!seen.Add((mat, size))) { errors.Add($"Dòng {r}: trùng (NPL, size) với dòng trước"); continue; }
+            lines.Add(new BomLineInput(mat, size, usage, waste)); rows.Add(r);
         }
         if (lines.Count == 0 && errors.Count == 0) errors.Add("File không có dòng định mức nào.");
         return (lines, rows, errors);

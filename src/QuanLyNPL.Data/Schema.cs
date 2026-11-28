@@ -71,5 +71,22 @@ CREATE TABLE stock_count_line(id INTEGER PRIMARY KEY, count_id INTEGER NOT NULL 
 ALTER TABLE material ADD COLUMN customer_id INTEGER REFERENCES customer(id);
 CREATE INDEX ix_material_customer ON material(customer_id);
 "
+    ,
+@"
+ALTER TABLE stock_doc ADD COLUMN customer_id INTEGER REFERENCES customer(id);
+ALTER TABLE stock_doc ADD COLUMN kind TEXT;
+ALTER TABLE stock_count ADD COLUMN customer_id INTEGER REFERENCES customer(id);
+UPDATE stock_doc SET customer_id=(SELECT customer_id FROM ""order"" o WHERE o.id=stock_doc.order_id) WHERE order_id IS NOT NULL;
+UPDATE stock_doc SET customer_id=(SELECT MIN(m.customer_id) FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=stock_doc.id)
+  WHERE customer_id IS NULL AND (SELECT COUNT(DISTINCT m.customer_id) FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=stock_doc.id)=1;
+CREATE INDEX ix_doc_customer ON stock_doc(customer_id);
+CREATE UNIQUE INDEX ux_bom_variant_type ON bom(scope_variant_id,type) WHERE scope_variant_id IS NOT NULL AND type IN ('TO_CAT','CHUNG_LOAI','DONG_GOI');
+CREATE TABLE material_transfer(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQUE,
+  from_customer_id INTEGER NOT NULL REFERENCES customer(id), to_customer_id INTEGER NOT NULL REFERENCES customer(id),
+  out_doc_id INTEGER NOT NULL REFERENCES stock_doc(id), in_doc_id INTEGER NOT NULL REFERENCES stock_doc(id),
+  reason TEXT, status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','CONFIRMED')), created_at TEXT NOT NULL, confirmed_at TEXT);
+CREATE TABLE material_transfer_line(id INTEGER PRIMARY KEY, transfer_id INTEGER NOT NULL REFERENCES material_transfer(id),
+  from_material_id INTEGER NOT NULL REFERENCES material(id), to_material_id INTEGER NOT NULL REFERENCES material(id), qty TEXT NOT NULL);
+"
     };
 }

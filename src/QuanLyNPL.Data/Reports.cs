@@ -120,13 +120,13 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
     {
         var from = f.From ?? DateTime.MinValue; var toEx = EndOfDay(f.To) ?? DateTime.MaxValue;
         var rows = Db.Query(c,
-            @"SELECT t.created_at,d.doc_no,d.type,m.code,t.qty_signed,o.order_no,d.ref_doc_id FROM stock_txn t
+            @"SELECT t.created_at,d.doc_no,d.type,m.code,t.qty_signed,o.order_no,d.ref_doc_id,COALESCE(d.kind,'') FROM stock_txn t
               JOIN stock_doc d ON d.id=t.doc_id JOIN material m ON m.id=t.material_id LEFT JOIN ""order"" o ON o.id=d.order_id
               WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) AND ($k IS NULL OR m.customer_id=$k) ORDER BY t.id",
             r => (at: Db.Date(r.GetString(0)), no: r.GetString(1), type: r.GetString(2), code: r.GetString(3), q: Db.D(r.GetString(4)),
-                  order: r.IsDBNull(5) ? "" : r.GetString(5), bu: !r.IsDBNull(6)), null, ("$m", f.MaterialCode), ("$o", f.OrderId), ("$k", f.CustomerId))
+                  order: r.IsDBNull(5) ? "" : r.GetString(5), bu: !r.IsDBNull(6), kind: r.GetString(7)), null, ("$m", f.MaterialCode), ("$o", f.OrderId), ("$k", f.CustomerId))
             .Where(t => t.at >= from && t.at < toEx)
-            .Select(t => new object?[] { t.at.ToString("dd/MM/yyyy HH:mm"), t.no, TypeText(t.type, t.bu), t.code, t.q, t.order }).ToList();
+            .Select(t => new object?[] { t.at.ToString("dd/MM/yyyy HH:mm"), t.no, TypeText(t.type, t.bu, t.kind), t.code, t.q, t.order }).ToList();
         return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Mã NPL", "Số lượng (±)", "Đơn" }, rows);
     }
 
@@ -154,7 +154,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
 
     public static string StatusText(FulfillStatus s) => s switch { FulfillStatus.Enough => "ĐỦ NPL", FulfillStatus.Short => "THIẾU NPL", _ => "CHƯA ĐỦ DỮ LIỆU" };
 
-    static string TypeText(string t, bool bu) => t switch
+    static string TypeText(string t, bool bu, string kind = "") => kind == TransferService.Kind ? (t == "OUT" ? "Chuyển sang khách hàng khác" : "Nhận từ khách hàng khác") : t switch
     {
         "IN" => "Nhập", "OUT" => bu ? "Xuất bù" : "Xuất", "RETURN" => "Trả", "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => t
     };

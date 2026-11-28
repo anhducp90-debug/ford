@@ -22,6 +22,17 @@ public class Fixture : IDisposable
         foreach (var (d, ao, q) in new[] { ("110/56", "S", "S"), ("110/60", "S", "M"), ("120/60", "M", "M") })
         { Cat.SetSizeMap(VAo, d, ao); Cat.SetSizeMap(VQuan, d, q); }
     }
+
+    /// <summary>BOM Tổ cắt cho từng chủng loại với cùng định mức (tương đương định mức chung cho cả mã hàng).</summary>
+    public long[] BomAll(DateTime createdAt, BomLineInput[] lines)
+    {
+        var ids = new[] { VAo, VQuan }.Select(v => Bom.CreateBom(v, BomType.ToCat)).ToArray();
+        AddVersionAll(ids, createdAt, lines);
+        return ids;
+    }
+
+    public void AddVersionAll(long[] ids, DateTime createdAt, BomLineInput[] lines)
+    { foreach (var id in ids) Bom.AddVersion(id, createdAt, lines); }
     public void Dispose() => C.Dispose();
 }
 
@@ -57,7 +68,8 @@ public class DataTests : IClassFixture<Fixture>
     [Fact]
     public void BomImport_AllOrNothing_ReportsRows()
     {
-        var bom = f.Bom.CreateBom(f.Prod, "BOM cắt");
+        using var f = new Fixture();
+        var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ex = Assert.Throws<BusinessException>(() => f.Bom.AddVersion(bom, DateTime.Now, new[] {
             new BomLineInput("VAI", "*", 1), new BomLineInput("KHONGCO", "*", 1), new BomLineInput("CHI", "XXL", 1) }));
         Assert.Contains("Dòng 2", ex.Message); Assert.Contains("Dòng 3", ex.Message);
@@ -67,11 +79,14 @@ public class DataTests : IClassFixture<Fixture>
     [Fact]
     public void Order_DemandMatchesHandCalc_AndSnapshotIsImmuneToLaterBomChange()
     {
-        var bom = f.Bom.CreateBom(f.Prod, "BOM " + Guid.NewGuid().ToString("N")[..6]);
+        using var f = new Fixture();
         var d0 = new DateTime(2026, 1, 1);
-        f.Bom.AddVersion(bom, d0, new[] { new BomLineInput("VAI", "*", 1.0m), new BomLineInput("VAI", "M", 1.5m, 0, "QUAN") });
+        var bomAo = f.Bom.CreateBom(f.VAo, BomType.ToCat);
+        var bomQuan = f.Bom.CreateBom(f.VQuan, BomType.ToCat);
+        f.Bom.AddVersion(bomAo, d0, new[] { new BomLineInput("VAI", "*", 1.0m) });
+        f.Bom.AddVersion(bomQuan, d0, new[] { new BomLineInput("VAI", "*", 1.0m), new BomLineInput("VAI", "M", 1.5m) });
         // đơn: 10 bộ 110/56 -> áo S, quần S ; 5 bộ 110/60 -> áo S, quần M
-        var oid = f.Orders.CreateOrder(f.Cust, f.Prod, "DH-" + Guid.NewGuid().ToString("N")[..6], new DateTime(2026, 2, 1),
+        var oid = f.Orders.CreateOrder(f.Prod, "DH-" + Guid.NewGuid().ToString("N")[..6], new DateTime(2026, 2, 1),
             new[] { new OrderLine("110/56", 10), new OrderLine("110/60", 5) });
         var before = f.Orders.CalculateDemand(oid);
         Assert.True(before.IsComplete);
@@ -79,10 +94,10 @@ public class DataTests : IClassFixture<Fixture>
         Assert.Equal(32.5m, before.TotalByMaterial["VAI"]);
 
         // BOM đổi sau đó: đơn cũ không đổi
-        f.Bom.AddVersion(bom, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 9m) });
+        f.AddVersionAll(new[] { bomAo, bomQuan }, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 9m) });
         Assert.Equal(32.5m, f.Orders.CalculateDemand(oid).TotalByMaterial["VAI"]);
         // Đơn mới sau ngày đó dùng bản mới
-        var oid2 = f.Orders.CreateOrder(f.Cust, f.Prod, "DH-" + Guid.NewGuid().ToString("N")[..6], new DateTime(2026, 4, 1),
+        var oid2 = f.Orders.CreateOrder(f.Prod, "DH-" + Guid.NewGuid().ToString("N")[..6], new DateTime(2026, 4, 1),
             new[] { new OrderLine("110/56", 1) });
         Assert.Equal(18m, f.Orders.CalculateDemand(oid2).TotalByMaterial["VAI"]);
     }
@@ -90,17 +105,19 @@ public class DataTests : IClassFixture<Fixture>
     [Fact]
     public void Order_Validation()
     {
-        Assert.Throws<BusinessException>(() => f.Orders.CreateOrder(f.Cust, f.Prod, "X1", DateTime.Now, new[] { new OrderLine("NOPE", 1) }));
-        Assert.Throws<BusinessException>(() => f.Orders.CreateOrder(f.Cust, f.Prod, "X2", DateTime.Now, new[] { new OrderLine("110/56", -1) }));
-        var other = f.Cat.AddCustomer("KH_" + Guid.NewGuid().ToString("N")[..5], "Khác");
-        Assert.Throws<BusinessException>(() => f.Orders.CreateOrder(other, f.Prod, "X3", DateTime.Now, new[] { new OrderLine("110/56", 1) }));
+        Assert.Throws<BusinessException>(() => f.Orders.CreateOrder(f.Prod, "X1", DateTime.Now, new[] { new OrderLine("NOPE", 1) }));
+        Assert.Throws<BusinessException>(() => f.Orders.CreateOrder(f.Prod, "X2", DateTime.Now, new[] { new OrderLine("110/56", -1) }));
+        // khách hàng của đơn tự lấy theo mã hàng
+        using var g = new Fixture();
+        var o = g.Orders.CreateOrder(g.Prod, "X4", DateTime.Now, new[] { new OrderLine("110/56", 1) });
+        Assert.Equal(g.Cust, (long)Db.Scalar(g.C, "SELECT customer_id FROM \"order\" WHERE id=" + o)!);
     }
 
     [Fact]
     public void Order_WithoutBom_IsIncomplete_NotEnough()
     {
         using var fx = new Fixture();
-        var oid = fx.Orders.CreateOrder(fx.Cust, fx.Prod, "DH1", DateTime.Now, new[] { new OrderLine("110/56", 10) });
+        var oid = fx.Orders.CreateOrder(fx.Prod, "DH1", DateTime.Now, new[] { new OrderLine("110/56", 10) });
         fx.Stock.Confirm(fx.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 1000m) }));
         Assert.Equal(FulfillStatus.Incomplete, fx.Stock.CheckOrder(oid, fx.Orders).Status);
     }
@@ -161,10 +178,9 @@ public class StockTests
     public void Reservation_ReducesAvailabilityForOtherOrders()
     {
         using var f = new Fixture();
-        var b = f.Bom.CreateBom(f.Prod, "B");
-        f.Bom.AddVersion(b, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        var o1 = f.Orders.CreateOrder(f.Cust, f.Prod, "O1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) }); // cần 20 vải
-        var o2 = f.Orders.CreateOrder(f.Cust, f.Prod, "O2", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
+        var b = f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        var o1 = f.Orders.CreateOrder(f.Prod, "O1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) }); // cần 20 vải
+        var o2 = f.Orders.CreateOrder(f.Prod, "O2", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 30m) }));
         f.Stock.Reserve(o1, "VAI", 20m);
         var r = f.Stock.CheckOrder(o2, f.Orders);

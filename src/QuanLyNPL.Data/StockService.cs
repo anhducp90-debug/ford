@@ -8,21 +8,28 @@ public sealed class StockService(SqliteConnection c)
     static readonly Dictionary<string, int> Sign = new()
     { ["IN"] = 1, ["RETURN"] = 1, ["ADJUST_UP"] = 1, ["OUT"] = -1, ["ADJUST_DOWN"] = -1 };
 
-    public long CreateDraft(string type, string docNo, IReadOnlyList<(string material, decimal qty)> lines, long? orderId = null, string? note = null)
+    /// <summary>
+    /// Phiếu kho thuộc một khách hàng: phiếu theo đơn lấy khách hàng của đơn; phiếu khác lấy theo tham số hoặc suy ra từ NPL.
+    /// Mọi NPL trong phiếu phải thuộc khách hàng đó.
+    /// </summary>
+    public long CreateDraft(string type, string docNo, IReadOnlyList<(string material, decimal qty)> lines, long? orderId = null, string? note = null, long? customerId = null)
     {
         if (!Sign.ContainsKey(type)) throw new BusinessException($"Loại phiếu không hợp lệ: {type}");
         var cat = new CatalogRepository(c);
         foreach (var (m, q) in lines)
             if (q < 0) throw new BusinessException($"Số lượng âm ở NPL {m}");
+        long? cust = customerId;
         if (orderId is long oid)
         {
-            var cust = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", oid)) ?? throw new BusinessException("Đơn hàng không tồn tại."));
-            foreach (var (m, _) in lines) cat.RequireMaterialOfCustomer(m, cust);
+            var oc = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", oid)) ?? throw new BusinessException("Đơn hàng không tồn tại."));
+            if (cust is not null && cust != oc) throw new BusinessException("Khách hàng của phiếu khác khách hàng của đơn.");
+            cust = oc;
         }
+        cust = cat.ResolveDocCustomer(lines.Select(l => l.material), cust);
         var resolved = lines.Select(l => (id: cat.MaterialId(l.material), l.qty)).ToList();   // tra mã trước khi mở transaction
         using var tx = c.BeginTransaction();
-        var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,note,created_at) VALUES($t,$n,$o,$note,$d)", tx,
-            ("$t", type), ("$n", docNo), ("$o", orderId), ("$note", note), ("$d", Db.Date(DateTime.Now)));
+        var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,note,created_at,customer_id) VALUES($t,$n,$o,$note,$d,$k)", tx,
+            ("$t", type), ("$n", docNo), ("$o", orderId), ("$note", note), ("$d", Db.Date(DateTime.Now)), ("$k", cust));
         foreach (var (m, q) in resolved)
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx,
                 ("$d", id), ("$m", m), ("$q", Db.D(q)));
@@ -45,10 +52,12 @@ public sealed class StockService(SqliteConnection c)
     public void Confirm(long docId)
     {
         using var tx = c.BeginTransaction(deferred: false);   // BEGIN IMMEDIATE: khóa ghi, tránh 2 phiếu cùng dùng 1 lượng tồn
-        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id FROM stock_doc WHERE id=$i",
+        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id,kind FROM stock_doc WHERE id=$i",
             r => (type: r.GetString(0), status: r.GetString(1), order: r.IsDBNull(2) ? (long?)null : r.GetInt64(2),
-                  scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: r.IsDBNull(4) ? (long?)null : r.GetInt64(4)), tx, ("$i", docId)).SingleOrDefault();
+                  scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: r.IsDBNull(4) ? (long?)null : r.GetInt64(4),
+                  kind: r.IsDBNull(5) ? null : r.GetString(5)), tx, ("$i", docId)).SingleOrDefault();
         if (doc == default) throw new BusinessException("Phiếu không tồn tại.");
+        if (doc.kind == TransferService.Kind) throw new BusinessException("Phiếu chuyển NPL giữa khách hàng phải xác nhận ở chức năng Chuyển NPL.");
         if (doc.status != "DRAFT") throw new BusinessException("Phiếu đã được xác nhận.");
         var lines = Db.Query(c, "SELECT l.material_id,m.code,l.qty,l.entered,l.demand FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d",
             r => (id: r.GetInt64(0), code: r.GetString(1), qty: Db.D(r.GetString(2)), entered: r.GetInt32(3) == 1,
@@ -130,8 +139,9 @@ public sealed class StockService(SqliteConnection c)
     public void DeleteDraft(long docId, string reason)
     {
         using var tx = c.BeginTransaction(deferred: false);
-        var d = Db.Query(c, "SELECT status,doc_no FROM stock_doc WHERE id=$i", r => (r.GetString(0), r.GetString(1)), tx, ("$i", docId)).SingleOrDefault();
+        var d = Db.Query(c, "SELECT status,doc_no,COALESCE(kind,'') FROM stock_doc WHERE id=$i", r => (r.GetString(0), r.GetString(1), r.GetString(2)), tx, ("$i", docId)).SingleOrDefault();
         if (d == default) throw new BusinessException("Phiếu không tồn tại.");
+        if (d.Item3 == TransferService.Kind) throw new BusinessException("Phiếu chuyển NPL phải hủy ở chức năng Chuyển NPL.");
         if (d.Item1 != "DRAFT") throw new BusinessException("Phiếu đã xác nhận, không xóa; dùng trả/điều chỉnh/phiếu đảo.");
         if (Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE ref_doc_id=$i", tx, ("$i", docId))) > 0)
             throw new BusinessException("Phiếu đang được phiếu khác tham chiếu.");
@@ -145,6 +155,8 @@ public sealed class StockService(SqliteConnection c)
     public void Reserve(long orderId, string materialCode, decimal qty)
     {
         if (qty <= 0) throw new BusinessException("Số lượng giữ phải dương.");
+        var oc = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", orderId)) ?? throw new BusinessException("Đơn hàng không tồn tại."));
+        new CatalogRepository(c).RequireMaterialOfCustomer(materialCode, oc);
         var avail = OnHand(materialCode) - ReservedForOthers(materialCode, orderId);
         if (qty > avail) throw new BusinessException($"Không đủ tồn khả dụng để giữ {materialCode}: khả dụng {avail}.");
         var mid = new CatalogRepository(c).MaterialId(materialCode);

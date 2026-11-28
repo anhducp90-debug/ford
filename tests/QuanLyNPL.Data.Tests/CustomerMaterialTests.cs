@@ -23,7 +23,7 @@ public class CustomerMaterialTests
         var kh2 = f.Cat.AddCustomer("KH2", "Khách 2");
         f.Cat.AddMaterial("VAI_KH2", "Vải khách 2", "m", kh2);
         Db.Exec(f.C, "INSERT INTO material(code,name,unit) VALUES('CU','Cũ','m')");   // dữ liệu cũ chưa gán khách hàng
-        var bom = f.Bom.CreateBom(f.Prod, "B");
+        var bom = f.Bom.CreateBom(f.VAo, BomType.ToCat);
         var ex = Assert.Throws<BusinessException>(() => f.Bom.AddVersion(bom, DateTime.Now, new[] {
             new BomLineInput("VAI", "*", 1m), new BomLineInput("VAI_KH2", "*", 1m), new BomLineInput("CU", "*", 1m) }));
         Assert.Contains("Dòng 2", ex.Message); Assert.Contains("khách hàng khác", ex.Message);
@@ -37,9 +37,8 @@ public class CustomerMaterialTests
         using var f = new Fixture();
         var kh2 = f.Cat.AddCustomer("KH2", "Khách 2");
         f.Cat.AddMaterial("VAI_KH2", "Vải khách 2", "m", kh2);
-        var b = f.Bom.CreateBom(f.Prod, "B");
-        f.Bom.AddVersion(b, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        var o = f.Orders.CreateOrder(f.Cust, f.Prod, "O1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 1) });
+        var b = f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 1) });
         Assert.Throws<BusinessException>(() => f.Stock.CreateDraft("RETURN", "R1", new[] { ("VAI_KH2", 1m) }, o));
         f.Stock.CreateDraft("IN", "N1", new[] { ("VAI_KH2", 5m) });      // nhập kho không gắn đơn: tự do
         f.Stock.CreateDraft("RETURN", "R2", new[] { ("VAI", 1m) }, o);   // NPL cùng khách hàng: hợp lệ
@@ -66,7 +65,8 @@ public class CustomerMaterialTests
         using var f = new Fixture();
         var kh2 = f.Cat.AddCustomer("KH2", "Khách 2");
         f.Cat.AddMaterial("VAI_KH2", "Vải khách 2", "m", kh2);
-        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 10m), ("VAI_KH2", 7m) }));
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 10m) }));
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N2", new[] { ("VAI_KH2", 7m) }));
         var rep = new ReportService(f.C, f.Orders, f.Stock);
         var all = rep.CurrentStock().Rows;
         Assert.Equal(4, all.Count);

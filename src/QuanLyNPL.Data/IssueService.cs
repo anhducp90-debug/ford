@@ -20,7 +20,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
         var mats = demand.Keys.ToDictionary(k => k, k => new CatalogRepository(c).MaterialId(k));
 
         using var tx = c.BeginTransaction(deferred: false);
-        var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,scope,created_at) VALUES('OUT',$n,$o,$s,$d)", tx,
+        var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,scope,created_at,customer_id) VALUES('OUT',$n,$o,$s,$d,(SELECT customer_id FROM \"order\" WHERE id=$o))", tx,
             ("$n", docNo), ("$o", orderId), ("$s", scope), ("$d", Db.Date(DateTime.Now)));
         foreach (var (code, total) in demand.OrderBy(k => k.Key, StringComparer.Ordinal))
         {

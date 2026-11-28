@@ -5,12 +5,11 @@ using Xunit;
 public class AdjustmentTests
 {
     // 10 bộ 110/56 → VAI 20 (áo 10 + quần 10, định mức 1)
-    static (Fixture f, IssueService iss, OrderAdjustmentService adj, long o, long bom) Setup()
+    static (Fixture f, IssueService iss, OrderAdjustmentService adj, long o, long[] bom) Setup()
     {
         var f = new Fixture();
-        var b = f.Bom.CreateBom(f.Prod, "B");
-        f.Bom.AddVersion(b, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        var o = f.Orders.CreateOrder(f.Cust, f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
+        var b = f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        var o = f.Orders.CreateOrder(f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 100m) }));
         return (f, new IssueService(f.C, f.Orders, f.Stock), new OrderAdjustmentService(f.C, f.Orders, f.Stock), o, b);
     }
@@ -97,7 +96,7 @@ public class AdjustmentTests
     {
         var (f, iss, adj, o, bom) = Setup();
         var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
-        f.Bom.AddVersion(bom, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 1.5m) });
+        f.AddVersionAll(bom, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 1.5m) });
         var same = new[] { new OrderLine("110/56", 10) };
         Assert.Equal(0m, adj.Preview(o, same, rebindBom: false).Deltas.Single().Diff);
         var p = adj.Preview(o, same, rebindBom: true, asOf: new DateTime(2026, 4, 1));
@@ -123,9 +122,9 @@ public class ReportTests
     static (Fixture f, long o) Setup()
     {
         var f = new Fixture();
-        var b = f.Bom.CreateBom(f.Prod, "B");
-        f.Bom.AddVersion(b, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m), new BomLineInput("CHI", "*", 0.5m, 10m, "AO") });
-        var o = f.Orders.CreateOrder(f.Cust, f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
+        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.ChungLoai), new DateTime(2026, 1, 1), new[] { new BomLineInput("CHI", "*", 0.5m, 10m) });
+        var o = f.Orders.CreateOrder(f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
         return (f, o);
     }
     static ReportService Rep(Fixture f) => new(f.C, f.Orders, f.Stock);
@@ -166,7 +165,8 @@ public class ReportTests
         var det = rep.OrderDemandDetail(o).Rows;
         Assert.Equal(20m, sum["VAI"]); Assert.Equal(5.5m, sum["CHI"]);        // 10 × 0.5 × 1.1
         Assert.Equal(sum["VAI"], det.Where(r => (string)r[0]! == "VAI").Sum(r => (decimal)r[4]!));
-        Assert.All(det, r => Assert.Equal("B", r[1]));
+        Assert.Contains(det, r => (string)r[0]! == "CHI" && (string)r[1]! == "AO – Chủng loại");
+        Assert.Contains(det, r => (string)r[0]! == "VAI" && (string)r[1]! == "QUAN – Tổ cắt");
     }
 
     [Fact]
@@ -188,7 +188,7 @@ public class ReportTests
         var (f, o) = Setup();
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 100m), ("CHI", 100m) }));
         // đơn thứ hai không có BOM hiệu lực (ngày lập đơn trước phiên bản BOM)
-        f.Orders.CreateOrder(f.Cust, f.Prod, "DH0", new DateTime(2025, 1, 1), new[] { new OrderLine("110/56", 1) });
+        f.Orders.CreateOrder(f.Prod, "DH0", new DateTime(2025, 1, 1), new[] { new OrderLine("110/56", 1) });
         var rep = Rep(f).Fulfillment();
         Assert.Equal("ĐỦ NPL", rep.Rows.Single(r => (string)r[0]! == "DH1")[4]);
         Assert.Equal("CHƯA ĐỦ DỮ LIỆU", rep.Rows.Single(r => (string)r[0]! == "DH0")[4]);
