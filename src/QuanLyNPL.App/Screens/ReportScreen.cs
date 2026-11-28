@@ -8,7 +8,7 @@ public sealed class ReportScreen : Screen
     public static readonly (string Id, string Title)[] Kinds =
     {
         ("stock", "Tồn hiện tại"), ("inout", "Nhập – xuất – tồn"), ("norm", "Định mức một bộ"), ("demand", "Nhu cầu theo đơn"),
-        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("cfg", "Lịch sử cấu hình")
+        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("card", "Thẻ kho"), ("cfg", "Lịch sử cấu hình")
     };
 
     readonly string _kind;
@@ -20,7 +20,7 @@ public sealed class ReportScreen : Screen
     public ReportScreen(string kind)
     {
         _kind = kind;
-        if (kind is "inout" or "hist") { _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); _to = DateTime.Today; }
+        if (kind is "inout" or "hist" or "card") { _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); _to = DateTime.Today; }
     }
 
     public override string Title => Kinds.First(k => k.Id == _kind).Title;
@@ -28,6 +28,8 @@ public sealed class ReportScreen : Screen
     {
         "norm" => "Lượng NPL cho 1 bộ theo từng size = Σ (SL chủng loại trong bộ × định mức × (1 + hao hụt)) + định mức BOM theo bộ. Chọn \"Chi tiết nguồn\" để xem từng chủng loại/BOM.",
         "inout" => "Tồn cuối = tồn đầu + nhập − xuất + trả + điều chỉnh (gồm cả chuyển NPL giữa khách hàng).",
+        "hist" => "Mọi biến động tồn đã xác nhận (nhập, xuất cấp phát, xuất bù, trả, điều chỉnh kiểm kê, chuyển NPL) kèm khách hàng, đơn, phạm vi, nơi xuất, nơi nhận, ghi chú.",
+        "card" => "Thẻ kho của một mã NPL: tồn đầu kỳ, từng phiếu nhập/xuất trong kỳ với tồn sau mỗi giao dịch, cộng phát sinh và tồn cuối kỳ.",
         "short" => "Nhu cầu của đơn so với tồn khả dụng (đã trừ lượng giữ cho đơn khác).",
         "max" => "Theo cơ cấu size của đơn: số bộ tối đa = tổng số bộ × min(tồn khả dụng / nhu cầu) của mọi mã NPL. Riêng từng size: số bộ tối đa nếu chỉ sản xuất size đó (các size không cộng với nhau).",
         _ => ""
@@ -40,13 +42,19 @@ public sealed class ReportScreen : Screen
         DatePickerFilter();
         void DatePickerFilter()
         {
-            if (_kind is not ("inout" or "hist" or "fulfil")) return;
+            if (_kind is not ("inout" or "hist" or "fulfil" or "card")) return;
             var f = Ui.DateBox(_from); f.SelectedDateChanged += (_, _) => { if (f.SelectedDate?.Date != _from?.Date) { _from = f.SelectedDate?.Date; Reload(); } };
             var t = Ui.DateBox(_to); t.SelectedDateChanged += (_, _) => { if (t.SelectedDate?.Date != _to?.Date) { _to = t.SelectedDate?.Date; Reload(); } };
             filters.Children.Add(F("Từ ngày", f)); filters.Children.Add(F("Đến ngày", t));
         }
-        if (_kind is "stock" or "inout" or "fulfil" or "hist")
+        if (_kind is "stock" or "inout" or "fulfil" or "hist" or "card")
             filters.Children.Add(F("Khách hàng", Ui.Combo(Opts.Customers(false, "Tất cả"), _cust, 220, v => { _cust = v; _mat = null; Reload(); })));
+        if (_kind == "card")
+        {
+            var mats = Opts.Materials(_cust, false);
+            if (_mat is null || mats.All(m => m.Value != _mat)) _mat = mats.FirstOrDefault()?.Value;
+            filters.Children.Add(F("Mã NPL", Ui.Combo(mats, _mat, 300, v => { _mat = v; Reload(); })));
+        }
         if (_kind is "stock" or "inout" or "hist")
         {
             var mats = Opts.Materials(_cust, false); mats.Insert(0, new Opt<string>("Tất cả NPL", ""));
@@ -88,6 +96,7 @@ public sealed class ReportScreen : Screen
             case "inout": t = X.Reports.InOutStock(f); break;
             case "fulfil": t = X.Reports.Fulfillment(f with { OrderId = null }); break;
             case "hist": t = X.Reports.TransactionHistory(f); break;
+            case "card": if (_mat is string mc) t = X.Reports.StockCard(mc, _from, _to); else empty = "Chưa có NPL."; break;
             case "demand": if (_order is long o1) t = _detail ? X.Reports.OrderDemandDetail(o1) : X.Reports.OrderDemand(o1); else empty = "Chưa có đơn hàng."; break;
             case "short": if (_order is long o2) t = X.Reports.OrderAvailability(o2, _onlyShort); else empty = "Chưa có đơn hàng."; break;
             case "max":

@@ -19,7 +19,15 @@ public sealed record CountRow(long Id, string DocNo, string Status, string Custo
 public sealed record CountLineRow(string Material, string MaterialName, decimal Counted, decimal? Book, decimal? Diff);
 public sealed record TransferRow(long Id, string DocNo, string FromCustomer, string ToCustomer, string Status, string? Reason, DateTime CreatedAt);
 public sealed record TransferLineRow(string From, string To, decimal Qty);
-public sealed record AuditRow(DateTime At, string Entity, long? EntityId, string? Before, string? After, string? Reason);
+public sealed record AuditRow(DateTime At, string Entity, long? EntityId, string? Before, string? After, string? Reason, string? Action = null, string? Ref = null)
+{
+    public string Group => AuditLog.Group(Entity);
+    public string ActionText => Action ?? (Entity.EndsWith("_draft") ? "Hủy phiếu nháp" : Entity == "stock_count" ? "Chốt kiểm kê" : Entity == "material_transfer" ? "Xác nhận" : "");
+    public string RefText => Ref ?? (EntityId?.ToString() ?? "");
+}
+
+/// <summary>Lọc nhật ký: khoảng ngày (tính hết ngày Đến), nhóm, từ khóa (tìm trong đối tượng, thao tác, trước/sau, lý do).</summary>
+public sealed record AuditFilter(DateTime? From = null, DateTime? To = null, string? Entity = null, string? Keyword = null, int Limit = 100000);
 public sealed record CarryRow(string OrderNo, string Material, string Scope, decimal Opening, decimal Issued, decimal Demand, decimal Closing, string DocNo, DateTime At);
 public sealed record ReservationRow(long Id, string OrderNo, string Material, decimal Qty);
 
@@ -119,9 +127,19 @@ public sealed class Queries(SqliteConnection c)
         Db.Query(c, "SELECT a.code,b.code,l.qty FROM material_transfer_line l JOIN material a ON a.id=l.from_material_id JOIN material b ON b.id=l.to_material_id WHERE l.transfer_id=$t ORDER BY l.id",
             r => new TransferLineRow(r.GetString(0), r.GetString(1), Db.D(r.GetString(2))), null, ("$t", transferId));
 
-    public List<AuditRow> Audit(int limit = 500) =>
-        Db.Query(c, "SELECT created_at,entity,entity_id,before_json,after_json,reason FROM audit_log ORDER BY id DESC LIMIT $n",
-            r => new AuditRow(Db.Date(r.GetString(0)), r.GetString(1), OptLong(r, 2), OptStr(r, 3), OptStr(r, 4), OptStr(r, 5)), null, ("$n", limit));
+    public List<AuditRow> Audit(AuditFilter? f = null)
+    {
+        f ??= new();
+        var entities = f.Entity is null ? null : AuditLog.Groups.Where(g => g.Value == AuditLog.Group(f.Entity)).Select(g => g.Key).ToList();
+        var kw = string.IsNullOrWhiteSpace(f.Keyword) ? null : "%" + f.Keyword.Trim() + "%";
+        return Db.Query(c, @"SELECT created_at,entity,entity_id,before_json,after_json,reason,action,ref_text FROM audit_log
+                             WHERE ($from IS NULL OR created_at >= $from) AND ($to IS NULL OR created_at < $to)
+                               AND ($kw IS NULL OR COALESCE(ref_text,'')||' '||COALESCE(action,'')||' '||COALESCE(before_json,'')||' '||COALESCE(after_json,'')||' '||COALESCE(reason,'') LIKE $kw)
+                             ORDER BY id DESC LIMIT $n",
+                r => new AuditRow(Db.Date(r.GetString(0)), r.GetString(1), OptLong(r, 2), OptStr(r, 3), OptStr(r, 4), OptStr(r, 5), OptStr(r, 6), OptStr(r, 7)), null,
+                ("$from", f.From is DateTime a ? Db.Date(a.Date) : null), ("$to", f.To is DateTime b ? Db.Date(b.Date.AddDays(1)) : null), ("$kw", kw), ("$n", f.Limit))
+            .Where(a => entities is null || entities.Contains(a.Entity)).ToList();
+    }
 
     public List<CarryRow> Carry(long? orderId = null) =>
         Db.Query(c, @"SELECT o.order_no,m.code,l.scope,l.opening,l.issued,l.demand,l.closing,COALESCE(d.doc_no,''),l.created_at FROM carry_ledger l

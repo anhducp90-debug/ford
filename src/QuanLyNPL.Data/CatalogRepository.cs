@@ -4,15 +4,21 @@ namespace QuanLyNPL.Data;
 
 public sealed class CatalogRepository(SqliteConnection c)
 {
-    public long AddCustomer(string code, string name) =>
-        Db.Insert(c, "INSERT INTO customer(code,name) VALUES($c,$n)", null, ("$c", code), ("$n", name));
+    public long AddCustomer(string code, string name)
+    {
+        var id = Db.Insert(c, "INSERT INTO customer(code,name) VALUES($c,$n)", null, ("$c", code), ("$n", name));
+        AuditLog.Write(c, "customer", "Thêm", code, null, name, entityId: id);
+        return id;
+    }
 
     /// <summary>NPL phải thuộc một khách hàng đang sử dụng. Mã NPL duy nhất toàn hệ thống.</summary>
     public long AddMaterial(string code, string name, string unit, long customerId, string? note = null)
     {
         RequireActiveCustomer(customerId);
-        return Db.Insert(c, "INSERT INTO material(code,name,unit,customer_id,note) VALUES($c,$n,$u,$k,$t)", null,
+        var id = Db.Insert(c, "INSERT INTO material(code,name,unit,customer_id,note) VALUES($c,$n,$u,$k,$t)", null,
             ("$c", code), ("$n", name), ("$u", unit), ("$k", customerId), ("$t", note));
+        AuditLog.Write(c, "material", "Thêm", code, null, $"{name} ({unit}) · KH {Db.Scalar(c, "SELECT code FROM customer WHERE id=$k", null, ("$k", customerId))}", note, id);
+        return id;
     }
 
     /// <summary>Không xóa dữ liệu đã phát sinh: chỉ chuyển trạng thái ngừng sử dụng / dùng lại.</summary>
@@ -25,6 +31,7 @@ public sealed class CatalogRepository(SqliteConnection c)
     {
         if (Db.Exec(c, $"UPDATE {table} SET active=$a WHERE id=$i", null, ("$a", active ? 1 : 0), ("$i", id)) == 0)
             throw new BusinessException("Không tìm thấy đối tượng.");
+        AuditLog.Write(c, table, active ? "Dùng lại" : "Ngừng sử dụng", Db.Scalar(c, $"SELECT code FROM {table} WHERE id=$i", null, ("$i", id)) as string, entityId: id);
     }
 
     public void UpdateMaterial(string code, string name, string unit, string? note)
@@ -33,7 +40,9 @@ public sealed class CatalogRepository(SqliteConnection c)
         var used = Convert.ToInt32(Db.Scalar(c, "SELECT (SELECT COUNT(*) FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE m.code=$c)", null, ("$c", code)));
         var oldUnit = (string?)Db.Scalar(c, "SELECT unit FROM material WHERE code=$c", null, ("$c", code)) ?? throw new BusinessException($"Mã NPL không tồn tại: {code}");
         if (used > 0 && oldUnit != unit) throw new BusinessException("NPL đã phát sinh giao dịch, không đổi đơn vị tính.");
+        var old = Db.Query(c, "SELECT name,unit,COALESCE(note,'') FROM material WHERE code=$c", r => $"{r.GetString(0)} ({r.GetString(1)}) {r.GetString(2)}".Trim(), null, ("$c", code)).Single();
         Db.Exec(c, "UPDATE material SET name=$n, unit=$u, note=$t WHERE code=$c", null, ("$n", name), ("$u", unit), ("$t", note), ("$c", code));
+        AuditLog.Write(c, "material", "Sửa", code, old, $"{name} ({unit}) {note}".Trim());
     }
 
     public long? MaterialCustomerId(string code)
@@ -55,6 +64,8 @@ public sealed class CatalogRepository(SqliteConnection c)
         }
         MaterialId(code);   // kiểm tra tồn tại
         Db.Exec(c, "UPDATE material SET customer_id=$k WHERE code=$c", null, ("$k", customerId), ("$c", code));
+        AuditLog.Write(c, "material", "Gán khách hàng", code, current is long cur ? Db.Scalar(c, "SELECT code FROM customer WHERE id=$k", null, ("$k", cur)) as string : "(chưa gán)",
+            Db.Scalar(c, "SELECT code FROM customer WHERE id=$k", null, ("$k", customerId)) as string);
     }
 
     /// <summary>NPL cũ (trước khi có khai báo theo khách hàng) chưa gán khách hàng.</summary>
@@ -102,6 +113,7 @@ public sealed class CatalogRepository(SqliteConnection c)
         var id = Db.Insert(c, "INSERT INTO size_grid(code,name) VALUES($c,$n)", tx, ("$c", code), ("$n", name));
         foreach (var (s, voc, cao) in items)
             Db.Exec(c, "INSERT INTO size_grid_item(grid_id,size_code,voc,chieu_cao) VALUES($g,$s,$v,$h)", tx, ("$g", id), ("$s", s), ("$v", voc), ("$h", cao));
+        AuditLog.Write(c, "size_grid", "Thêm", code, null, $"{name}: {string.Join(", ", list.Select(i => i.size))}", entityId: id, tx: tx);
         tx.Commit();
         return id;
     }
@@ -114,6 +126,7 @@ public sealed class CatalogRepository(SqliteConnection c)
     {
         if (IsGridUsed(gridId)) throw new BusinessException("Lưới size đã được sử dụng, không sửa cấu trúc. Hãy tạo lưới mới.");
         Db.Exec(c, "INSERT INTO size_grid_item(grid_id,size_code) VALUES($g,$s)", null, ("$g", gridId), ("$s", size));
+        AuditLog.Write(c, "size_grid", "Thêm size", Db.Scalar(c, "SELECT code FROM size_grid WHERE id=$g", null, ("$g", gridId)) as string, null, size, entityId: gridId);
     }
 
     public long CopyGrid(long gridId, string newCode, string newName)
@@ -130,8 +143,11 @@ public sealed class CatalogRepository(SqliteConnection c)
     public long AddProduct(long customerId, string code, string name, long defaultGridId)
     {
         RequireActiveCustomer(customerId);
-        return Db.Insert(c, "INSERT INTO product(customer_id,code,name,default_grid_id) VALUES($c,$k,$n,$g)", null,
+        var id = Db.Insert(c, "INSERT INTO product(customer_id,code,name,default_grid_id) VALUES($c,$k,$n,$g)", null,
             ("$c", customerId), ("$k", code), ("$n", name), ("$g", defaultGridId));
+        AuditLog.Write(c, "product", "Thêm", code, null,
+            $"{name} · KH {Db.Scalar(c, "SELECT code FROM customer WHERE id=$k", null, ("$k", customerId))} · lưới {Db.Scalar(c, "SELECT code FROM size_grid WHERE id=$g", null, ("$g", defaultGridId))}", entityId: id);
+        return id;
     }
 
     void RequireActiveCustomer(long customerId)
@@ -159,8 +175,10 @@ public sealed class CatalogRepository(SqliteConnection c)
         var pActive = Db.Scalar(c, "SELECT active FROM product WHERE id=$p", null, ("$p", productId)) ?? throw new BusinessException("Mã hàng không tồn tại.");
         if (Convert.ToInt32(pActive) != 1) throw new BusinessException("Mã hàng đã ngừng sử dụng.");
         var grid = Convert.ToInt64(Db.Scalar(c, "SELECT default_grid_id FROM product WHERE id=$p", null, ("$p", productId)));
-        return Db.Insert(c, "INSERT INTO variant(product_id,code,name,group_name,qty_per_set,grid_id) VALUES($p,$k,$n,$g,$q,$gr)", null,
+        var id = Db.Insert(c, "INSERT INTO variant(product_id,code,name,group_name,qty_per_set,grid_id) VALUES($p,$k,$n,$g,$q,$gr)", null,
             ("$p", productId), ("$k", code), ("$n", name), ("$g", group), ("$q", Db.D(qtyPerSet)), ("$gr", grid));
+        AuditLog.Write(c, "variant", "Thêm", $"{Db.Scalar(c, "SELECT code FROM product WHERE id=$p", null, ("$p", productId))} / {code}", null, $"{name} · {group} · SL/bộ {AuditLog.N(qtyPerSet)}", entityId: id);
+        return id;
     }
 
 }

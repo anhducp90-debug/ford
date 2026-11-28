@@ -76,22 +76,27 @@ public sealed class SecurityScreen : Screen
 public sealed class AuditScreen : Screen
 {
     public override string Title => "Nhật ký thay đổi";
-    public override string Subtitle => "Điều chỉnh đơn, đóng/mở đơn, kiểm kê, hủy phiếu nháp, chuyển NPL… đều lưu giá trị trước/sau và lý do (500 dòng gần nhất).";
+    public override string Subtitle => "Mọi thao tác ghi dữ liệu: thêm/sửa/ngừng danh mục, BOM, lập/điều chỉnh/đóng đơn, lập/sửa/xác nhận/hủy phiếu, giữ kho, kiểm kê, chuyển NPL, nơi xuất/nhận, cài đặt, mã PIN, sao lưu/phục hồi. Không ghi giá trị mã PIN.";
+    DateTime? _from = DateTime.Today.AddDays(-30), _to = DateTime.Today; string? _group; string _kw = "";
 
-    static string Entity(string e) => e switch
+    protected override Control Build()
     {
-        "order" => "Đơn hàng", "stock_count" => "Kiểm kê", "stock_doc_draft" => "Hủy phiếu nháp", "material_transfer" => "Chuyển NPL",
-        "material_transfer_draft" => "Hủy phiếu chuyển nháp", _ => e
-    };
-
-    protected override Control Build() =>
-        Ui.List(X.Q.Audit(), new (string, Func<AuditRow, string>, bool)[]
-        {
-            ("Thời gian", a => Ui.DT(a.At), false), ("Đối tượng", a => Entity(a.Entity), false), ("Mã", a => a.EntityId?.ToString() ?? "", false),
-            ("Trước", a => Short(a.Before), false), ("Sau", a => Short(a.After), false), ("Lý do", a => a.Reason ?? "", false)
-        }, maxHeight: 620);
-
-    static string Short(string? s) => s is null ? "" : s.Length > 120 ? s[..120] + "…" : s;
+        var from = Ui.DateBox(_from); from.SelectedDateChanged += (_, _) => { if (from.SelectedDate?.Date != _from?.Date) { _from = from.SelectedDate?.Date; Reload(); } };
+        var to = Ui.DateBox(_to); to.SelectedDateChanged += (_, _) => { if (to.SelectedDate?.Date != _to?.Date) { _to = to.SelectedDate?.Date; Reload(); } };
+        var groups = new List<Opt<string>> { new("Tất cả nhóm", "") };
+        groups.AddRange(AuditLog.Groups.Where(g => !g.Key.EndsWith("_draft")).Select(g => new Opt<string>(g.Value, g.Key)));
+        var kw = Ui.Input(260, "Từ khóa: số phiếu, mã NPL, lý do…", _kw);
+        kw.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) { _kw = kw.Text ?? ""; Reload(); } };
+        var f = new AuditFilter(_from, _to, _group, _kw);
+        var t = X.Reports.AuditReport(f);
+        Control F(string label, Control c) => new StackPanel { Children = { Ui.Text(label, Ui.Muted), c } };
+        return Ui.Col(
+            Ui.Row(F("Từ ngày", from), F("Đến ngày", to), F("Nhóm", Ui.Combo(groups, _group ?? "", 200, v => { _group = v == "" ? null : v; Reload(); })),
+                F("Tìm", kw), F(" ", Ui.Btn("Lọc", () => { _kw = kw.Text ?? ""; Reload(); }, primary: true)),
+                F(" ", Ui.Btn("Xóa lọc", () => { _from = null; _to = null; _group = null; _kw = ""; Reload(); }))),
+            Ui.Row(Ui.BtnAsync("Xuất Excel", () => Ui.Export(t, false)), Ui.BtnAsync("Xuất PDF", () => Ui.Export(t, true)), Ui.Text($"{t.Rows.Count:#,##0} dòng", Ui.Muted)),
+            t.Rows.Count == 0 ? Ui.Hint("Không có dòng nào phù hợp.") : Ui.Table(t, maxHeight: 640));
+    }
 }
 
 public sealed class PlaceScreen : Screen

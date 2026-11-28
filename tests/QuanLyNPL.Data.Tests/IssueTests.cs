@@ -184,7 +184,7 @@ public class CountTests
         Assert.Equal(100m, f.Stock.OnHand("VAI"));                // nháp không đổi tồn
         cs.Confirm(id);
         Assert.Equal(95m, f.Stock.OnHand("VAI")); Assert.Equal(12m, f.Stock.OnHand("CHI")); Assert.Equal(5m, f.Stock.OnHand("KHOA"));
-        Assert.Equal(2L, Db.Scalar(f.C, "SELECT COUNT(*) FROM audit_log WHERE entity='stock_count'"));
+        Assert.Equal(2L, Db.Scalar(f.C, "SELECT COUNT(*) FROM audit_log WHERE entity='stock_count' AND action='Chốt kiểm kê'"));
         Assert.Throws<BusinessException>(() => cs.Confirm(id));   // không xác nhận trùng
         Assert.Equal(-5m, Db.D((string)Db.Scalar(f.C, "SELECT diff FROM stock_count_line l JOIN material m ON m.id=l.material_id WHERE m.code='VAI'")!));
     }

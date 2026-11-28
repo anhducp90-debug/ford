@@ -31,6 +31,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty,qty_suggested,demand,entered) VALUES($d,$m,'0',$s,$p,0)", tx,
                 ("$d", id), ("$m", mid), ("$s", Db.D(suggested)), ("$p", Db.D(period)));
         }
+        AuditLog.Write(c, "stock_doc", "Lập phiếu nháp", docNo, null, $"Cấp phát theo nhu cầu · phạm vi {scope} · {demand.Count} mã NPL", null, id, tx);
         tx.Commit();
         return id;
     }

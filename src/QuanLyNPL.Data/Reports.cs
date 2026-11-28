@@ -199,20 +199,68 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         return new("Đáp ứng đơn hàng", Describe(f), new[] { "Số đơn", "Khách hàng", "Mã hàng", "Ngày đặt", "Trạng thái", "Mã NPL thiếu" }, rows);
     }
 
-    /// <summary>Lịch sử giao dịch kho theo mã NPL / kỳ / đơn (phiếu nhập, xuất, trả, điều chỉnh, kiểm kê).</summary>
+    /// <summary>Lịch sử giao dịch kho theo mã NPL / kỳ / đơn / khách hàng: mọi biến động tồn đã xác nhận, kèm nơi xuất, nơi nhận, phạm vi, ghi chú.</summary>
     public ReportTable TransactionHistory(ReportFilter f)
     {
         var from = f.From ?? DateTime.MinValue; var toEx = EndOfDay(f.To) ?? DateTime.MaxValue;
-        var rows = Db.Query(c,
-            @"SELECT t.created_at,d.doc_no,d.type,m.code,t.qty_signed,o.order_no,d.ref_doc_id,COALESCE(d.kind,'') FROM stock_txn t
-              JOIN stock_doc d ON d.id=t.doc_id JOIN material m ON m.id=t.material_id LEFT JOIN ""order"" o ON o.id=d.order_id
-              WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) AND ($k IS NULL OR m.customer_id=$k) ORDER BY t.id",
-            r => (at: Db.Date(r.GetString(0)), no: r.GetString(1), type: r.GetString(2), code: r.GetString(3), q: Db.D(r.GetString(4)),
-                  order: r.IsDBNull(5) ? "" : r.GetString(5), bu: !r.IsDBNull(6), kind: r.GetString(7)), null, ("$m", f.MaterialCode), ("$o", f.OrderId), ("$k", f.CustomerId))
-            .Where(t => t.at >= from && t.at < toEx)
-            .Select(t => new object?[] { t.at.ToString("dd/MM/yyyy HH:mm"), t.no, TypeText(t.type, t.bu, t.kind), t.code, t.q, t.order }).ToList();
-        return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Mã NPL", "Số lượng (±)", "Đơn" }, rows);
+        var rows = Txns(f.MaterialCode, f.OrderId, f.CustomerId).Where(t => t.At >= from && t.At < toEx)
+            .Select(t => new object?[] { t.At.ToString("dd/MM/yyyy HH:mm"), t.DocNo, t.TypeText, t.Customer, t.Material, t.Qty, t.Order, t.ScopeText, t.FromPlace, t.ToPlace, t.Note }).ToList();
+        return new("Lịch sử giao dịch", Describe(f), new[] { "Thời gian", "Số phiếu", "Loại", "Khách hàng", "Mã NPL", "Số lượng (±)", "Đơn", "Phạm vi", "Nơi xuất", "Nơi nhận", "Ghi chú" }, rows);
     }
+
+    /// <summary>
+    /// Thẻ kho một mã NPL: tồn đầu kỳ, từng giao dịch đã xác nhận trong kỳ (nhập/xuất) và tồn sau mỗi giao dịch, tồn cuối kỳ.
+    /// Tồn cuối kỳ = tồn đầu + tổng nhập − tổng xuất (khớp với Nhập – xuất – tồn).
+    /// </summary>
+    public ReportTable StockCard(string materialCode, DateTime? fromDate, DateTime? toDate)
+    {
+        var from = fromDate?.Date ?? DateTime.MinValue; var toEx = EndOfDay(toDate) ?? DateTime.MaxValue;
+        var all = Txns(materialCode, null, null);
+        var opening = all.Where(t => t.At < from).Sum(t => t.Qty);
+        var balance = opening;
+        var rows = new List<object?[]> { new object?[] { fromDate is null ? "" : Ui(from), "", "Tồn đầu kỳ", null, null, opening, "", "", "", "" } };
+        decimal tin = 0, tout = 0;
+        foreach (var t in all.Where(t => t.At >= from && t.At < toEx))
+        {
+            balance += t.Qty;
+            if (t.Qty > 0) tin += t.Qty; else tout -= t.Qty;
+            rows.Add(new object?[] { t.At.ToString("dd/MM/yyyy HH:mm"), t.DocNo, t.TypeText,
+                t.Qty > 0 ? t.Qty : null, t.Qty < 0 ? -t.Qty : null, balance, t.Order, t.FromPlace, t.ToPlace, t.Note ?? "" });
+        }
+        rows.Add(new object?[] { toDate is null ? "" : Ui(toDate.Value), "", "Cộng phát sinh / tồn cuối kỳ", tin, tout, balance, "", "", "", "" });
+        var m = Db.Query(c, "SELECT m.name,m.unit,COALESCE(k.code,'') FROM material m LEFT JOIN customer k ON k.id=m.customer_id WHERE m.code=$c",
+            r => (r.GetString(0), r.GetString(1), r.GetString(2)), null, ("$c", materialCode)).SingleOrDefault();
+        var filters = new List<string> { $"Mã NPL: {materialCode} – {m.Item1} · ĐVT: {m.Item2} · Khách hàng: {m.Item3}" };
+        filters.AddRange(Describe(new ReportFilter(fromDate, toDate)));
+        return new("Thẻ kho", filters, new[] { "Ngày", "Số phiếu", "Diễn giải", "Nhập", "Xuất", "Tồn", "Đơn", "Nơi xuất", "Nơi nhận", "Ghi chú" }, rows);
+        static string Ui(DateTime d) => d.ToString("dd/MM/yyyy");
+    }
+
+    /// <summary>Nhật ký thay đổi dạng bảng báo cáo (lọc + xuất Excel/PDF).</summary>
+    public ReportTable AuditReport(AuditFilter f)
+    {
+        var rows = new Queries(c).Audit(f).Select(a => new object?[] { a.At.ToString("dd/MM/yyyy HH:mm:ss"), a.Group, a.ActionText, a.RefText, a.Before ?? "", a.After ?? "", a.Reason ?? "" }).ToList();
+        var filters = Describe(new ReportFilter(f.From, f.To));
+        if (f.Entity is not null) filters.Add("Nhóm: " + AuditLog.Group(f.Entity));
+        if (!string.IsNullOrWhiteSpace(f.Keyword)) filters.Add("Từ khóa: " + f.Keyword);
+        return new("Nhật ký thay đổi", filters, new[] { "Thời gian", "Nhóm", "Thao tác", "Đối tượng", "Trước", "Sau", "Lý do / ghi chú" }, rows);
+    }
+
+    sealed record Txn(DateTime At, string DocNo, string TypeText, string Customer, string Material, decimal Qty, string Order, string ScopeText, string FromPlace, string ToPlace, string? Note);
+
+    List<Txn> Txns(string? material, long? orderId, long? customerId) =>
+        Db.Query(c, @"SELECT t.created_at,d.doc_no,d.type,COALESCE(d.kind,''),d.ref_doc_id,d.scope,COALESCE(k.code,''),m.code,t.qty_signed,COALESCE(o.order_no,''),
+                             COALESCE(pf.name,''),COALESCE(pt.name,''),d.note
+                      FROM stock_txn t JOIN stock_doc d ON d.id=t.doc_id JOIN material m ON m.id=t.material_id
+                      LEFT JOIN ""order"" o ON o.id=d.order_id LEFT JOIN customer k ON k.id=d.customer_id
+                      LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id
+                      WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) AND ($k IS NULL OR m.customer_id=$k) ORDER BY t.created_at, t.id",
+            r => new Txn(Db.Date(r.GetString(0)), r.GetString(1), TypeText(r.GetString(2), !r.IsDBNull(4), r.GetString(3), r.IsDBNull(5) ? null : r.GetString(5)),
+                r.GetString(6), r.GetString(7), Db.D(r.GetString(8)), r.GetString(9),
+                r.IsDBNull(5) ? "" : r.GetString(5) switch { IssueService.AllScope => "Cả đơn", DemandCalculator.SetScope => "Theo bộ", var sc => "Chủng loại " + sc },
+                r.GetString(10), r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12)),
+            null, ("$m", material), ("$o", orderId), ("$k", customerId));
+
 
     /// <summary>Lịch sử cấu hình của đơn: phiên bản BOM, lưới size, quy đổi và lý do điều chỉnh.</summary>
     public ReportTable ConfigHistory(long orderId)
@@ -238,8 +286,8 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
 
     public static string StatusText(FulfillStatus s) => s switch { FulfillStatus.Enough => "ĐỦ NPL", FulfillStatus.Short => "THIẾU NPL", _ => "CHƯA ĐỦ DỮ LIỆU" };
 
-    static string TypeText(string t, bool bu, string kind = "") => kind == TransferService.Kind ? (t == "OUT" ? "Chuyển sang khách hàng khác" : "Nhận từ khách hàng khác") : t switch
+    static string TypeText(string t, bool bu, string kind = "", string? scope = null) => kind == TransferService.Kind ? (t == "OUT" ? "Chuyển sang khách hàng khác" : "Nhận từ khách hàng khác") : t switch
     {
-        "IN" => "Nhập", "OUT" => bu ? "Xuất bù" : "Xuất", "RETURN" => "Trả", "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => t
+        "IN" => "Nhập", "OUT" => bu ? "Xuất bù" : scope is not null ? "Xuất cấp phát" : "Xuất", "RETURN" => "Trả", "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => t
     };
 }

@@ -18,6 +18,7 @@ public sealed class StockCountService(SqliteConnection c, StockService stock)
         var id = Db.Insert(c, "INSERT INTO stock_count(doc_no,reason,created_at,customer_id) VALUES($n,$r,$t,$k)", tx, ("$n", docNo), ("$r", reason), ("$t", Db.Date(DateTime.Now)), ("$k", cust));
         foreach (var (m, q) in ids)
             Db.Exec(c, "INSERT INTO stock_count_line(count_id,material_id,counted) VALUES($c,$m,$q)", tx, ("$c", id), ("$m", m), ("$q", Db.D(q)));
+        AuditLog.Write(c, "stock_count", "Lập phiếu nháp", docNo, null, string.Join("; ", lines.Select(l => $"{l.material}: {AuditLog.N(l.counted)}")), reason, id, tx);
         tx.Commit();
         return id;
     }
@@ -30,7 +31,7 @@ public sealed class StockCountService(SqliteConnection c, StockService stock)
         if (st != "DRAFT") throw new BusinessException("Phiếu kiểm kê đã chốt, không xóa.");
         Db.Exec(c, "DELETE FROM stock_count_line WHERE count_id=$i", tx, ("$i", countId));
         Db.Exec(c, "DELETE FROM stock_count WHERE id=$i", tx, ("$i", countId));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,reason,created_at) VALUES('stock_count_draft',$i,$r,$t)", tx, ("$i", countId), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        AuditLog.Write(c, "stock_count", "Hủy phiếu nháp", (string?)Db.Scalar(c, "SELECT doc_no FROM stock_count WHERE id=$i", tx, ("$i", countId)), reason: reason, entityId: countId, tx: tx);
         tx.Commit();
     }
 
@@ -56,9 +57,8 @@ public sealed class StockCountService(SqliteConnection c, StockService stock)
                 ("$t", diff > 0 ? "ADJUST_UP" : "ADJUST_DOWN"), ("$n", st.Item2 + (diff > 0 ? "-TANG" : "-GIAM")), ("$note", "Điều chỉnh từ kiểm kê"), ("$d", now));
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx, ("$d", target), ("$m", l.mid), ("$q", Db.D(Math.Abs(diff))));
             Db.Exec(c, "INSERT INTO stock_txn(doc_id,material_id,qty_signed,created_at) VALUES($d,$m,$q,$t)", tx, ("$d", target), ("$m", l.mid), ("$q", Db.D(diff)), ("$t", now));
-            Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,before_json,after_json,reason,created_at) VALUES('stock_count',$i,$b,$a,$r,$t)", tx,
-                ("$i", countId), ("$b", JsonSerializer.Serialize(new { l.code, book })), ("$a", JsonSerializer.Serialize(new { l.code, counted = l.counted })),
-                ("$r", Db.Scalar(c, "SELECT reason FROM stock_count WHERE id=$i", tx, ("$i", countId)) as string), ("$t", now));
+            AuditLog.Write(c, "stock_count", "Chốt kiểm kê", $"{st.Item2} / {l.code}", $"Tồn sổ {AuditLog.N(book)}", $"Thực đếm {AuditLog.N(l.counted)} (chênh lệch {AuditLog.Signed(diff)})",
+                Db.Scalar(c, "SELECT reason FROM stock_count WHERE id=$i", tx, ("$i", countId)) as string, countId, tx);
         }
         Db.Exec(c, "UPDATE stock_count SET status='CONFIRMED', confirmed_at=$t WHERE id=$i", tx, ("$t", now), ("$i", countId));
         tx.Commit();

@@ -217,8 +217,8 @@ public class TransferTests
         var docs = Db.Query(f.C, "SELECT type,customer_id,status FROM stock_doc WHERE kind='TRANSFER' ORDER BY id", r => (r.GetString(0), r.GetInt64(1), r.GetString(2)));
         Assert.Equal(new[] { ("OUT", f.Cust, "CONFIRMED"), ("IN", kh2, "CONFIRMED") }, docs);
         var hist = new ReportService(f.C, f.Orders, f.Stock).TransactionHistory(new ReportFilter()).Rows;
-        Assert.Contains(hist, r => (string)r[2]! == "Chuyển sang khách hàng khác" && (string)r[3]! == "VAI");
-        Assert.Contains(hist, r => (string)r[2]! == "Nhận từ khách hàng khác" && (string)r[3]! == "VAI2");
+        Assert.Contains(hist, r => (string)r[2]! == "Chuyển sang khách hàng khác" && (string)r[4]! == "VAI");
+        Assert.Contains(hist, r => (string)r[2]! == "Nhận từ khách hàng khác" && (string)r[4]! == "VAI2");
     }
 
     [Fact]

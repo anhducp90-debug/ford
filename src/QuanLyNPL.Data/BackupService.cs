@@ -10,6 +10,7 @@ public sealed class BackupService(SqliteConnection c)
     public void Backup(string destinationPath)
     {
         if (File.Exists(destinationPath)) File.Delete(destinationPath);
+        AuditLog.Write(c, "backup", "Sao lưu", Path.GetFileName(destinationPath), null, destinationPath);
         using var dest = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = destinationPath, Pooling = false }.ToString());
         dest.Open();
         c.BackupDatabase(dest);
@@ -51,6 +52,8 @@ public sealed class BackupService(SqliteConnection c)
         }
         Db.Exec(c, "PRAGMA foreign_keys=ON;");
         Db.Migrate(c);
+        // Ghi vào dữ liệu vừa phục hồi để biết dữ liệu đã được thay từ đâu và bản an toàn nằm ở đâu.
+        AuditLog.Write(c, "backup", "Phục hồi", Path.GetFileName(sourcePath), "Dữ liệu trước khi phục hồi: " + safety, sourcePath);
         return safety;
     }
 }

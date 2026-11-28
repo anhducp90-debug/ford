@@ -38,8 +38,10 @@ public sealed class BomRepository(SqliteConnection c)
             throw new BusinessException($"Mã hàng đã có BOM {BomTypes.Label(type)} theo bộ; một loại BOM chỉ khai báo theo bộ hoặc theo chủng loại.");
         if (Find(variantId, type) is not null)
             throw new BusinessException($"Chủng loại {v.code} đã có BOM {BomTypes.Label(type)}; hãy thêm phiên bản mới.");
-        return Db.Insert(c, "INSERT INTO bom(product_id,name,type,scope_variant_id,per_set) VALUES($p,$n,$t,$s,0)", null,
+        var id = Db.Insert(c, "INSERT INTO bom(product_id,name,type,scope_variant_id,per_set) VALUES($p,$n,$t,$s,0)", null,
             ("$p", v.prod), ("$n", $"{v.code} – {BomTypes.Label(type)}"), ("$t", BomTypes.Code(type)), ("$s", variantId));
+        AuditLog.Write(c, "bom", "Thêm", $"{v.code} – {BomTypes.Label(type)}", null, "Theo chủng loại", entityId: id);
+        return id;
     }
 
     /// <summary>
@@ -55,8 +57,10 @@ public sealed class BomRepository(SqliteConnection c)
             throw new BusinessException($"Mã hàng {p.code} đã có BOM {BomTypes.Label(type)} theo bộ; hãy thêm phiên bản mới.");
         if (Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM bom WHERE product_id=$p AND type=$t AND scope_variant_id IS NOT NULL", null, ("$p", productId), ("$t", BomTypes.Code(type)))) > 0)
             throw new BusinessException($"Mã hàng đã có BOM {BomTypes.Label(type)} theo chủng loại; một loại BOM chỉ khai báo theo bộ hoặc theo chủng loại.");
-        return Db.Insert(c, "INSERT INTO bom(product_id,name,type,scope_variant_id,per_set) VALUES($p,$n,$t,NULL,1)", null,
+        var id = Db.Insert(c, "INSERT INTO bom(product_id,name,type,scope_variant_id,per_set) VALUES($p,$n,$t,NULL,1)", null,
             ("$p", productId), ("$n", $"{p.code} – {BomTypes.Label(type)} (theo bộ)"), ("$t", BomTypes.Code(type)));
+        AuditLog.Write(c, "bom", "Thêm", $"{p.code} – {BomTypes.Label(type)} (theo bộ)", null, "Theo bộ", entityId: id);
+        return id;
     }
 
     public long? Find(long variantId, BomType type)
@@ -120,6 +124,8 @@ public sealed class BomRepository(SqliteConnection c)
         foreach (var l in lines)
             Db.Exec(c, "INSERT INTO bom_line(bom_version_id,material_id,size_code,usage,waste_percent) VALUES($v,$m,$s,$u,$w)", tx,
                 ("$v", vidNew), ("$m", mats[l.MaterialCode].id), ("$s", l.SizeCode), ("$u", Db.D(l.Usage)), ("$w", Db.D(l.WastePercent)));
+        AuditLog.Write(c, "bom", "Tạo phiên bản", $"{info.Name} v{next}", null,
+            string.Join("; ", lines.Select(l => $"{l.MaterialCode}/{l.SizeCode}: {AuditLog.N(l.Usage)}" + (l.WastePercent != 0 ? $" (+{AuditLog.N(l.WastePercent)}%)" : ""))), entityId: bomId, tx: tx);
         tx.Commit();
         return vidNew;
     }

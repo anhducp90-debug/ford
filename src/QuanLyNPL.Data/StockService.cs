@@ -27,12 +27,14 @@ public sealed class StockService(SqliteConnection c)
         }
         cust = cat.ResolveDocCustomer(lines.Select(l => l.material), cust);
         var resolved = lines.Select(l => (id: cat.MaterialId(l.material), l.qty)).ToList();   // tra mã trước khi mở transaction
+        var custCode = cust is long kc ? Db.Scalar(c, "SELECT code FROM customer WHERE id=$k", null, ("$k", kc)) as string : null;
         using var tx = c.BeginTransaction();
         var id = Db.Insert(c, "INSERT INTO stock_doc(type,doc_no,order_id,note,created_at,customer_id) VALUES($t,$n,$o,$note,$d,$k)", tx,
             ("$t", type), ("$n", docNo), ("$o", orderId), ("$note", note), ("$d", Db.Date(DateTime.Now)), ("$k", cust));
         foreach (var (m, q) in resolved)
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx,
                 ("$d", id), ("$m", m), ("$q", Db.D(q)));
+        AuditLog.Write(c, "stock_doc", "Lập phiếu nháp", docNo, null, $"{type} · KH {custCode} · " + string.Join("; ", lines.Select(l => $"{l.material}: {AuditLog.N(l.qty)}")), note, id, tx);
         tx.Commit();
         return id;
     }
@@ -52,10 +54,10 @@ public sealed class StockService(SqliteConnection c)
     public void Confirm(long docId)
     {
         using var tx = c.BeginTransaction(deferred: false);   // BEGIN IMMEDIATE: khóa ghi, tránh 2 phiếu cùng dùng 1 lượng tồn
-        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id,kind FROM stock_doc WHERE id=$i",
+        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id,kind,doc_no FROM stock_doc WHERE id=$i",
             r => (type: r.GetString(0), status: r.GetString(1), order: r.IsDBNull(2) ? (long?)null : r.GetInt64(2),
                   scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: r.IsDBNull(4) ? (long?)null : r.GetInt64(4),
-                  kind: r.IsDBNull(5) ? null : r.GetString(5)), tx, ("$i", docId)).SingleOrDefault();
+                  kind: r.IsDBNull(5) ? null : r.GetString(5), no: r.GetString(6)), tx, ("$i", docId)).SingleOrDefault();
         if (doc == default) throw new BusinessException("Phiếu không tồn tại.");
         if (doc.kind == TransferService.Kind) throw new BusinessException("Phiếu chuyển NPL giữa khách hàng phải xác nhận ở chức năng Chuyển NPL.");
         if (doc.status != "DRAFT") throw new BusinessException("Phiếu đã được xác nhận.");
@@ -107,6 +109,10 @@ public sealed class StockService(SqliteConnection c)
             foreach (var l in lines.Where(l => l.qty > 0)) ConsumeReservation(doc.order.Value, l.id, l.qty, tx);
 
         Db.Exec(c, "UPDATE stock_doc SET status='CONFIRMED', confirmed_at=$t WHERE id=$i", tx, ("$t", now), ("$i", docId));
+        AuditLog.Write(c, "stock_doc", "Xác nhận", doc.no, null,
+            string.Join("; ", lines.Select(l => $"{l.code} {AuditLog.Signed(sign * l.qty)}")),
+            doc.type switch { "IN" => "Nhập kho", "RETURN" => "Trả NPL", "OUT" => isIssue ? "Xuất cấp phát" : isSupplement ? "Xuất bù" : "Xuất kho", "ADJUST_UP" => "Điều chỉnh tăng", _ => "Điều chỉnh giảm" },
+            docId, tx);
         tx.Commit();
     }
 
@@ -152,8 +158,7 @@ public sealed class StockService(SqliteConnection c)
             throw new BusinessException("Phiếu đang được phiếu khác tham chiếu.");
         Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id=$i", tx, ("$i", docId));
         Db.Exec(c, "DELETE FROM stock_doc WHERE id=$i", tx, ("$i", docId));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,before_json,reason,created_at) VALUES('stock_doc_draft',$i,$b,$r,$t)", tx,
-            ("$i", docId), ("$b", d.Item2), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        AuditLog.Write(c, "stock_doc", "Hủy phiếu nháp", d.Item2, reason: reason, entityId: docId, tx: tx);
         tx.Commit();
     }
 
@@ -176,11 +181,18 @@ public sealed class StockService(SqliteConnection c)
         foreach (var (m, q) in resolved)
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx, ("$d", docId), ("$m", m), ("$q", Db.D(q)));
         Db.Exec(c, "UPDATE stock_doc SET customer_id=$k WHERE id=$d", tx, ("$k", cust), ("$d", docId));
+        AuditLog.Write(c, "stock_doc", "Sửa phiếu nháp", (string?)Db.Scalar(c, "SELECT doc_no FROM stock_doc WHERE id=$d", tx, ("$d", docId)), null,
+            string.Join("; ", lines.Select(l => $"{l.material}: {AuditLog.N(l.qty)}")), null, docId, tx);
         tx.Commit();
     }
 
-    public void ReleaseReservation(long reservationId) =>
+    public void ReleaseReservation(long reservationId)
+    {
+        var r = Db.Query(c, "SELECT o.order_no,m.code,r.qty FROM reservation r JOIN \"order\" o ON o.id=r.order_id JOIN material m ON m.id=r.material_id WHERE r.id=$i",
+            x => (x.GetString(0), x.GetString(1), Db.D(x.GetString(2))), null, ("$i", reservationId)).SingleOrDefault();
         Db.Exec(c, "UPDATE reservation SET active=0 WHERE id=$i", null, ("$i", reservationId));
+        if (r != default) AuditLog.Write(c, "reservation", "Nhả giữ kho", $"{r.Item1} / {r.Item2}", $"Giữ {AuditLog.N(r.Item3)}", "0", entityId: reservationId);
+    }
 
     public void Reserve(long orderId, string materialCode, decimal qty)
     {
@@ -194,6 +206,7 @@ public sealed class StockService(SqliteConnection c)
         using var tx = c.BeginTransaction();
         Db.Exec(c, "UPDATE reservation SET active=0 WHERE order_id=$o AND material_id=$m AND active=1", tx, ("$o", orderId), ("$m", mid));
         Db.Exec(c, "INSERT INTO reservation(order_id,material_id,qty) VALUES($o,$m,$q)", tx, ("$o", orderId), ("$m", mid), ("$q", Db.D(qty)));
+        AuditLog.Write(c, "reservation", "Giữ kho", $"{Db.Scalar(c, "SELECT order_no FROM \"order\" WHERE id=$o", tx, ("$o", orderId))} / {materialCode}", null, AuditLog.N(qty), entityId: orderId, tx: tx);
         tx.Commit();
     }
 

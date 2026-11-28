@@ -55,9 +55,11 @@ public sealed class OrderAdjustmentService(SqliteConnection c, OrderService orde
             Db.Exec(c, "INSERT INTO order_line(order_id,default_size_code,sets_qty) VALUES($o,$s,$q)", tx, ("$o", orderId), ("$s", l.DefaultSize), ("$q", Db.D(l.Sets)));
         Db.Exec(c, "INSERT INTO order_snapshot(order_id,created_at,config_json) VALUES($o,$t,$j)", tx,
             ("$o", orderId), ("$t", Db.Date(DateTime.Now)), ("$j", JsonSerializer.Serialize(snapNew, Json)));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,before_json,after_json,reason,created_at) VALUES('order',$o,$b,$a,$r,$t)", tx,
-            ("$o", orderId), ("$b", JsonSerializer.Serialize(new { lines = oldLines, rebind = false })),
-            ("$a", JsonSerializer.Serialize(new { lines = newLines, rebind = rebindBom, deltas = preview.Deltas })), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        static string Sets(IEnumerable<OrderLine> ls) => string.Join("; ", ls.Select(l => $"{l.DefaultSize}: {AuditLog.N(l.Sets)}"));
+        var no = (string)Db.Scalar(c, "SELECT order_no FROM \"order\" WHERE id=$o", tx, ("$o", orderId))!;
+        AuditLog.Write(c, "order", "Điều chỉnh", no, Sets(oldLines),
+            Sets(newLines) + (rebindBom ? " · áp dụng BOM mới" : "") + " · chênh lệch: " + string.Join("; ", preview.Deltas.Where(d => d.Diff != 0).Select(d => $"{d.Material} {AuditLog.Signed(d.Diff)}")),
+            reason, orderId, tx);
         tx.Commit();
     }
 
@@ -66,7 +68,9 @@ public sealed class OrderAdjustmentService(SqliteConnection c, OrderService orde
     {
         var snaps = Db.Query(c, "SELECT created_at,config_json FROM order_snapshot WHERE order_id=$o ORDER BY id",
             r => (at: Db.Date(r.GetString(0)), json: r.GetString(1)), null, ("$o", orderId));
-        var reasons = Db.Query(c, "SELECT reason FROM audit_log WHERE entity='order' AND entity_id=$o ORDER BY id", r => r.IsDBNull(0) ? null : r.GetString(0), null, ("$o", orderId));
+        // Chỉ các lần điều chỉnh (không lẫn đóng/mở đơn hay lập đơn).
+        var reasons = Db.Query(c, "SELECT reason FROM audit_log WHERE entity='order' AND entity_id=$o AND (action='Điều chỉnh' OR (action IS NULL AND before_json IS NOT NULL)) ORDER BY id",
+            r => r.IsDBNull(0) ? null : r.GetString(0), null, ("$o", orderId));
         var list = new List<OrderVersionInfo>();
         for (var i = 0; i < snaps.Count; i++)
         {

@@ -124,6 +124,13 @@ foreach (var d in x.Q.Docs().Where(d => d.DocNo is "NK-0001" or "PX-0001"))
     using (var fs = File.Create(pdf)) VoucherPdf.Generate(x.C, d.Id, fs);
     Console.WriteLine("phiếu " + pdf);
 }
+Go("Thẻ kho"); Pick(All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith("VAI_DO"))), "VAI_DO"); RShot(Num() + "_the_kho_VAI_DO");
+var card = x.Reports.StockCard("VAI_DO", new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), DateTime.Today);
+Expect((decimal)card.Rows.Last()[5]! == x.Stock.OnHand("VAI_DO"), $"thẻ kho VAI_DO: tồn cuối {card.Rows.Last()[5]} = tồn thực tế {x.Stock.OnHand("VAI_DO")}");
+Go("Lịch sử giao dịch"); RShot(Num() + "_lich_su_giao_dich_day_du");
+Go("Nhật ký thay đổi"); RShot(Num() + "_nhat_ky_thay_doi");
+Pick(All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString() == "Phiếu kho")), "Phiếu kho"); RShot(Num() + "_nhat_ky_loc_phieu_kho");
+Expect(x.Q.Audit().Count > 40, $"nhật ký có {x.Q.Audit().Count} dòng");
 var mx = x.Reports.MaxSets(x.Q.Orders().First(o => o.No == "DH-0412").Id).Summary;
 Expect(mx.Complete && mx.MaxSets > 0, $"số bộ tối đa DH-0412 = {mx.MaxSets}/{mx.OrderedSets}, giới hạn {string.Join(",", mx.Limiting)}");
 Expect(x.Q.Docs().First(d => d.DocNo == "PX-0001").ToPlace == "Tổ cắt", "phiếu xuất có nơi nhận");

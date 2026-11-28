@@ -47,6 +47,7 @@ public sealed class TransferService(SqliteConnection c, StockService stock)
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx, ("$d", outId), ("$m", from), ("$q", Db.D(qty)));
             Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx, ("$d", inId), ("$m", to), ("$q", Db.D(qty)));
         }
+        AuditLog.Write(c, "material_transfer", "Lập phiếu nháp", docNo, null, string.Join("; ", lines.Select(l => $"{l.FromMaterial} → {l.ToMaterial}: {AuditLog.N(l.Qty)}")), reason, id, tx);
         tx.Commit();
         return id;
     }
@@ -76,8 +77,7 @@ public sealed class TransferService(SqliteConnection c, StockService stock)
         }
         Db.Exec(c, "UPDATE stock_doc SET status='CONFIRMED', confirmed_at=$t WHERE id IN ($o,$i)", tx, ("$t", now), ("$o", t.outId), ("$i", t.inId));
         Db.Exec(c, "UPDATE material_transfer SET status='CONFIRMED', confirmed_at=$t WHERE id=$id", tx, ("$t", now), ("$id", transferId));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,after_json,reason,created_at) VALUES('material_transfer',$id,$a,$r,$t)", tx,
-            ("$id", transferId), ("$a", JsonSerializer.Serialize(lines.Select(l => new { l.from, l.to, l.qty }))), ("$r", t.reason), ("$t", now));
+        AuditLog.Write(c, "material_transfer", "Xác nhận", t.no, null, string.Join("; ", lines.Select(l => $"{l.from} → {l.to}: {AuditLog.N(l.qty)}")), t.reason, transferId, tx);
         tx.Commit();
     }
 
@@ -94,8 +94,7 @@ public sealed class TransferService(SqliteConnection c, StockService stock)
         Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id IN ($o,$n)", tx, ("$o", t.outId), ("$n", t.inId));
         Db.Exec(c, "DELETE FROM stock_doc WHERE id=$n", tx, ("$n", t.inId));
         Db.Exec(c, "DELETE FROM stock_doc WHERE id=$o", tx, ("$o", t.outId));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,before_json,reason,created_at) VALUES('material_transfer_draft',$i,$b,$r,$t)", tx,
-            ("$i", transferId), ("$b", t.no), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        AuditLog.Write(c, "material_transfer", "Hủy phiếu nháp", t.no, reason: reason, entityId: transferId, tx: tx);
         tx.Commit();
     }
 

@@ -71,7 +71,7 @@ public class AdjustmentTests
         Assert.Throws<BusinessException>(() => adj.Apply(o, new[] { new OrderLine("110/56", 15) }, "x"));
         f.Stock.DeleteDraft(d, "Làm lại");
         adj.Apply(o, new[] { new OrderLine("110/56", 15) }, "Tăng đơn");
-        Assert.Equal(1L, Db.Scalar(f.C, "SELECT COUNT(*) FROM audit_log WHERE entity='stock_doc_draft'"));
+        Assert.Equal(1L, Db.Scalar(f.C, "SELECT COUNT(*) FROM audit_log WHERE entity='stock_doc' AND action='Hủy phiếu nháp'"));
     }
 
     [Fact]

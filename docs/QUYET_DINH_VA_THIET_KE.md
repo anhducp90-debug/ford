@@ -110,3 +110,12 @@ Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán t
 - Phiếu kho có `from_place_id`, `to_place_id`; chỉ sửa khi phiếu còn nháp; kiểm tra loại và trạng thái; nơi xuất ≠ nơi nhận.
 - Mặc định: nơi nhận của phiếu nhập/trả, nơi xuất của phiếu xuất/cấp phát (thường là kho NPL). Xuất bù lấy theo phiếu gốc.
 - In chứng từ PDF A4: thông tin đơn vị, số/ngày, khách hàng, đơn hàng, nơi xuất, nơi nhận, phạm vi cấp, bảng NPL (đề xuất/thực cấp), chữ ký (người lập, thủ kho, người giao/nhận, phụ trách). Bản nháp in kèm dòng "BẢN NHÁP – CHƯA XÁC NHẬN".
+
+## 9. Lịch sử, thẻ kho và nhật ký thay đổi
+
+- **Lịch sử giao dịch**: từ `stock_txn` (chỉ phát sinh khi xác nhận) + phiếu: thời gian, số phiếu, loại, khách hàng, mã NPL, số lượng ±, đơn, phạm vi, nơi xuất, nơi nhận, ghi chú.
+- **Thẻ kho** (một mã NPL, theo kỳ): tồn đầu kỳ = tổng giao dịch trước ngày bắt đầu; mỗi giao dịch trong kỳ có cột Nhập / Xuất / Tồn sau giao dịch; dòng cuối "Cộng phát sinh / tồn cuối kỳ" khớp Nhập – xuất – tồn và tồn thực tế.
+- **Nhật ký thay đổi** (`audit_log`, migration 8 thêm `action`, `ref_text`): mỗi thao tác ghi dữ liệu ghi 1 dòng – thời điểm, nhóm, thao tác, đối tượng (số phiếu, mã…), trước, sau, lý do. Phạm vi: khách hàng, NPL (thêm/sửa/gán khách hàng/ngừng/dùng lại), lưới size, mã hàng, chủng loại, BOM (thêm, tạo phiên bản kèm định mức), đơn (lập, điều chỉnh, đóng/mở), phiếu kho (lập/sửa nháp, nơi xuất/nhận, xác nhận kèm số lượng ±, hủy nháp), giữ/nhả kho, kiểm kê (lập, chốt từng mã, hủy), chuyển NPL, nơi xuất/nhận, cài đặt (nơi mặc định, thông tin đơn vị), bảo mật (tạo/đổi PIN – không ghi giá trị, thời gian tự khóa), sao lưu, phục hồi (ghi vào dữ liệu đã phục hồi, kèm đường dẫn bản an toàn).
+- Lọc nhật ký theo khoảng ngày, nhóm, từ khóa; không giới hạn 500 dòng; xuất Excel/PDF.
+- Không có người thực hiện (ứng dụng một người dùng, khóa PIN).
+- Lịch sử cấu hình đơn chỉ lấy các lần "Điều chỉnh" (không lẫn đóng/mở đơn).

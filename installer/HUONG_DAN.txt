@@ -35,4 +35,13 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
 6. Số bộ tối đa sản xuất được (Báo cáo, hoặc ở Xuất kho > Kiểm tra đáp ứng):
    - Theo cơ cấu size của đơn và riêng từng size; đã tính cả phần NPL đã cấp cho đơn.
 
-7. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.
+7. Lịch sử và nhật ký:
+   - Báo cáo > Lịch sử giao dịch: mọi biến động tồn đã xác nhận, kèm khách hàng, đơn, phạm vi,
+     nơi xuất, nơi nhận, ghi chú; lọc theo ngày/khách hàng/đơn/mã NPL; xuất Excel/PDF.
+   - Báo cáo > Thẻ kho: từng mã NPL – tồn đầu kỳ, từng phiếu nhập/xuất, tồn sau mỗi giao dịch, tồn cuối kỳ.
+   - Quản trị > Nhật ký thay đổi: mọi thao tác ghi dữ liệu (thêm/sửa/ngừng danh mục, BOM, đơn,
+     lập/sửa/xác nhận/hủy phiếu, giữ kho, kiểm kê, chuyển NPL, cài đặt, mã PIN, sao lưu/phục hồi);
+     lọc theo ngày, nhóm, từ khóa; xuất Excel/PDF. Không ghi giá trị mã PIN.
+   - Phiếu đã xác nhận không sửa/xóa được; chỉ phiếu nháp được hủy (có ghi nhật ký).
+
+8. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.

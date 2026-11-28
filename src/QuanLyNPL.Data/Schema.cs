@@ -108,5 +108,12 @@ CREATE TABLE place(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT 
 ALTER TABLE stock_doc ADD COLUMN from_place_id INTEGER REFERENCES place(id);
 ALTER TABLE stock_doc ADD COLUMN to_place_id INTEGER REFERENCES place(id);
 "
+    ,
+@"
+ALTER TABLE audit_log ADD COLUMN action TEXT;
+ALTER TABLE audit_log ADD COLUMN ref_text TEXT;
+CREATE INDEX ix_audit_time ON audit_log(created_at);
+CREATE INDEX ix_txn_doc ON stock_txn(doc_id);
+"
     };
 }

@@ -37,6 +37,9 @@ public sealed class OrderService(SqliteConnection c)
                 ("$o", id), ("$s", l.DefaultSize), ("$q", Db.D(l.Sets)));
         Db.Exec(c, "INSERT INTO order_snapshot(order_id,created_at,config_json) VALUES($o,$t,$j)", tx,
             ("$o", id), ("$t", Db.Date(DateTime.Now)), ("$j", JsonSerializer.Serialize(snapshot, Json)));
+        AuditLog.Write(c, "order", "Lập đơn", orderNo, null,
+            $"Mã hàng {Db.Scalar(c, "SELECT code FROM product WHERE id=$p", tx, ("$p", productId))}; " + string.Join("; ", lines.Select(l => $"{l.DefaultSize}: {AuditLog.N(l.Sets)}")) +
+            $"; BOM: {string.Join(", ", snapshot.Boms.Select(b => $"{b.Name} v{b.VersionNo?.ToString() ?? "–"}"))}", null, id, tx);
         tx.Commit();
         return id;
     }
@@ -92,8 +95,8 @@ public sealed class OrderService(SqliteConnection c)
         if (Db.Exec(c, "UPDATE \"order\" SET status=$s WHERE id=$o", null, ("$s", open ? "OPEN" : "CLOSED"), ("$o", orderId)) == 0)
             throw new BusinessException("Đơn hàng không tồn tại.");
         if (!open) Db.Exec(c, "UPDATE reservation SET active=0 WHERE order_id=$o", null, ("$o", orderId));
-        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,after_json,reason,created_at) VALUES('order',$o,$a,$r,$t)", null,
-            ("$o", orderId), ("$a", open ? "OPEN" : "CLOSED"), ("$r", open ? "Mở lại đơn" : "Đóng đơn"), ("$t", Db.Date(DateTime.Now)));
+        AuditLog.Write(c, "order", open ? "Mở lại đơn" : "Đóng đơn", (string?)Db.Scalar(c, "SELECT order_no FROM \"order\" WHERE id=$o", null, ("$o", orderId)),
+            open ? "Đã đóng" : "Đang mở", open ? "Đang mở" : "Đã đóng", entityId: orderId);
     }
 
     public static void RequireOpen(SqliteConnection c, long orderId)
