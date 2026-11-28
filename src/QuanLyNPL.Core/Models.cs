@@ -16,8 +16,16 @@ public sealed class SizeMap
         _map.TryGetValue((variant, defaultSize), out var s) ? s : null;
 }
 
-/// <summary>BOM (đã chọn phiên bản). ScopeVariant = null: áp dụng toàn mã hàng.</summary>
-public sealed record Bom(string Id, string? ScopeVariant);
+/// <summary>
+/// BOM (đã chọn phiên bản).
+/// PerSet = true: BOM theo bộ — số lượng = số bộ, size = size mặc định của mã hàng (Tổ cắt/Sản xuất/Đóng gói theo bộ).
+/// ScopeVariant = mã chủng loại: BOM theo chủng loại — số lượng = số sản phẩm của chủng loại, size = size đã quy đổi.
+/// Cả hai null/false: BOM cũ áp dụng cho mọi chủng loại.
+/// </summary>
+public sealed record Bom(string Id, string? ScopeVariant, bool PerSet = false, string? Name = null)
+{
+    public string Label => Name ?? Id;
+}
 
 /// <summary>Dòng định mức. Size "*" là định mức nền; VariantCode null = mọi chủng loại trong phạm vi BOM.</summary>
 public sealed record BomLine(string BomId, string MaterialCode, string SizeCode,

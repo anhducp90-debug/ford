@@ -23,10 +23,11 @@ public class DeclarationTests
     {
         using var f = new Fixture();
         var cut = f.Bom.CreateBom(f.VAo, BomType.ToCat);
-        var pack = f.Bom.CreateBom(f.VAo, BomType.DongGoi);
+        Assert.Throws<BusinessException>(() => f.Bom.CreateBom(f.VAo, BomType.DongGoi));   // đóng gói phải theo bộ
+        var pack = f.Bom.CreateSetBom(f.Prod, BomType.DongGoi);
         var info = f.Bom.Info(cut);
         Assert.Equal(("AO – Tổ cắt", "TO_CAT", f.Prod, f.Cust), (info.Name, info.Type, info.ProductId, info.CustomerId));
-        Assert.Equal("AO – Đóng gói", f.Bom.Info(pack).Name);
+        Assert.Equal(("MH1 – Đóng gói (theo bộ)", true, 0L), (f.Bom.Info(pack).Name, f.Bom.Info(pack).PerSet, f.Bom.Info(pack).VariantId));
         Assert.Throws<BusinessException>(() => f.Bom.CreateBom(f.VAo, BomType.ToCat));      // trùng loại → thêm phiên bản
         Assert.Equal(cut, f.Bom.Find(f.VAo, BomType.ToCat));
         Assert.Null(f.Bom.Find(f.VQuan, BomType.ToCat));
@@ -46,19 +47,19 @@ public class DeclarationTests
     }
 
     [Fact]
-    public void ThreeBomTypes_SumIntoDemand_PerVariant()
+    public void ThreeBomTypes_SumIntoDemand()
     {
         using var f = new Fixture();
         var d = new DateTime(2026, 1, 1);
         f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.ToCat), d, new[] { new BomLineInput("VAI", "*", 1.2m) });
-        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.ChungLoai), d, new[] { new BomLineInput("CHI", "*", 0.02m) });
-        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.DongGoi), d, new[] { new BomLineInput("CHI", "*", 0.01m) });
+        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.SanXuat), d, new[] { new BomLineInput("CHI", "*", 0.02m) });
+        f.Bom.AddVersion(f.Bom.CreateSetBom(f.Prod, BomType.DongGoi), d, new[] { new BomLineInput("CHI", "*", 0.01m) });
         f.Bom.AddVersion(f.Bom.CreateBom(f.VQuan, BomType.ToCat), d, new[] { new BomLineInput("VAI", "*", 1m), new BomLineInput("KHOA", "*", 1m) });
         var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 100) });
         var r = f.Orders.CalculateDemand(o);
         Assert.True(r.IsComplete);
         Assert.Equal(220m, r.TotalByMaterial["VAI"]);   // áo 100×1.2 + quần 100×1
-        Assert.Equal(3m, r.TotalByMaterial["CHI"]);     // áo: chủng loại 2 + đóng gói 1
+        Assert.Equal(3m, r.TotalByMaterial["CHI"]);     // áo sản xuất 100×0.02 + đóng gói theo bộ 100 bộ×0.01
         Assert.Equal(100m, r.TotalByMaterial["KHOA"]);
     }
 
@@ -124,6 +125,69 @@ public class DeclarationTests
         Db.Exec(c, "INSERT INTO stock_doc(id,type,doc_no,created_at) VALUES(1,'IN','N','2026-01-01T00:00:00'); INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES(1,1,'5');");
         Db.Migrate(c);
         Assert.Equal(1L, Db.Scalar(c, "SELECT customer_id FROM stock_doc WHERE id=1"));
+    }
+}
+
+public class PerSetBomDataTests
+{
+    [Fact]
+    public void SetBom_SizesAreDefaultGrid_DemandBySets_SnapshotKeepsScope()
+    {
+        using var f = new Fixture();
+        var pack = f.Bom.CreateSetBom(f.Prod, BomType.DongGoi);
+        Assert.Equal(new[] { "110/56", "110/60", "120/60" }, f.Bom.Sizes(pack));
+        Assert.Throws<BusinessException>(() => f.Bom.AddVersion(pack, DateTime.Now, new[] { new BomLineInput("CHI", "S", 1m) }));   // size chủng loại không hợp lệ cho BOM theo bộ
+        f.Bom.AddVersion(pack, new DateTime(2026, 1, 1), new[] { new BomLineInput("KHOA", "*", 1m), new BomLineInput("KHOA", "120/60", 2m) });
+        var cut = f.Bom.CreateSetBom(f.Prod, BomType.ToCat);
+        f.Bom.AddVersion(cut, new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 2.5m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10), new OrderLine("120/60", 4) });
+        var r = f.Orders.CalculateDemand(o);
+        Assert.True(r.IsComplete);                         // không có BOM chủng loại nhưng BOM theo bộ phủ đủ
+        Assert.Equal(18m, r.TotalByMaterial["KHOA"]);      // 10×1 + 4×2 (theo bộ, không nhân 2 chủng loại)
+        Assert.Equal(35m, r.TotalByMaterial["VAI"]);       // 14 bộ × 2.5
+        Assert.Contains(r.Sources, s => s.Variant == DemandCalculator.SetScope && s.VariantSize == "120/60");
+        Assert.True(f.Orders.LoadSnapshot(o).Boms.All(b => b.PerSet));
+    }
+
+    [Fact]
+    public void SameType_EitherPerSetOrPerVariant_NotBoth()
+    {
+        using var f = new Fixture();
+        f.Bom.CreateBom(f.VAo, BomType.ToCat);
+        Assert.Throws<BusinessException>(() => f.Bom.CreateSetBom(f.Prod, BomType.ToCat));
+        f.Bom.CreateSetBom(f.Prod, BomType.SanXuat);
+        Assert.Throws<BusinessException>(() => f.Bom.CreateBom(f.VQuan, BomType.SanXuat));
+        Assert.Throws<BusinessException>(() => f.Bom.CreateSetBom(f.Prod, BomType.SanXuat));          // trùng → thêm phiên bản
+        Assert.Equal(f.Bom.FindSet(f.Prod, BomType.SanXuat), f.Bom.FindSet(f.Prod, BomType.SanXuat));
+        Assert.Null(f.Bom.FindSet(f.Prod, BomType.ToCat));
+    }
+
+    [Fact]
+    public void SetScope_CanBeIssuedSeparately()
+    {
+        using var f = new Fixture();
+        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        f.Bom.AddVersion(f.Bom.CreateSetBom(f.Prod, BomType.DongGoi), new DateTime(2026, 1, 1), new[] { new BomLineInput("KHOA", "*", 1m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
+        var iss = new IssueService(f.C, f.Orders, f.Stock);
+        Assert.Equal(new[] { "KHOA" }, iss.ScopeDemand(o, DemandCalculator.SetScope).Keys);
+        Assert.Equal(10m, iss.ScopeDemand(o, DemandCalculator.SetScope)["KHOA"]);
+        Assert.False(iss.ScopeDemand(o, "AO").ContainsKey("KHOA"));
+    }
+
+    [Fact]
+    public void Migration5_RenamesChungLoaiToSanXuat()
+    {
+        using var c = new SqliteConnection("Data Source=:memory:"); c.Open();
+        Db.Exec(c, "PRAGMA foreign_keys=ON;");
+        for (var i = 0; i < 4; i++) Db.Exec(c, Schema.Migrations[i]);
+        Db.Exec(c, "PRAGMA user_version=4;");
+        Db.Exec(c, @"INSERT INTO customer(id,code,name) VALUES(1,'K','K'); INSERT INTO size_grid(id,code,name) VALUES(1,'G','G');
+                     INSERT INTO product(id,customer_id,code,name,default_grid_id) VALUES(1,1,'P','P',1);
+                     INSERT INTO variant(id,product_id,code,name,qty_per_set,grid_id) VALUES(1,1,'AO','Áo','1',1);
+                     INSERT INTO bom(product_id,name,type,scope_variant_id) VALUES(1,'AO – Chủng loại','CHUNG_LOAI',1);");
+        Db.Migrate(c);
+        Assert.Equal("SAN_XUAT|AO – Sản xuất|0", Db.Scalar(c, "SELECT type||'|'||name||'|'||per_set FROM bom"));
     }
 }
 

@@ -150,3 +150,50 @@ public class BomAndCarryTests
         Assert.Equal(0m, Carry.NetDemand(5, 10));
     }
 }
+
+public class PerSetBomTests
+{
+    static readonly VariantConfig[] V = { new("AO", 1), new("QUAN", 1) };
+    static SizeMap Map() => new SizeMap().Add("AO", "110/56", "S").Add("QUAN", "110/56", "S").Add("AO", "120/60", "M").Add("QUAN", "120/60", "M");
+
+    [Fact]
+    public void PerSetBom_UsesSetsAndDefaultSize_WithOverride()
+    {
+        var boms = new[] { new Bom("DG", null, PerSet: true, Name: "Đóng gói") };
+        var lines = new[] { new BomLine("DG", "TUI", "*", 1m), new BomLine("DG", "TUI", "120/60", 2m) };
+        var r = DemandCalculator.Calculate(new[] { new OrderLine("110/56", 10), new OrderLine("120/60", 5) }, V, Map(), boms, lines);
+        Assert.True(r.IsComplete);
+        Assert.Equal(20m, r.TotalByMaterial["TUI"]);   // 10 bộ × 1 + 5 bộ × 2 (không nhân theo số chủng loại)
+        Assert.All(r.Sources, s => Assert.Equal(DemandCalculator.SetScope, s.Variant));
+        Assert.Contains(r.Sources, s => s.VariantSize == "120/60" && s.Qty == 10m);
+    }
+
+    [Fact]
+    public void PerSetAndPerVariant_Add_And_SetCoversVariantRows()
+    {
+        var boms = new[] { new Bom("CAT_BO", null, true), new Bom("SX_AO", "AO") };
+        var lines = new[] { new BomLine("CAT_BO", "VAI", "*", 2.5m), new BomLine("SX_AO", "NUT", "*", 5m) };
+        var r = DemandCalculator.Calculate(new[] { new OrderLine("110/56", 10) }, V, Map(), boms, lines);
+        Assert.True(r.IsComplete);                     // QUAN không có BOM riêng nhưng đã có BOM theo bộ
+        Assert.Equal(25m, r.TotalByMaterial["VAI"]);
+        Assert.Equal(50m, r.TotalByMaterial["NUT"]);
+    }
+
+    [Fact]
+    public void PerSetBom_MissingSize_IsIncomplete()
+    {
+        var boms = new[] { new Bom("DG", null, true, "Đóng gói") };
+        var r = DemandCalculator.Calculate(new[] { new OrderLine("110/56", 1), new OrderLine("120/60", 1) }, V, Map(), boms,
+            new[] { new BomLine("DG", "TUI", "110/56", 1m) });
+        Assert.Contains(r.Issues, i => i.Kind == IssueKind.MissingBom && i.Message.Contains("120/60"));
+    }
+
+    [Fact]
+    public void VariantBom_MissingSize_IsIncomplete_EvenIfOtherBomsCover()
+    {
+        var boms = new[] { new Bom("CAT_AO", "AO", Name: "AO – Tổ cắt"), new Bom("SX_AO", "AO", Name: "AO – Sản xuất"), new Bom("CAT_Q", "QUAN") };
+        var lines = new[] { new BomLine("CAT_AO", "VAI", "*", 1m), new BomLine("SX_AO", "NUT", "M", 5m), new BomLine("CAT_Q", "VAI", "*", 1m) };
+        var r = DemandCalculator.Calculate(new[] { new OrderLine("110/56", 1) }, V, Map(), boms, lines);
+        Assert.Contains(r.Issues, i => i.Message.Contains("AO – Sản xuất") && i.Message.Contains("size S"));
+    }
+}

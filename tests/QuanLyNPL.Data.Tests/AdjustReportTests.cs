@@ -123,7 +123,7 @@ public class ReportTests
     {
         var f = new Fixture();
         f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.ChungLoai), new DateTime(2026, 1, 1), new[] { new BomLineInput("CHI", "*", 0.5m, 10m) });
+        f.Bom.AddVersion(f.Bom.CreateBom(f.VAo, BomType.SanXuat), new DateTime(2026, 1, 1), new[] { new BomLineInput("CHI", "*", 0.5m, 10m) });
         var o = f.Orders.CreateOrder(f.Prod, "DH1", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
         return (f, o);
     }
@@ -165,7 +165,7 @@ public class ReportTests
         var det = rep.OrderDemandDetail(o).Rows;
         Assert.Equal(20m, sum["VAI"]); Assert.Equal(5.5m, sum["CHI"]);        // 10 × 0.5 × 1.1
         Assert.Equal(sum["VAI"], det.Where(r => (string)r[0]! == "VAI").Sum(r => (decimal)r[4]!));
-        Assert.Contains(det, r => (string)r[0]! == "CHI" && (string)r[1]! == "AO – Chủng loại");
+        Assert.Contains(det, r => (string)r[0]! == "CHI" && (string)r[1]! == "AO – Sản xuất");
         Assert.Contains(det, r => (string)r[0]! == "VAI" && (string)r[1]! == "QUAN – Tổ cắt");
     }
 

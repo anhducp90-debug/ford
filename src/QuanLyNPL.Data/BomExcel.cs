@@ -3,7 +3,7 @@ using ClosedXML.Excel;
 
 namespace QuanLyNPL.Data;
 
-/// <summary>Mẫu và đọc file Excel BOM của MỘT BOM (một chủng loại + một loại). Cột: material_code, size_code, usage, waste_percent. '*' là định mức nền.</summary>
+/// <summary>Mẫu và đọc file Excel BOM của MỘT BOM (theo bộ hoặc theo một chủng loại). Cột: material_code, size_code, usage, waste_percent. '*' là định mức nền.</summary>
 public static class BomExcel
 {
     public static readonly string[] Headers = { "material_code", "size_code", "usage", "waste_percent" };
@@ -14,7 +14,7 @@ public static class BomExcel
         var repo = new BomRepository(c); var info = repo.Info(bomId);
         var cust = (string)Db.Scalar(c, "SELECT code FROM customer WHERE id=$i", null, ("$i", info.CustomerId))!;
         var prod = (string)Db.Scalar(c, "SELECT code FROM product WHERE id=$i", null, ("$i", info.ProductId))!;
-        WriteTemplate(output, cust, prod, info.VariantCode, info.Name, repo.Sizes(bomId));
+        WriteTemplate(output, cust, prod, info.PerSet ? "(theo bộ – size mặc định của mã hàng)" : info.VariantCode, info.Name, repo.Sizes(bomId));
     }
 
     public static void WriteTemplate(Stream output, string customer, string product, string variant, string bomName, IEnumerable<string> sizes)

@@ -88,5 +88,13 @@ CREATE TABLE material_transfer(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQ
 CREATE TABLE material_transfer_line(id INTEGER PRIMARY KEY, transfer_id INTEGER NOT NULL REFERENCES material_transfer(id),
   from_material_id INTEGER NOT NULL REFERENCES material(id), to_material_id INTEGER NOT NULL REFERENCES material(id), qty TEXT NOT NULL);
 "
+    ,
+@"
+ALTER TABLE bom ADD COLUMN per_set INTEGER NOT NULL DEFAULT 0;
+DROP INDEX ux_bom_variant_type;
+UPDATE bom SET type='SAN_XUAT', name=replace(name,' – Chủng loại',' – Sản xuất') WHERE type='CHUNG_LOAI';
+CREATE UNIQUE INDEX ux_bom_variant_type ON bom(scope_variant_id,type) WHERE scope_variant_id IS NOT NULL AND type IN ('TO_CAT','SAN_XUAT','DONG_GOI');
+CREATE UNIQUE INDEX ux_bom_set_type ON bom(product_id,type) WHERE per_set=1;
+"
     };
 }
