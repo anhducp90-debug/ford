@@ -41,9 +41,9 @@ public class AdjustmentTests
     public void IncreaseAfterIssue_NextDraftSuggestsOnlyTheIncrease()
     {
         var (f, iss, adj, o, _) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
+        var d1 = f.IssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
         adj.Apply(o, new[] { new OrderLine("110/56", 15) }, "Tăng đơn");
-        var d2 = iss.CreateIssueDraft(o, "X2");
+        var d2 = f.IssueDraft(o, "X2");
         Assert.Equal("10", Db.Scalar(f.C, "SELECT qty_suggested FROM stock_doc_line WHERE doc_id=" + d2));
         Assert.Equal(80m, f.Stock.OnHand("VAI"));                                // phiếu đã xác nhận không bị hồi tố
     }
@@ -52,21 +52,23 @@ public class AdjustmentTests
     public void ReduceBelowIssued_WarnsAndNextDraftSuggestsZero()
     {
         var (f, iss, adj, o, _) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
+        var d1 = f.IssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
         var p = adj.Preview(o, new[] { new OrderLine("110/56", 5) });   // nhu cầu mới 10 < đã cấp 20
         Assert.Contains(p.Warnings, w => w.Contains("vượt nhu cầu mới"));
+        Assert.Contains(p.Issues, i => i.Message.Contains("Giảm giao việc trước"));          // đang giao 10 bộ cho TO1
+        f.Assign(o, new[] { new OrderLine("110/56", 5) });
         adj.Apply(o, new[] { new OrderLine("110/56", 5) }, "Giảm đơn");
-        var d2 = iss.CreateIssueDraft(o, "X2");
+        var d2 = f.IssueDraft(o, "X2");
         Assert.Equal("0", Db.Scalar(f.C, "SELECT qty_suggested FROM stock_doc_line WHERE doc_id=" + d2));
         iss.SetActual(d2, "VAI", 0m); f.Stock.Confirm(d2);                           // kho không cấp thêm
-        Assert.Equal(10m, f.Stock.CarryClosing(o, f.Cat.MaterialId("VAI"), "ALL"));   // dư 10, chờ xử lý trả/giữ/chuyển đơn
+        Assert.Equal(10m, f.Closing(o, "VAI"));   // dư 10, chờ xử lý trả/giữ/chuyển đơn
     }
 
     [Fact]
     public void Blocked_WhenDraftIssueExists_UntilDraftDeleted()
     {
         var (f, iss, adj, o, _) = Setup();
-        var d = iss.CreateIssueDraft(o, "X1");
+        var d = f.IssueDraft(o, "X1");
         Assert.False(adj.Preview(o, new[] { new OrderLine("110/56", 15) }).CanApply);
         Assert.Throws<BusinessException>(() => adj.Apply(o, new[] { new OrderLine("110/56", 15) }, "x"));
         f.Stock.DeleteDraft(d, "Làm lại");
@@ -95,14 +97,14 @@ public class AdjustmentTests
     public void RebindBom_AppliesNewVersionToRemainingDemand_WithPreview()
     {
         var (f, iss, adj, o, bom) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
+        var d1 = f.IssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
         f.AddVersionAll(bom, new DateTime(2026, 3, 1), new[] { new BomLineInput("VAI", "*", 1.5m) });
         var same = new[] { new OrderLine("110/56", 10) };
         Assert.Equal(0m, adj.Preview(o, same, rebindBom: false).Deltas.Single().Diff);
         var p = adj.Preview(o, same, rebindBom: true, asOf: new DateTime(2026, 4, 1));
         Assert.Equal(10m, p.Deltas.Single().Diff);                                // 30 − 20
         adj.Apply(o, same, "Đổi BOM", rebindBom: true, asOf: new DateTime(2026, 4, 1));
-        var d2 = iss.CreateIssueDraft(o, "X2");
+        var d2 = f.IssueDraft(o, "X2");
         Assert.Equal("10", Db.Scalar(f.C, "SELECT qty_suggested FROM stock_doc_line WHERE doc_id=" + d2));
         Assert.Contains("v2", adj.History(o).Last().BomSummary);
     }
@@ -111,7 +113,8 @@ public class AdjustmentTests
     public void ReportRowsCanDifferFromHistory_ButDoNotChangeConfirmedDocs()
     {
         var (f, iss, adj, o, _) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
+        var d1 = f.IssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 20m); f.Stock.Confirm(d1);
+        f.Assign(o, new[] { new OrderLine("110/56", 1) });
         adj.Apply(o, new[] { new OrderLine("110/56", 1) }, "Giảm mạnh");
         Assert.Equal("20", Db.Scalar(f.C, "SELECT qty FROM stock_doc_line WHERE doc_id=" + d1));
     }
@@ -201,12 +204,12 @@ public class ReportTests
         var (f, o) = Setup();
         var iss = new IssueService(f.C, f.Orders, f.Stock);
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 100m), ("CHI", 100m) }));
-        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); iss.SetActual(d, "CHI", 5.5m); f.Stock.Confirm(d);
+        var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); iss.SetActual(d, "CHI", 5.5m); f.Stock.Confirm(d);
         var bu = iss.CreateSupplement(d, "B1", new[] { ("VAI", 5m) }); f.Stock.Confirm(bu);
         var rep = Rep(f);
         Assert.Equal(3, rep.TransactionHistory(new ReportFilter(MaterialCode: "VAI")).Rows.Count);
         Assert.Equal(2, rep.TransactionHistory(new ReportFilter(OrderId: o, MaterialCode: "VAI")).Rows.Count);
-        Assert.Contains(rep.TransactionHistory(new ReportFilter(MaterialCode: "VAI")).Rows, r => (string)r[2]! == "Xuất bù");
+        Assert.Contains(rep.TransactionHistory(new ReportFilter(MaterialCode: "VAI")).Rows, r => (string)r[2]! == "Xuất bù thiếu");
         Assert.Empty(rep.TransactionHistory(new ReportFilter(From: DateTime.Today.AddDays(1))).Rows);
     }
 

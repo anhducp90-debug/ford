@@ -236,6 +236,40 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         static string Ui(DateTime d) => d.ToString("dd/MM/yyyy");
     }
 
+    /// <summary>Quyết toán NPL của đơn theo nơi nhận / phạm vi / mã NPL (dư – thiếu – đủ).</summary>
+    public ReportTable SettlementReport(long orderId)
+    {
+        var iss = new IssueService(c, orders, stock);
+        var rows = iss.Settlement(orderId).Select(s => new object?[] { s.Place, IssueScopes.Label(s.Scope), s.Material, s.MaterialName, s.Unit,
+            s.Demand, s.Issued, s.Loss, s.Returned, s.Balance, s.Conclusion }).ToList();
+        var filters = Describe(new ReportFilter(OrderId: orderId));
+        // Phần số bộ chưa giao việc cho nơi nhận nào
+        var notAssigned = IssueScopes.Types.Select(t => (t, rem: iss.Remaining(orderId, t).Where(kv => kv.Value > 0).ToList()))
+            .Where(x => x.rem.Count > 0).Select(x => $"{IssueScopes.Label(x.t)}: " + string.Join(", ", x.rem.Select(kv => $"{kv.Key} còn {AuditLog.N(kv.Value)} bộ"))).ToList();
+        if (notAssigned.Count > 0) filters.Add("Chưa giao việc – " + string.Join(" · ", notAssigned));
+        var dư = rows.Count(r => (string)r[10]! == "Dư"); var thiếu = rows.Count(r => (string)r[10]! == "Thiếu");
+        filters.Add(dư == 0 && thiếu == 0 ? "Kết luận: đã cân đối đủ" : $"Kết luận: {dư} dòng dư (phải trả kho / điều chuyển trước khi đóng), {thiếu} dòng thiếu");
+        return new("Quyết toán NPL theo đơn", filters,
+            new[] { "Nơi nhận", "Phạm vi", "Mã NPL", "Tên", "ĐVT", "Nhu cầu", "Đã cấp", "Bù hao hụt", "Trả / chuyển đi", "Số dư", "Kết luận" }, rows);
+    }
+
+    /// <summary>Hao hụt vượt định mức (xuất bù hao hụt) theo đơn / nơi nhận / mã NPL, so với nhu cầu theo định mức.</summary>
+    public ReportTable LossReport(ReportFilter f)
+    {
+        var from = f.From ?? DateTime.MinValue; var toEx = EndOfDay(f.To) ?? DateTime.MaxValue;
+        var data = Db.Query(c, @"SELECT o.order_no,COALESCE(p.name,''),l.scope,m.code,m.name,m.unit,l.demand,l.loss,l.created_at
+                                 FROM carry_ledger l JOIN ""order"" o ON o.id=l.order_id JOIN material m ON m.id=l.material_id LEFT JOIN place p ON p.id=l.place_id
+                                 WHERE ($o IS NULL OR l.order_id=$o) AND ($k IS NULL OR o.customer_id=$k)",
+            r => (order: r.GetString(0), place: r.GetString(1), scope: r.GetString(2), mat: r.GetString(3), name: r.GetString(4), unit: r.GetString(5),
+                  demand: Db.D(r.GetString(6)), loss: Db.D(r.GetString(7)), at: Db.Date(r.GetString(8))), null, ("$o", f.OrderId), ("$k", f.CustomerId));
+        var rows = data.GroupBy(x => (x.order, x.place, x.scope, x.mat, x.name, x.unit))
+            .Select(g => (g.Key, demand: g.Sum(x => x.demand), loss: g.Where(x => x.at >= from && x.at < toEx).Sum(x => x.loss)))
+            .Where(x => x.loss > 0).OrderByDescending(x => x.demand == 0 ? 0 : x.loss / x.demand)
+            .Select(x => new object?[] { x.Key.order, x.Key.place, IssueScopes.Label(x.Key.scope), x.Key.mat, x.Key.name, x.Key.unit, x.demand, x.loss,
+                x.demand == 0 ? null : Math.Round(x.loss / x.demand * 100, 2) }).ToList();
+        return new("Hao hụt vượt định mức", Describe(f), new[] { "Đơn", "Nơi nhận", "Phạm vi", "Mã NPL", "Tên", "ĐVT", "Nhu cầu theo định mức", "Bù hao hụt", "Hao hụt vượt %" }, rows);
+    }
+
     /// <summary>Nhật ký thay đổi dạng bảng báo cáo (lọc + xuất Excel/PDF).</summary>
     public ReportTable AuditReport(AuditFilter f)
     {
@@ -250,14 +284,14 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
 
     List<Txn> Txns(string? material, long? orderId, long? customerId) =>
         Db.Query(c, @"SELECT t.created_at,d.doc_no,d.type,COALESCE(d.kind,''),d.ref_doc_id,d.scope,COALESCE(k.code,''),m.code,t.qty_signed,COALESCE(o.order_no,''),
-                             COALESCE(pf.name,''),COALESCE(pt.name,''),d.note
+                             COALESCE(pf.name,''),COALESCE(pt.name,''),d.note,COALESCE(d.sub_kind,'')
                       FROM stock_txn t JOIN stock_doc d ON d.id=t.doc_id JOIN material m ON m.id=t.material_id
                       LEFT JOIN ""order"" o ON o.id=d.order_id LEFT JOIN customer k ON k.id=d.customer_id
                       LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id
                       WHERE ($m IS NULL OR m.code=$m) AND ($o IS NULL OR d.order_id=$o) AND ($k IS NULL OR m.customer_id=$k) ORDER BY t.created_at, t.id",
-            r => new Txn(Db.Date(r.GetString(0)), r.GetString(1), TypeText(r.GetString(2), !r.IsDBNull(4), r.GetString(3), r.IsDBNull(5) ? null : r.GetString(5)),
+            r => new Txn(Db.Date(r.GetString(0)), r.GetString(1), TypeText(r.GetString(2), !r.IsDBNull(4), r.GetString(3), r.IsDBNull(5) ? null : r.GetString(5), r.GetString(13)),
                 r.GetString(6), r.GetString(7), Db.D(r.GetString(8)), r.GetString(9),
-                r.IsDBNull(5) ? "" : r.GetString(5) switch { IssueService.AllScope => "Cả đơn", DemandCalculator.SetScope => "Theo bộ", var sc => "Chủng loại " + sc },
+                IssueScopes.Label(r.IsDBNull(5) ? null : r.GetString(5)),
                 r.GetString(10), r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12)),
             null, ("$m", material), ("$o", orderId), ("$k", customerId));
 
@@ -286,8 +320,8 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
 
     public static string StatusText(FulfillStatus s) => s switch { FulfillStatus.Enough => "ĐỦ NPL", FulfillStatus.Short => "THIẾU NPL", _ => "CHƯA ĐỦ DỮ LIỆU" };
 
-    static string TypeText(string t, bool bu, string kind = "", string? scope = null) => kind == TransferService.Kind ? (t == "OUT" ? "Chuyển sang khách hàng khác" : "Nhận từ khách hàng khác") : t switch
+    static string TypeText(string t, bool bu, string kind = "", string? scope = null, string sub = "") => kind == TransferService.Kind ? (t == "OUT" ? "Chuyển sang khách hàng khác" : "Nhận từ khách hàng khác") : t switch
     {
-        "IN" => "Nhập", "OUT" => bu ? "Xuất bù" : scope is not null ? "Xuất cấp phát" : "Xuất", "RETURN" => "Trả", "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => t
+        "IN" => "Nhập", "OUT" => bu ? (sub == "BU_HAO_HUT" ? "Xuất bù hao hụt" : "Xuất bù thiếu") : scope is not null ? "Xuất cấp phát" : "Xuất", "RETURN" => "Trả", "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => t
     };
 }

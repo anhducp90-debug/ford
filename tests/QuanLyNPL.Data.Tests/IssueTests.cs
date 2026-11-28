@@ -22,38 +22,38 @@ public class IssueTests
     public void Issue_FullFlow_SuggestsDemand_ConfirmsAndBalancesToZero()
     {
         var (f, iss, o) = Setup();
-        var d = iss.CreateIssueDraft(o, "X1");
+        var d = f.IssueDraft(o, "X1");
         Assert.Equal(20m, Sug(f, d));
         Assert.Equal(100m, f.Stock.OnHand("VAI"));                   // nháp không đổi tồn
         Assert.Empty(iss.SetActual(d, "VAI", 20m));
         f.Stock.Confirm(d);
         Assert.Equal(80m, f.Stock.OnHand("VAI"));
-        Assert.Equal(0m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
+        Assert.Equal(0m, f.Closing(o, "VAI"));
     }
 
     [Fact]
     public void Confirm_RequiresActualEntered_ButZeroIsAllowedAndKept()
     {
         var (f, iss, o) = Setup();
-        var d = iss.CreateIssueDraft(o, "X1");
+        var d = f.IssueDraft(o, "X1");
         Assert.Throws<BusinessException>(() => f.Stock.Confirm(d));  // chưa nhập thực cấp
         iss.SetActual(d, "VAI", 0m);
         f.Stock.Confirm(d);                                          // 0 hợp lệ, không tự thay bằng đề xuất
         Assert.Equal(100m, f.Stock.OnHand("VAI"));
-        Assert.Equal(-20m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
+        Assert.Equal(-20m, f.Closing(o, "VAI"));
     }
 
     [Fact]
     public void UnderIssue_CarriesNegative_NextDraftAddsShortfall_SupplementClearsIt()
     {
         var (f, iss, o) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1");
+        var d1 = f.IssueDraft(o, "X1");
         iss.SetActual(d1, "VAI", 15m); f.Stock.Confirm(d1);
-        Assert.Equal(-5m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
-        var d2 = iss.CreateIssueDraft(o, "X2");                      // đơn không đổi → chỉ cần bù 5
+        Assert.Equal(-5m, f.Closing(o, "VAI"));
+        var d2 = f.IssueDraft(o, "X2");                      // đơn không đổi → chỉ cần bù 5
         Assert.Equal(5m, Sug(f, d2));
         iss.SetActual(d2, "VAI", 5m); f.Stock.Confirm(d2);
-        Assert.Equal(0m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
+        Assert.Equal(0m, f.Closing(o, "VAI"));
         Assert.Equal(80m, f.Stock.OnHand("VAI"));
     }
 
@@ -61,14 +61,14 @@ public class IssueTests
     public void OverIssue_CarriesPositive_ReducesFutureDemand()
     {
         var (f, iss, o) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1");
+        var d1 = f.IssueDraft(o, "X1");
         var w = iss.SetActual(d1, "VAI", 25m);
         Assert.Contains(w, x => x.Contains("vượt đề xuất"));
         f.Stock.Confirm(d1);
-        Assert.Equal(5m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
+        Assert.Equal(5m, f.Closing(o, "VAI"));
         // đơn tăng lên 20 bộ → nhu cầu 40; đã tính 20, kỳ mới 20, trừ dư 5 → đề xuất 15
         Db.Exec(f.C, "UPDATE order_line SET sets_qty='20' WHERE order_id=" + o);
-        var d2 = iss.CreateIssueDraft(o, "X2");
+        var d2 = f.IssueDraft(o, "X2");
         Assert.Equal(15m, Sug(f, d2));
     }
 
@@ -76,35 +76,16 @@ public class IssueTests
     public void Carry_ReadsLatestClosing_NotSumOfHistory()
     {
         var (f, iss, o) = Setup();
-        var d1 = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 15m); f.Stock.Confirm(d1);   // -5
-        var d2 = iss.CreateIssueDraft(o, "X2"); iss.SetActual(d2, "VAI", 5m); f.Stock.Confirm(d2);    // 0
-        Assert.Equal(0m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));   // SUM(closing) sẽ ra -5
-    }
-
-    [Fact]
-    public void DuplicateDraft_Blocked_AndScopesNotMixed()
-    {
-        var (f, iss, o) = Setup();
-        iss.CreateIssueDraft(o, "X1");
-        Assert.Throws<BusinessException>(() => iss.CreateIssueDraft(o, "X2"));
-        var (f2, iss2, o2) = Setup();
-        var d = iss2.CreateIssueDraft(o2, "Y1", "AO"); iss2.SetActual(d, "VAI", 10m); f2.Stock.Confirm(d);
-        Assert.Throws<BusinessException>(() => iss2.CreateIssueDraft(o2, "Y2", IssueService.AllScope));
-    }
-
-    [Fact]
-    public void VariantScope_OnlyDemandOfThatVariant()
-    {
-        var (f, iss, o) = Setup();
-        Assert.Equal(10m, iss.ScopeDemand(o, "AO")["VAI"]);
-        Assert.Equal(10m, iss.ScopeDemand(o, "QUAN")["VAI"]);
+        var d1 = f.IssueDraft(o, "X1"); iss.SetActual(d1, "VAI", 15m); f.Stock.Confirm(d1);   // -5
+        var d2 = f.IssueDraft(o, "X2"); iss.SetActual(d2, "VAI", 5m); f.Stock.Confirm(d2);    // 0
+        Assert.Equal(0m, f.Closing(o, "VAI"));   // SUM(closing) sẽ ra -5
     }
 
     [Fact]
     public void Issue_BlockedWhenStockInsufficient_AndNothingWritten()
     {
         var (f, iss, o) = Setup(stockIn: 10m);
-        var d = iss.CreateIssueDraft(o, "X1");
+        var d = f.IssueDraft(o, "X1");
         var w = iss.SetActual(d, "VAI", 20m);
         Assert.Contains(w, x => x.Contains("tồn khả dụng"));
         Assert.Throws<BusinessException>(() => f.Stock.Confirm(d));
@@ -117,20 +98,20 @@ public class IssueTests
     {
         using var f = new Fixture();
         var o = f.Orders.CreateOrder(f.Prod, "D", DateTime.Now, new[] { new OrderLine("110/56", 1) });   // chưa có BOM
-        Assert.Throws<BusinessException>(() => new IssueService(f.C, f.Orders, f.Stock).CreateIssueDraft(o, "X"));
+        Assert.Throws<BusinessException>(() => f.IssueDraft(o, "X"));
     }
 
     [Fact]
     public void Return_IncreasesStockAndReducesIssued_Once()
     {
         var (f, iss, o) = Setup();
-        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 20m); f.Stock.Confirm(d);   // tồn 80
-        var r = iss.CreateReturn(o, "R1", new[] { ("VAI", 6m) });
+        var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 20m); f.Stock.Confirm(d);   // tồn 80
+        var r = f.Return(o, "R1", new[] { ("VAI", 6m) });
         f.Stock.Confirm(r);
         Assert.Equal(86m, f.Stock.OnHand("VAI"));                                    // tăng tồn đúng 1 lần
-        Assert.Equal(-6m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));            // giảm lượng đã cấp
-        Assert.Equal(14m, f.Stock.CarryIssued(o, Mid(f, "VAI"), "ALL"));
-        var tooMuch = iss.CreateReturn(o, "R2", new[] { ("VAI", 15m) });
+        Assert.Equal(-6m, f.Closing(o, "VAI"));            // giảm lượng đã cấp
+        Assert.Equal(14m, f.Issued(o, "VAI"));
+        var tooMuch = f.Return(o, "R2", new[] { ("VAI", 15m) });
         Assert.Throws<BusinessException>(() => f.Stock.Confirm(tooMuch));
         Assert.Equal(86m, f.Stock.OnHand("VAI"));
     }
@@ -139,13 +120,13 @@ public class IssueTests
     public void Supplement_LinksToOriginal_AndOnlyAfterConfirm()
     {
         var (f, iss, o) = Setup();
-        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m);
+        var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m);
         Assert.Throws<BusinessException>(() => iss.CreateSupplement(d, "B1", new[] { ("VAI", 5m) }));   // gốc chưa xác nhận
         f.Stock.Confirm(d);
         var b = iss.CreateSupplement(d, "B1", new[] { ("VAI", 5m) });
         f.Stock.Confirm(b);
         Assert.Equal(80m, f.Stock.OnHand("VAI"));
-        Assert.Equal(0m, f.Stock.CarryClosing(o, Mid(f, "VAI"), "ALL"));
+        Assert.Equal(0m, f.Closing(o, "VAI"));
         Assert.Equal(d, (long)Db.Scalar(f.C, "SELECT ref_doc_id FROM stock_doc WHERE id=" + b)!);
     }
 
@@ -154,7 +135,7 @@ public class IssueTests
     {
         var (f, iss, o) = Setup();
         f.Stock.Reserve(o, "VAI", 20m);
-        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 20m); f.Stock.Confirm(d);
+        var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 20m); f.Stock.Confirm(d);
         Assert.Equal(0m, f.Stock.ReservedForOthers("VAI", null));
     }
 

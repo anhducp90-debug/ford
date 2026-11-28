@@ -29,6 +29,24 @@ public class Fixture : IDisposable
         return ids;
     }
 
+    // ---- Cấp phát theo nơi nhận (mặc định nơi nhận TO1, phạm vi cả bộ NPL) ----
+    public long Place(string code)
+    {
+        var id = Db.Scalar(C, "SELECT id FROM place WHERE code=$c", null, ("$c", code));
+        return id is null ? new PlaceService(C).Add(code, "Tổ " + code, PlaceKind.CaHai) : Convert.ToInt64(id);
+    }
+    public IssueService Iss => new(C, Orders, Stock);
+    public void Assign(long o, IReadOnlyList<OrderLine> sets, string place = "TO1", string scope = IssueScopes.All) => Iss.SetAssignment(o, Place(place), scope, sets);
+    /// <summary>Giao toàn bộ đơn cho nơi nhận rồi lập phiếu xuất nháp.</summary>
+    public long IssueDraft(long o, string no, string place = "TO1", string scope = IssueScopes.All)
+    {
+        Assign(o, Orders.LoadLines(o), place, scope);
+        return Iss.CreateIssueDraft(o, Place(place), scope, no);
+    }
+    public decimal Closing(long o, string mat, string place = "TO1", string scope = IssueScopes.All) => Stock.CarryClosing(o, Cat.MaterialId(mat), scope, Place(place));
+    public decimal Issued(long o, string mat, string place = "TO1", string scope = IssueScopes.All) => Stock.CarryIssued(o, Cat.MaterialId(mat), scope, Place(place));
+    public long Return(long o, string no, (string, decimal)[] lines, string place = "TO1", string scope = IssueScopes.All) => Iss.CreateReturn(o, Place(place), scope, no, lines);
+
     public void AddVersionAll(long[] ids, DateTime createdAt, BomLineInput[] lines)
     { foreach (var id in ids) Bom.AddVersion(id, createdAt, lines); }
     public void Dispose() => C.Dispose();

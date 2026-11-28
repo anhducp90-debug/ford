@@ -115,5 +115,25 @@ ALTER TABLE audit_log ADD COLUMN ref_text TEXT;
 CREATE INDEX ix_audit_time ON audit_log(created_at);
 CREATE INDEX ix_txn_doc ON stock_txn(doc_id);
 "
+    ,
+@"
+-- Cân đối cấp phát theo NƠI NHẬN: khóa sổ = đơn + nơi nhận + phạm vi (loại BOM) + mã NPL.
+ALTER TABLE stock_doc ADD COLUMN issue_place_id INTEGER REFERENCES place(id);
+ALTER TABLE stock_doc ADD COLUMN sub_kind TEXT;
+ALTER TABLE carry_ledger ADD COLUMN place_id INTEGER REFERENCES place(id);
+ALTER TABLE carry_ledger ADD COLUMN loss TEXT NOT NULL DEFAULT '0';
+ALTER TABLE carry_ledger ADD COLUMN surplus_transfer_id INTEGER;
+CREATE INDEX ix_carry_key ON carry_ledger(order_id,material_id,scope,place_id);
+CREATE TABLE assignment(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES ""order""(id), place_id INTEGER NOT NULL REFERENCES place(id),
+  scope TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(order_id,place_id,scope));
+CREATE TABLE assignment_line(id INTEGER PRIMARY KEY, assignment_id INTEGER NOT NULL REFERENCES assignment(id), size_code TEXT NOT NULL, sets TEXT NOT NULL,
+  UNIQUE(assignment_id,size_code));
+CREATE TABLE surplus_transfer(id INTEGER PRIMARY KEY, doc_no TEXT NOT NULL UNIQUE,
+  from_order_id INTEGER NOT NULL REFERENCES ""order""(id), from_place_id INTEGER REFERENCES place(id), from_scope TEXT NOT NULL,
+  to_order_id INTEGER NOT NULL REFERENCES ""order""(id), to_place_id INTEGER NOT NULL REFERENCES place(id), to_scope TEXT NOT NULL,
+  reason TEXT, created_at TEXT NOT NULL);
+CREATE TABLE surplus_transfer_line(id INTEGER PRIMARY KEY, transfer_id INTEGER NOT NULL REFERENCES surplus_transfer(id),
+  material_id INTEGER NOT NULL REFERENCES material(id), qty TEXT NOT NULL);
+"
     };
 }

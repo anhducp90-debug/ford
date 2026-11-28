@@ -163,19 +163,6 @@ public class PerSetBomDataTests
     }
 
     [Fact]
-    public void SetScope_CanBeIssuedSeparately()
-    {
-        using var f = new Fixture();
-        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
-        f.Bom.AddVersion(f.Bom.CreateSetBom(f.Prod, BomType.DongGoi), new DateTime(2026, 1, 1), new[] { new BomLineInput("KHOA", "*", 1m) });
-        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });
-        var iss = new IssueService(f.C, f.Orders, f.Stock);
-        Assert.Equal(new[] { "KHOA" }, iss.ScopeDemand(o, DemandCalculator.SetScope).Keys);
-        Assert.Equal(10m, iss.ScopeDemand(o, DemandCalculator.SetScope)["KHOA"]);
-        Assert.False(iss.ScopeDemand(o, "AO").ContainsKey("KHOA"));
-    }
-
-    [Fact]
     public void Migration5_RenamesChungLoaiToSanXuat()
     {
         using var c = new SqliteConnection("Data Source=:memory:"); c.Open();

@@ -7,7 +7,7 @@ namespace QuanLyNPL.Data;
 public sealed record SnapshotVariant(string Code, decimal QtyPerSet);
 public sealed record SnapshotMap(string Variant, string DefaultSize, string VariantSize);
 public sealed record SnapshotBomLine(string Material, string Size, decimal Usage, decimal Waste, string? Variant);
-public sealed record SnapshotBom(string Id, string Name, string? ScopeVariant, long? VersionId, int? VersionNo, List<SnapshotBomLine> Lines, bool PerSet = false);
+public sealed record SnapshotBom(string Id, string Name, string? ScopeVariant, long? VersionId, int? VersionNo, List<SnapshotBomLine> Lines, bool PerSet = false, string? Type = null);
 public sealed record OrderSnapshot(List<SnapshotVariant> Variants, List<SnapshotMap> Maps, List<SnapshotBom> Boms);
 
 public sealed class OrderService(SqliteConnection c)
@@ -69,20 +69,20 @@ public sealed class OrderService(SqliteConnection c)
         var maps = variants.SelectMany(v => gridSizes.Select(s => new SnapshotMap(v.code, s, s))).ToList();
 
         var boms = new List<SnapshotBom>();
-        var bomRows = Db.Query(c, "SELECT id,name,scope_variant_id,per_set FROM bom WHERE product_id=$p ORDER BY id",
-            r => (id: r.GetInt64(0), name: r.GetString(1), scope: r.IsDBNull(2) ? (long?)null : r.GetInt64(2), perSet: r.GetInt32(3) == 1), null, ("$p", productId));
+        var bomRows = Db.Query(c, "SELECT id,name,scope_variant_id,per_set,COALESCE(type,'') FROM bom WHERE product_id=$p ORDER BY id",
+            r => (id: r.GetInt64(0), name: r.GetString(1), scope: r.IsDBNull(2) ? (long?)null : r.GetInt64(2), perSet: r.GetInt32(3) == 1, type: r.GetString(4)), null, ("$p", productId));
         foreach (var b in bomRows)
         {
             var versions = Db.Query(c, "SELECT id,version_no,created_at FROM bom_version WHERE bom_id=$b",
                 r => (id: r.GetInt64(0), no: r.GetInt32(1), at: Db.Date(r.GetString(2))), null, ("$b", b.id));
             var pick = BomVersioning.Pick(versions.Select(v => new BomVersion(b.id.ToString(), v.no, v.at)), orderDate);
             var scope = b.scope is long s ? code[s] : null;
-            if (pick is null) { boms.Add(new(b.id.ToString(), b.name, scope, null, null, new(), b.perSet)); continue; }
+            if (pick is null) { boms.Add(new(b.id.ToString(), b.name, scope, null, null, new(), b.perSet, b.type)); continue; }
             var vid = versions.First(v => v.no == pick.VersionNo).id;
             var lines = Db.Query(c, "SELECT m.code,l.size_code,l.usage,l.waste_percent,l.variant_id FROM bom_line l JOIN material m ON m.id=l.material_id WHERE l.bom_version_id=$v",
                 r => new SnapshotBomLine(r.GetString(0), r.GetString(1), Db.D(r.GetString(2)), Db.D(r.GetString(3)),
                     r.IsDBNull(4) ? null : code[r.GetInt64(4)]), null, ("$v", vid));
-            boms.Add(new(b.id.ToString(), b.name, scope, vid, pick.VersionNo, lines, b.perSet));
+            boms.Add(new(b.id.ToString(), b.name, scope, vid, pick.VersionNo, lines, b.perSet, b.type));
         }
         return new(variants.Select(v => new SnapshotVariant(v.code, v.qty)).ToList(), maps, boms);
     }

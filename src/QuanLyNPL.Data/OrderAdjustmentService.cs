@@ -37,6 +37,17 @@ public sealed class OrderAdjustmentService(SqliteConnection c, OrderService orde
             warnings.Add($"{d.Material}: đã cấp {d.Issued} vượt nhu cầu mới {d.After}. Cần xử lý phần dư bằng trả kho, giữ lại hoặc chuyển đơn.");
         var drafts = DraftIssueCount(orderId);
         var issues = after.Issues.ToList();
+        // Không giảm đơn dưới số bộ đã giao việc cho các nơi nhận (giảm giao việc trước).
+        var newSets = newLines.ToDictionary(l => l.DefaultSize, l => l.Sets);
+        var assigned = new IssueService(c, orders, stock).Assignments(orderId);
+        foreach (var t in IssueScopes.Types)
+            foreach (var size in assigned.SelectMany(a => a.Sets.Keys).Distinct())
+            {
+                var sum = assigned.Where(a => IssueScopes.Covers(a.Scope, t)).Sum(a => a.Sets.GetValueOrDefault(size));
+                if (sum > newSets.GetValueOrDefault(size))
+                    issues.Add(new(IssueKind.InvalidData, $"Size {size}: đã giao việc {AuditLog.N(sum)} bộ ({IssueScopes.Label(t)}) nhiều hơn số bộ mới {AuditLog.N(newSets.GetValueOrDefault(size))}. Giảm giao việc trước."));
+            }
+        issues = issues.DistinctBy(i => i.Message).ToList();
         if (drafts > 0) issues.Add(new(IssueKind.InvalidData, "Đơn có phiếu xuất nháp chưa xác nhận: xác nhận hoặc hủy phiếu nháp trước khi điều chỉnh."));
         return new(deltas, warnings, issues, issues.Count == 0);
     }
@@ -93,8 +104,8 @@ public sealed class OrderAdjustmentService(SqliteConnection c, OrderService orde
     }
 
     Dictionary<string, decimal> IssuedByMaterial(long orderId) =>
-        Db.Query(c, "SELECT m.code,l.issued FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o",
-            r => (code: r.GetString(0), q: Db.D(r.GetString(1))), null, ("$o", orderId))
+        Db.Query(c, "SELECT m.code,l.issued,l.loss FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o",
+            r => (code: r.GetString(0), q: Db.D(r.GetString(1)) - Db.D(r.GetString(2))), null, ("$o", orderId))
           .GroupBy(x => x.code).ToDictionary(g => g.Key, g => g.Sum(x => x.q));
 
     long DraftIssueCount(long orderId) =>

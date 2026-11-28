@@ -54,10 +54,11 @@ public sealed class StockService(SqliteConnection c)
     public void Confirm(long docId)
     {
         using var tx = c.BeginTransaction(deferred: false);   // BEGIN IMMEDIATE: khóa ghi, tránh 2 phiếu cùng dùng 1 lượng tồn
-        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id,kind,doc_no FROM stock_doc WHERE id=$i",
+        var doc = Db.Query(c, "SELECT type,status,order_id,scope,ref_doc_id,kind,doc_no,issue_place_id,COALESCE(sub_kind,'') FROM stock_doc WHERE id=$i",
             r => (type: r.GetString(0), status: r.GetString(1), order: r.IsDBNull(2) ? (long?)null : r.GetInt64(2),
                   scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: r.IsDBNull(4) ? (long?)null : r.GetInt64(4),
-                  kind: r.IsDBNull(5) ? null : r.GetString(5), no: r.GetString(6)), tx, ("$i", docId)).SingleOrDefault();
+                  kind: r.IsDBNull(5) ? null : r.GetString(5), no: r.GetString(6), place: r.IsDBNull(7) ? (long?)null : r.GetInt64(7),
+                  sub: r.GetString(8)), tx, ("$i", docId)).SingleOrDefault();
         if (doc == default) throw new BusinessException("Phiếu không tồn tại.");
         if (doc.kind == TransferService.Kind) throw new BusinessException("Phiếu chuyển NPL giữa khách hàng phải xác nhận ở chức năng Chuyển NPL.");
         if (doc.status != "DRAFT") throw new BusinessException("Phiếu đã được xác nhận.");
@@ -86,8 +87,8 @@ public sealed class StockService(SqliteConnection c)
         if (isReturn)
             foreach (var l in lines)
             {
-                var net = CarryIssued(doc.order!.Value, l.id, doc.scope!, tx);
-                if (l.qty > net) throw new BusinessException($"Trả {l.code} vượt lượng đã cấp cho đơn (đã cấp {net}, trả {l.qty}).");
+                var net = CarryIssued(doc.order!.Value, l.id, doc.scope!, doc.place, tx);
+                if (l.qty > net) throw new BusinessException($"Trả {l.code} vượt lượng nơi nhận này đã nhận (đã nhận {AuditLog.N(net)}, trả {AuditLog.N(l.qty)}).");
             }
 
         var now = Db.Date(DateTime.Now);
@@ -98,12 +99,14 @@ public sealed class StockService(SqliteConnection c)
         if (isIssue || isSupplement || isReturn)
             foreach (var l in lines)
             {
-                var opening = CarryClosing(doc.order!.Value, l.id, doc.scope!, tx);
+                // Khóa sổ = đơn + nơi nhận + phạm vi + mã NPL: số dư nơi nhận này không dùng cho nơi nhận khác.
+                var opening = CarryClosing(doc.order!.Value, l.id, doc.scope!, doc.place, tx);
                 var issued = isReturn ? -l.qty : l.qty;
-                var demand = isIssue ? l.demand : 0m;     // bù/trả không tạo nhu cầu mới
-                Db.Exec(c, "INSERT INTO carry_ledger(order_id,material_id,scope,opening,issued,demand,closing,doc_id,created_at) VALUES($o,$m,$s,$op,$i,$d,$cl,$doc,$t)", tx,
-                    ("$o", doc.order), ("$m", l.id), ("$s", doc.scope), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$d", Db.D(demand)),
-                    ("$cl", Db.D(opening + issued - demand)), ("$doc", docId), ("$t", now));
+                var demand = isIssue ? l.demand : 0m;                                   // bù/trả không tạo nhu cầu mới
+                var loss = isSupplement && doc.sub == "BU_HAO_HUT" ? l.qty : 0m;        // bù hao hụt = tiêu hao, không làm số dư dương
+                Db.Exec(c, "INSERT INTO carry_ledger(order_id,material_id,scope,place_id,opening,issued,demand,loss,closing,doc_id,created_at) VALUES($o,$m,$s,$p,$op,$i,$d,$l,$cl,$doc,$t)", tx,
+                    ("$o", doc.order), ("$m", l.id), ("$s", doc.scope), ("$p", doc.place), ("$op", Db.D(opening)), ("$i", Db.D(issued)), ("$d", Db.D(demand)), ("$l", Db.D(loss)),
+                    ("$cl", Db.D(opening + issued - demand - loss)), ("$doc", docId), ("$t", now));
             }
         if (sign < 0 && doc.order is not null)   // lượng đã cấp thực tế tiêu thụ phần giữ kho của chính đơn
             foreach (var l in lines.Where(l => l.qty > 0)) ConsumeReservation(doc.order.Value, l.id, l.qty, tx);
@@ -111,7 +114,7 @@ public sealed class StockService(SqliteConnection c)
         Db.Exec(c, "UPDATE stock_doc SET status='CONFIRMED', confirmed_at=$t WHERE id=$i", tx, ("$t", now), ("$i", docId));
         AuditLog.Write(c, "stock_doc", "Xác nhận", doc.no, null,
             string.Join("; ", lines.Select(l => $"{l.code} {AuditLog.Signed(sign * l.qty)}")),
-            doc.type switch { "IN" => "Nhập kho", "RETURN" => "Trả NPL", "OUT" => isIssue ? "Xuất cấp phát" : isSupplement ? "Xuất bù" : "Xuất kho", "ADJUST_UP" => "Điều chỉnh tăng", _ => "Điều chỉnh giảm" },
+            doc.type switch { "IN" => "Nhập kho", "RETURN" => "Trả NPL", "OUT" => isIssue ? "Xuất cấp phát" : isSupplement ? (doc.sub == "BU_HAO_HUT" ? "Xuất bù hao hụt" : "Xuất bù thiếu") : "Xuất kho", "ADJUST_UP" => "Điều chỉnh tăng", _ => "Điều chỉnh giảm" },
             docId, tx);
         tx.Commit();
     }
@@ -126,25 +129,28 @@ public sealed class StockService(SqliteConnection c)
         }
     }
 
-    /// <summary>Số dư cuối của bản ghi MỚI NHẤT trong đúng phạm vi (không SUM).</summary>
-    public decimal CarryClosing(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
-        Db.Query(c, "SELECT closing FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s ORDER BY id DESC LIMIT 1",
-            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).FirstOrDefault();
+    // Khóa sổ cân đối: (đơn, mã NPL, phạm vi, nơi nhận). placeId null = sổ cũ trước khi cân đối theo nơi nhận.
+    const string Key = "order_id=$o AND material_id=$m AND scope=$s AND place_id IS $p";
 
-    /// <summary>Tổng nhu cầu đã được tính vào sổ (cộng các nhu cầu theo kỳ, không phải số dư).</summary>
-    public decimal CarryAccountedDemand(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
-        Db.Query(c, "SELECT demand FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
-            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
+    /// <summary>Số dư cuối của bản ghi MỚI NHẤT trong đúng nơi nhận + phạm vi (không SUM).</summary>
+    public decimal CarryClosing(long orderId, long materialId, string scope, long? placeId, SqliteTransaction? tx = null) =>
+        Db.Query(c, $"SELECT closing FROM carry_ledger WHERE {Key} ORDER BY id DESC LIMIT 1",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope), ("$p", placeId)).FirstOrDefault();
 
-    /// <summary>Lượng đã cấp ròng cho đơn trên mọi phạm vi (cấp + bù − trả).</summary>
+    /// <summary>Tổng nhu cầu đã được tính vào sổ của nơi nhận + phạm vi (cộng các nhu cầu theo kỳ, không phải số dư).</summary>
+    public decimal CarryAccountedDemand(long orderId, long materialId, string scope, long? placeId, SqliteTransaction? tx = null) =>
+        Db.Query(c, $"SELECT demand FROM carry_ledger WHERE {Key}",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope), ("$p", placeId)).Sum();
+
+    /// <summary>Lượng đã cấp ròng cho đơn trên mọi nơi nhận (cấp + bù thiếu − trả, không tính phần bù hao hụt đã tiêu hao).</summary>
     public decimal IssuedNet(long orderId, string materialCode) =>
-        Db.Query(c, "SELECT l.issued FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o AND m.code=$c",
-            r => Db.D(r.GetString(0)), null, ("$o", orderId), ("$c", materialCode)).Sum();
+        Db.Query(c, "SELECT l.issued,l.loss FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o AND m.code=$c",
+            r => Db.D(r.GetString(0)) - Db.D(r.GetString(1)), null, ("$o", orderId), ("$c", materialCode)).Sum();
 
-    /// <summary>Lượng đã cấp ròng cho đơn (cấp + bù − trả).</summary>
-    public decimal CarryIssued(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
-        Db.Query(c, "SELECT issued FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
-            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
+    /// <summary>Lượng một nơi nhận đã nhận ròng (cấp + bù − trả − chuyển đi) – giới hạn cho phiếu trả.</summary>
+    public decimal CarryIssued(long orderId, long materialId, string scope, long? placeId, SqliteTransaction? tx = null) =>
+        Db.Query(c, $"SELECT issued FROM carry_ledger WHERE {Key}",
+            r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope), ("$p", placeId)).Sum();
 
     /// <summary>Hủy phiếu nháp (chưa phát sinh giao dịch nên được xóa; có ghi nhật ký). Phiếu đã xác nhận thì không xóa.</summary>
     public void DeleteDraft(long docId, string reason)

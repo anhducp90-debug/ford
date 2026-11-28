@@ -11,7 +11,7 @@ public static class VoucherPdf
     public static string Title(DocRow d) => d.Kind == TransferService.Kind ? (d.Type == "OUT" ? "PHIẾU XUẤT KHO (CHUYỂN NPL)" : "PHIẾU NHẬP KHO (NHẬN CHUYỂN NPL)") : d.Type switch
     {
         "IN" => "PHIẾU NHẬP KHO", "RETURN" => "PHIẾU NHẬP KHO (TRẢ NPL)",
-        "OUT" => d.RefDocId is not null ? "PHIẾU XUẤT KHO (XUẤT BÙ)" : d.Scope is not null ? "PHIẾU XUẤT KHO (CẤP PHÁT NPL)" : "PHIẾU XUẤT KHO",
+        "OUT" => d.RefDocId is not null ? (d.SubKind == "BU_HAO_HUT" ? "PHIẾU XUẤT KHO (BÙ HAO HỤT)" : "PHIẾU XUẤT KHO (BÙ THIẾU)") : d.Scope is not null ? "PHIẾU XUẤT KHO (CẤP PHÁT NPL)" : "PHIẾU XUẤT KHO",
         "ADJUST_UP" => "PHIẾU ĐIỀU CHỈNH TĂNG", "ADJUST_DOWN" => "PHIẾU ĐIỀU CHỈNH GIẢM", _ => "CHỨNG TỪ KHO"
     };
 
@@ -29,7 +29,7 @@ public static class VoucherPdf
         var isIssue = d.Type == "OUT" && d.Scope is not null && d.RefDocId is null;
         var date = d.ConfirmedAt ?? d.CreatedAt;
         var isIn = d.Type is "IN" or "RETURN" or "ADJUST_UP";
-        string Scope(string? s) => s switch { null => "", IssueService.AllScope => "Cả đơn", Core.DemandCalculator.SetScope => "Theo bộ", _ => "Chủng loại " + s };
+        string Scope(string? s) => IssueScopes.Label(s) + (d.IssuePlace.Length > 0 ? " · nơi nhận cấp phát: " + d.IssuePlace : "");
 
         QuestPDF.Settings.License = LicenseType.Community;
         QuestPDF.Settings.CheckIfAllTextGlyphsAreAvailable = false;

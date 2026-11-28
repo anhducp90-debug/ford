@@ -103,15 +103,15 @@ public class OperationTests
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 10m) }));
         f.Stock.Reserve(o, "VAI", 2m);
         var iss = new IssueService(f.C, f.Orders, f.Stock);
-        var d = iss.CreateIssueDraft(o, "X1");
+        var d = f.IssueDraft(o, "X1");
         Assert.Throws<BusinessException>(() => f.Orders.SetStatus(o, open: false));      // còn phiếu nháp
         f.Stock.DeleteDraft(d, "x");
         f.Orders.SetStatus(o, open: false);
         Assert.Empty(new Queries(f.C).Reservations(o));
-        Assert.Throws<BusinessException>(() => iss.CreateIssueDraft(o, "X2"));
+        Assert.Throws<BusinessException>(() => f.IssueDraft(o, "X2"));
         Assert.Throws<BusinessException>(() => f.Stock.Reserve(o, "VAI", 1m));
         f.Orders.SetStatus(o, open: true);
-        iss.CreateIssueDraft(o, "X3");
+        f.IssueDraft(o, "X3");
     }
 
     [Fact]
@@ -249,7 +249,7 @@ public class PlaceTests
         f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
         f.Stock.Confirm(d);
         var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 2) });
-        var px = new IssueService(f.C, f.Orders, f.Stock).CreateIssueDraft(o, "PX1");
+        var px = f.IssueDraft(o, "PX1");
         p.SetDocPlaces(px, kho, toCat);
         var ms2 = new MemoryStream(); VoucherPdf.Generate(f.C, px, ms2);
         Assert.True(ms2.Length > 1000);
@@ -276,7 +276,7 @@ public class IssuedCountsTowardsDemandTests
         f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 20m) }));
         Assert.Equal(FulfillStatus.Enough, f.Stock.CheckOrder(o, f.Orders).Status);
         var iss = new IssueService(f.C, f.Orders, f.Stock);
-        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); f.Stock.Confirm(d);   // tồn còn 5, đã cấp 15
+        var d = f.IssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); f.Stock.Confirm(d);   // tồn còn 5, đã cấp 15
         var r = f.Stock.CheckOrder(o, f.Orders);
         Assert.Equal(FulfillStatus.Enough, r.Status);                     // 20 − 15 đã cấp − 5 tồn = 0
         Assert.Equal(15m, r.Lines.Single().Issued);

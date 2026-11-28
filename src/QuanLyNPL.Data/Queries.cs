@@ -12,7 +12,7 @@ public sealed record BomVersionRow(long Id, int No, DateTime CreatedAt);
 public sealed record BomLineRow(string Material, string MaterialName, string Size, decimal Usage, decimal Waste);
 public sealed record OrderRow(long Id, string No, long CustomerId, string CustomerCode, long ProductId, string ProductCode, DateTime OrderDate, DateTime? DueDate, string Status, decimal TotalSets);
 public sealed record DocRow(long Id, string Type, string DocNo, string Status, long? OrderId, string OrderNo, string CustomerCode, string? Scope, string? Kind, long? RefDocId, DateTime CreatedAt, DateTime? ConfirmedAt, string? Note,
-    long? FromPlaceId = null, string FromPlace = "", long? ToPlaceId = null, string ToPlace = "");
+    long? FromPlaceId = null, string FromPlace = "", long? ToPlaceId = null, string ToPlace = "", long? IssuePlaceId = null, string IssuePlace = "", string? SubKind = null);
 public sealed record PlaceRow(long Id, string Code, string Name, string? Address, string Kind, bool Active);
 public sealed record DocLineRow(string Material, string MaterialName, string Unit, decimal Qty, decimal? Suggested, bool Entered);
 public sealed record CountRow(long Id, string DocNo, string Status, string CustomerCode, string? Reason, DateTime CreatedAt);
@@ -28,7 +28,8 @@ public sealed record AuditRow(DateTime At, string Entity, long? EntityId, string
 
 /// <summary>Lọc nhật ký: khoảng ngày (tính hết ngày Đến), nhóm, từ khóa (tìm trong đối tượng, thao tác, trước/sau, lý do).</summary>
 public sealed record AuditFilter(DateTime? From = null, DateTime? To = null, string? Entity = null, string? Keyword = null, int Limit = 100000);
-public sealed record CarryRow(string OrderNo, string Material, string Scope, decimal Opening, decimal Issued, decimal Demand, decimal Closing, string DocNo, DateTime At);
+public sealed record CarryRow(string OrderNo, string Material, string Scope, decimal Opening, decimal Issued, decimal Demand, decimal Closing, string DocNo, DateTime At,
+    string Place = "", decimal Loss = 0m);
 public sealed record ReservationRow(long Id, string OrderNo, string Material, decimal Qty);
 
 /// <summary>Truy vấn danh sách cho giao diện (chỉ đọc).</summary>
@@ -92,12 +93,12 @@ public sealed class Queries(SqliteConnection c)
 
     public List<DocRow> Docs(string? type = null, long? orderId = null, string? status = null) =>
         Db.Query(c, @"SELECT d.id,d.type,d.doc_no,d.status,d.order_id,COALESCE(o.order_no,''),COALESCE(k.code,''),d.scope,d.kind,d.ref_doc_id,d.created_at,d.confirmed_at,d.note,
-                        d.from_place_id,COALESCE(pf.name,''),d.to_place_id,COALESCE(pt.name,'')
+                        d.from_place_id,COALESCE(pf.name,''),d.to_place_id,COALESCE(pt.name,''),d.issue_place_id,COALESCE(pi.name,''),d.sub_kind
                       FROM stock_doc d LEFT JOIN ""order"" o ON o.id=d.order_id LEFT JOIN customer k ON k.id=d.customer_id
-                      LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id
+                      LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id LEFT JOIN place pi ON pi.id=d.issue_place_id
                       WHERE ($t IS NULL OR d.type=$t) AND ($o IS NULL OR d.order_id=$o) AND ($s IS NULL OR d.status=$s) ORDER BY d.id DESC",
             r => new DocRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetString(6), OptStr(r, 7), OptStr(r, 8), OptLong(r, 9),
-                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12), OptLong(r, 13), r.GetString(14), OptLong(r, 15), r.GetString(16)), null, ("$t", type), ("$o", orderId), ("$s", status));
+                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12), OptLong(r, 13), r.GetString(14), OptLong(r, 15), r.GetString(16), OptLong(r, 17), r.GetString(18), OptStr(r, 19)), null, ("$t", type), ("$o", orderId), ("$s", status));
 
     /// <summary>Nơi xuất / nơi nhận. forFrom: lấy nơi dùng làm "nơi xuất" (XUAT, CA_HAI); forFrom=false: "nơi nhận" (NHAN, CA_HAI).</summary>
     public List<PlaceRow> Places(bool? forFrom = null, bool activeOnly = false) =>
@@ -141,24 +142,34 @@ public sealed class Queries(SqliteConnection c)
             .Where(a => entities is null || entities.Contains(a.Entity)).ToList();
     }
 
-    public List<CarryRow> Carry(long? orderId = null) =>
-        Db.Query(c, @"SELECT o.order_no,m.code,l.scope,l.opening,l.issued,l.demand,l.closing,COALESCE(d.doc_no,''),l.created_at FROM carry_ledger l
+    public List<CarryRow> Carry(long? orderId = null, long? placeId = null) =>
+        Db.Query(c, @"SELECT o.order_no,m.code,l.scope,l.opening,l.issued,l.demand,l.closing,COALESCE(d.doc_no,st.doc_no,''),l.created_at,COALESCE(p.name,''),l.loss FROM carry_ledger l
                       JOIN ""order"" o ON o.id=l.order_id JOIN material m ON m.id=l.material_id LEFT JOIN stock_doc d ON d.id=l.doc_id
-                      WHERE ($o IS NULL OR l.order_id=$o) ORDER BY l.id DESC",
-            r => new CarryRow(r.GetString(0), r.GetString(1), r.GetString(2), Db.D(r.GetString(3)), Db.D(r.GetString(4)), Db.D(r.GetString(5)), Db.D(r.GetString(6)), r.GetString(7), Db.Date(r.GetString(8))),
-            null, ("$o", orderId));
+                      LEFT JOIN surplus_transfer st ON st.id=l.surplus_transfer_id LEFT JOIN place p ON p.id=l.place_id
+                      WHERE ($o IS NULL OR l.order_id=$o) AND ($p IS NULL OR l.place_id=$p) ORDER BY l.id DESC",
+            r => new CarryRow(r.GetString(0), r.GetString(1), r.GetString(2), Db.D(r.GetString(3)), Db.D(r.GetString(4)), Db.D(r.GetString(5)), Db.D(r.GetString(6)), r.GetString(7), Db.Date(r.GetString(8)),
+                r.GetString(9), Db.D(r.GetString(10))),
+            null, ("$o", orderId), ("$p", placeId));
 
     public List<ReservationRow> Reservations(long? orderId = null) =>
         Db.Query(c, @"SELECT r.id,o.order_no,m.code,r.qty FROM reservation r JOIN ""order"" o ON o.id=r.order_id JOIN material m ON m.id=r.material_id
                       WHERE r.active=1 AND ($o IS NULL OR r.order_id=$o) ORDER BY o.order_no,m.code",
             r => new ReservationRow(r.GetInt64(0), r.GetString(1), r.GetString(2), Db.D(r.GetString(3))), null, ("$o", orderId));
 
+    public List<(long Id, string DocNo, string From, string To, string Reason, DateTime At)> SurplusTransfers(long? orderId = null) =>
+        Db.Query(c, @"SELECT t.id,t.doc_no,fo.order_no||' / '||COALESCE(fp.name,'')||' / '||t.from_scope,too.order_no||' / '||tp.name||' / '||t.to_scope,COALESCE(t.reason,''),t.created_at
+                      FROM surplus_transfer t JOIN ""order"" fo ON fo.id=t.from_order_id JOIN ""order"" too ON too.id=t.to_order_id
+                      LEFT JOIN place fp ON fp.id=t.from_place_id JOIN place tp ON tp.id=t.to_place_id
+                      WHERE ($o IS NULL OR t.from_order_id=$o OR t.to_order_id=$o) ORDER BY t.id DESC",
+            r => (r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), Db.Date(r.GetString(5))), null, ("$o", orderId));
+
     /// <summary>Số phiếu kế tiếp theo tiền tố, ví dụ NK-0001 (xét phiếu kho, kiểm kê, chuyển và đơn hàng).</summary>
     public string NextNo(string prefix)
     {
         var like = prefix + "-%";
         var nums = Db.Query(c, @"SELECT doc_no FROM stock_doc WHERE doc_no LIKE $l UNION ALL SELECT doc_no FROM stock_count WHERE doc_no LIKE $l
-                                 UNION ALL SELECT doc_no FROM material_transfer WHERE doc_no LIKE $l UNION ALL SELECT order_no FROM ""order"" WHERE order_no LIKE $l",
+                                 UNION ALL SELECT doc_no FROM material_transfer WHERE doc_no LIKE $l UNION ALL SELECT order_no FROM ""order"" WHERE order_no LIKE $l
+                                 UNION ALL SELECT doc_no FROM surplus_transfer WHERE doc_no LIKE $l",
             r => r.GetString(0), null, ("$l", like));
         var max = nums.Select(n => n[(prefix.Length + 1)..]).Select(t => new string(t.TakeWhile(char.IsDigit).ToArray()))
                       .Select(t => int.TryParse(t, out var v) ? v : 0).DefaultIfEmpty(0).Max();
