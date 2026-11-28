@@ -103,21 +103,29 @@ input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
 <script>
 // ---------- Dữ liệu mẫu ----------
 const DEF_SIZES=["110/56","110/60","120/60","130/64"];
-const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"S M L XL"}];
+const PRODUCTS={"MH-2204":{n:"Bộ đồng phục",k:"KH01",grid:"G_VOC – Vóc/Chiều cao"},"MH-1180":{n:"Áo khoác",k:"KH02",grid:"G_SML – S M L XL"}};
+const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"S M L XL",p:"MH-2204"}];
+const VARS_ALL=VARIANTS.concat([{c:"AK_XAM",n:"Áo khoác xám",g:"Áo",k:1,grid:"S M L XL",p:"MH-1180"}]);
+const vName=c=>VARS_ALL.find(v=>v.c===c).n;
+const BT={TO_CAT:"Tổ cắt",CHUNG_LOAI:"Chủng loại",DONG_GOI:"Đóng gói"};
 const MAP={AO_DO:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},AO_XANH:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},QUAN_DEN:{"110/56":"S","110/60":"M","120/60":"M","130/64":"L"}};
 const CUSTS={KH01:"Công ty Hoàng Long",KH02:"May xuất khẩu Đại Phát"};
 // [tên, ĐVT, tồn, đã giữ, khách hàng] — mỗi NPL thuộc đúng một khách hàng
 const MATS={VAI_DO:["Vải đỏ","m",180,0,"KH01"],VAI_XANH:["Vải xanh","m",150,0,"KH01"],VAI_DEN:["Vải đen","m",160,20,"KH01"],CHI:["Chỉ may","cuộn",4,0,"KH01"],NUT:["Nút","cái",800,0,"KH01"],KHOA:["Khóa kéo","cái",500,0,"KH01"],NHAN:["Nhãn chính","cái",300,0,"KH01"],
- KH2_KAKI:["Vải kaki","m",90,0,"KH02"],KH2_CHI:["Chỉ may KH02","cuộn",6,0,"KH02"]};
-// BOM đã chọn phiên bản theo ngày lập đơn. size '*' = nền; size cụ thể ghi đè nền cùng (BOM, NPL).
+ KH2_KAKI:["Vải kaki","m",90,0,"KH02"],KH2_CHI:["Chỉ may KH02","cuộn",6,0,"KH02"],KH2_VAI_DO:["Vải đỏ (mã KH02)","m",0,0,"KH02"]};
+// BOM khai báo theo CHỦNG LOẠI + LOẠI (Tổ cắt / Chủng loại / Đóng gói); đã chọn phiên bản theo ngày lập đơn.
+// size '*' = nền; size cụ thể ghi đè nền cùng NPL trong cùng BOM.
 const BOMS=[
- {id:"BOM cắt",ver:"v2 (12/03/2026)",scope:null,lines:[
-  {m:"VAI_DO",s:"*",u:1.2,w:3,v:"AO_DO"},{m:"VAI_DO",s:"M",u:1.3,w:3,v:"AO_DO"},{m:"VAI_DO",s:"L",u:1.4,w:3,v:"AO_DO"},
-  {m:"VAI_XANH",s:"*",u:1.2,w:3,v:"AO_XANH"},{m:"VAI_XANH",s:"M",u:1.3,w:3,v:"AO_XANH"},{m:"VAI_XANH",s:"L",u:1.4,w:3,v:"AO_XANH"},
-  {m:"VAI_DEN",s:"*",u:1,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"S",u:.95,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"M",u:1.05,w:3,v:"QUAN_DEN"},{m:"VAI_DEN",s:"L",u:1.15,w:3,v:"QUAN_DEN"}]},
- {id:"BOM phụ liệu",ver:"v1 (02/03/2026)",scope:null,lines:[
-  {m:"CHI",s:"*",u:.02,w:0,v:null},{m:"NHAN",s:"*",u:1,w:0,v:null},{m:"NUT",s:"*",u:5,w:0,v:"AO_DO"},{m:"NUT",s:"*",u:5,w:0,v:"AO_XANH"},{m:"KHOA",s:"*",u:1,w:0,v:"QUAN_DEN"}]}];
-const st={screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock",custFilter:"",matMsg:""};
+ {v:"AO_DO",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_DO",s:"*",u:1.2,w:3},{m:"VAI_DO",s:"M",u:1.3,w:3},{m:"VAI_DO",s:"L",u:1.4,w:3}]},
+ {v:"AO_XANH",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_XANH",s:"*",u:1.2,w:3},{m:"VAI_XANH",s:"M",u:1.3,w:3},{m:"VAI_XANH",s:"L",u:1.4,w:3}]},
+ {v:"QUAN_DEN",t:"TO_CAT",ver:"v1 (05/01/2026)",lines:[{m:"VAI_DEN",s:"*",u:1,w:3},{m:"VAI_DEN",s:"S",u:.95,w:3},{m:"VAI_DEN",s:"M",u:1.05,w:3},{m:"VAI_DEN",s:"L",u:1.15,w:3}]},
+ {v:"AO_DO",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
+ {v:"AO_XANH",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
+ {v:"QUAN_DEN",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"KHOA",s:"*",u:1,w:0}]},
+ {v:"AO_DO",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]},
+ {v:"AO_XANH",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]},
+ {v:"QUAN_DEN",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]}];
+const st={bomV:"AO_DO",bomT:"TO_CAT",varP:"MH-2204",tr:{from:"KH01",to:"KH02",lines:[{f:"VAI_DO",t:"KH2_VAI_DO",q:20}],done:false},screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock",custFilter:"",matMsg:""};
 const fmt=(n,d=2)=>Number(n).toLocaleString("vi-VN",{minimumFractionDigits:d,maximumFractionDigits:d});
 const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 
@@ -125,18 +133,18 @@ const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 function breakdown(sets=st.sets){const acc={};for(const ds of DEF_SIZES){const q=+sets[ds]||0;for(const v of VARIANTS){const t=MAP[v.c][ds];const k=v.c+"|"+t;acc[k]=(acc[k]||0)+q*v.k}}
   return Object.entries(acc).map(([k,q])=>{const[v,s]=k.split("|");return{v,s,q}})}
 function demand(sets=st.sets){const rows=breakdown(sets),src=[];
-  for(const r of rows){for(const b of BOMS){const ls=b.lines.filter(l=>l.v===null||l.v===r.v);
+  for(const r of rows){for(const b of BOMS.filter(b=>b.v===r.v)){const ls=b.lines;
     for(const m of [...new Set(ls.map(l=>l.m))]){const g=ls.filter(l=>l.m===m);const sp=g.filter(l=>l.s===r.s);const ch=sp.length?sp:g.filter(l=>l.s==="*");
-      for(const l of ch)src.push({bom:b.id,v:r.v,s:r.s,m,q:r.q*l.u*(1+l.w/100),u:l.u,w:l.w,base:l.s==="*"})}}}
+      for(const l of ch)src.push({bom:vName(b.v)+" – "+BT[b.t],v:r.v,s:r.s,m,q:r.q*l.u*(1+l.w/100),u:l.u,w:l.w,base:l.s==="*"})}}}
   const tot={};src.forEach(x=>tot[x.m]=(tot[x.m]||0)+x.q);Object.keys(tot).forEach(k=>tot[k]=r2(tot[k]));return{rows,src,tot}}
 function avail(d){return Object.keys(d.tot).sort().map(m=>{const[,,oh,rs]=MATS[m];const av=oh-rs;return{m,need:d.tot[m],oh,rs,av,short:Math.max(0,r2(d.tot[m]-av))}})}
 
 // ---------- Khung ----------
 const MODULES=[
  {id:"admin",t:"Quản trị",items:[["backup","Sao lưu / Phục hồi"],["security","Bảo mật & khóa PIN"],["audit","Nhật ký thay đổi"]]},
- {id:"decl",t:"Khai báo",items:[["cust","Khách hàng"],["mat","Nguyên phụ liệu"],["grid","Lưới size"],["product","Mã hàng & chủng loại"],["bom","BOM & định mức"],["order","Đơn hàng"],["adjust","Điều chỉnh đơn"]]},
+ {id:"decl",t:"Khai báo",items:[["cust","Khách hàng"],["mat","Nguyên phụ liệu"],["grid","Lưới size"],["product","Mã hàng"],["variant","Chủng loại & quy đổi size"],["bom","BOM & định mức"],["order","Đơn hàng"],["adjust","Điều chỉnh đơn"]]},
  {id:"in",t:"Nhập kho",items:[["recv","Phiếu nhập"],["count","Kiểm kê & điều chỉnh tồn"]]},
- {id:"out",t:"Xuất kho",items:[["check","Kiểm tra đáp ứng"],["issue","Phiếu xuất (cấp phát)"],["ret","Trả NPL & xuất bù"],["carry","Cân đối cấp phát"]]},
+ {id:"out",t:"Xuất kho",items:[["check","Kiểm tra đáp ứng"],["issue","Phiếu xuất (cấp phát)"],["ret","Trả NPL & xuất bù"],["transfer","Chuyển NPL giữa khách hàng"],["carry","Cân đối cấp phát"]]},
  {id:"rep",t:"Báo cáo",items:[["report:stock","Tồn hiện tại"],["report:inout","Nhập – xuất – tồn"],["report:demand","Nhu cầu theo đơn"],["report:short","Cảnh báo thiếu"],["report:fulfil","Đáp ứng đơn hàng"],["report:hist","Lịch sử giao dịch"],["report:cfg","Lịch sử cấu hình"]]}];
 const curKey=()=>st.screen==="report"?"report:"+st.reportKind:st.screen;
 const curMod=()=>MODULES.find(m=>m.items.some(i=>i[0]===curKey()))||MODULES[1];
@@ -156,8 +164,8 @@ const VIEWS={
 order(){return `<h1>Đơn hàng</h1><p class="sub">Nhập số bộ theo size mặc định; hệ thống tự phân rã theo chủng loại và quy đổi size.</p>
  <div class="bar"><button class="btn primary" data-t="Đã lưu đơn và chụp cấu hình (snapshot)">Lưu đơn</button><button class="btn" data-t="Mở màn Điều chỉnh đơn: xem chênh lệch nhu cầu trước khi lưu">Điều chỉnh đơn…</button><button class="btn" data-t="Lịch sử cấu hình: v1 Lập đơn 02/04/2026">Lịch sử cấu hình</button></div>
  <div class="grid2"><div class="panel"><h3>Thông tin đơn</h3>
-  <table><tr><td class="hint">Khách hàng</td><td><select><option>KH01 – Công ty Hoàng Long</option></select></td></tr>
-  <tr><td class="hint">Mã hàng</td><td><select><option>MH-2204 – Bộ đồng phục</option></select></td></tr>
+  <table><tr><td class="hint">Mã hàng <span class="warnline">*</span></td><td><select aria-label="Mã hàng"><option>MH-2204 – Bộ đồng phục</option></select></td></tr>
+  <tr><td class="hint">Khách hàng</td><td><span class="chip muted">KH01 – Công ty Hoàng Long</span> <span class="tag">theo mã hàng</span></td></tr>
   <tr><td class="hint">Số đơn</td><td>DH-0412</td></tr><tr><td class="hint">Ngày đặt</td><td>02/04/2026</td></tr></table>
   <h3 style="margin-top:14px">Số bộ theo size mặc định <span class="tag">(lưới Vóc/Chiều cao)</span></h3>
   <table><tr><th>Size</th><th class="n">Số bộ</th></tr>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td class="n"><input type="number" min="0" data-ds="${s}" value="${st.sets[s]}" aria-label="Số bộ size ${s}"></td></tr>`).join("")}
@@ -176,13 +184,13 @@ recv(){return `<h1>Phiếu nhập kho</h1><p class="sub">Phiếu nháp không đ
  <div class="grid2"><div class="panel"><h3>Danh sách phiếu</h3><table><thead><tr><th>Số phiếu</th><th>Ngày</th><th>Trạng thái</th></tr></thead>
   <tr class="sel"><td>NK-0231</td><td>12/04/2026</td><td><span class="chip muted">Nháp</span></td></tr><tr><td>NK-0230</td><td>02/04/2026</td><td><span class="chip ok">Đã xác nhận</span></td></tr><tr><td>NK-0229</td><td>28/03/2026</td><td><span class="chip ok">Đã xác nhận</span></td></tr></table>
   <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Mô hình: tạo phiếu nhập mới">Tạo phiếu nhập</button></div></div>
- <div class="panel"><h3>NK-0231 <span class="chip muted">Nháp</span></h3><div class="bar"><label for="rCust">Khách hàng</label><select id="rCust" style="max-width:200px"><option>KH01 – Công ty Hoàng Long</option><option>KH02 – May xuất khẩu Đại Phát</option></select><input type="text" placeholder="Ghi chú / nguồn" aria-label="Ghi chú" style="max-width:200px"></div><p class="hint">Danh sách NPL khi thêm dòng chỉ gồm NPL của khách hàng đã chọn.</p>
+ <div class="panel"><h3>NK-0231 <span class="chip muted">Nháp</span></h3><div class="bar"><label for="rCust">Khách hàng</label><select id="rCust" style="max-width:200px"><option>KH01 – Công ty Hoàng Long</option><option>KH02 – May xuất khẩu Đại Phát</option></select><input type="text" placeholder="Ghi chú / nguồn" aria-label="Ghi chú" style="max-width:200px"></div><p class="hint">Mỗi phiếu thuộc một khách hàng; danh sách NPL khi thêm dòng chỉ gồm NPL của khách hàng đã chọn.</p>
   <table><thead><tr><th>Mã NPL</th><th>Tên</th><th class="n">Số lượng</th><th>ĐVT</th></tr></thead>
   <tr><td>CHI</td><td>Chỉ may</td><td class="n"><input type="number" value="12" aria-label="Số lượng CHI"></td><td>cuộn</td></tr><tr><td>NUT</td><td>Nút</td><td class="n"><input type="number" value="600" aria-label="Số lượng NUT"></td><td>cái</td></tr></table>
   <p class="hint">Số lượng phải dương; mã NPL phải đang sử dụng; không có lô, màu, quy cách.</p>
   <div class="bar" style="margin-top:6px"><button class="btn primary" data-t="Đã xác nhận nhập: tồn CHI +12, NUT +600">Xác nhận nhập</button><button class="btn">Thêm dòng</button><button class="btn danger" data-t="Đã hủy phiếu nháp (ghi nhật ký)">Hủy phiếu nháp</button></div></div></div>`},
 count(){return `<h1>Kiểm kê & điều chỉnh tồn</h1><p class="sub">Đối chiếu tồn sổ với số thực đếm theo mã NPL. Không có lô, màu, quy cách.</p>
- <div class="panel"><h3>Phiếu kiểm kê KK-0008 <span class="chip muted">Nháp</span></h3><div class="scroll"><table><thead><tr><th>Mã NPL</th><th class="n">Tồn sổ</th><th class="n">Thực đếm</th><th class="n">Chênh lệch</th><th>Điều chỉnh sẽ tạo</th></tr></thead>
+ <div class="panel"><h3>Phiếu kiểm kê KK-0008 <span class="chip muted">Nháp</span></h3><div class="bar"><label for="kCust">Khách hàng <span class="warnline">*</span></label><select id="kCust" style="max-width:220px"><option>KH01 – Công ty Hoàng Long</option><option>KH02 – May xuất khẩu Đại Phát</option></select><span class="hint">Mỗi phiếu kiểm kê thuộc một khách hàng.</span></div><div class="scroll"><table><thead><tr><th>Mã NPL</th><th class="n">Tồn sổ</th><th class="n">Thực đếm</th><th class="n">Chênh lệch</th><th>Điều chỉnh sẽ tạo</th></tr></thead>
   <tr><td>VAI_DO</td><td class="n">180,00</td><td class="n"><input type="number" value="176" aria-label="Thực đếm VAI_DO"></td><td class="n"><span class="chip warn">−4,00</span></td><td>Điều chỉnh giảm</td></tr>
   <tr><td>KHOA</td><td class="n">500,00</td><td class="n"><input type="number" value="500" aria-label="Thực đếm KHOA"></td><td class="n"><span class="chip ok">0,00</span></td><td>–</td></tr>
   <tr><td>NHAN</td><td class="n">300,00</td><td class="n"><input type="number" value="312" aria-label="Thực đếm NHAN"></td><td class="n"><span class="chip ok">+12,00</span></td><td>Điều chỉnh tăng</td></tr></table></div>
@@ -198,23 +206,44 @@ mat(){const rows=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.c
  <div class="bar"><label for="fCust">Lọc theo khách hàng</label><select id="fCust" style="max-width:230px"><option value="">Tất cả khách hàng</option>${Object.keys(CUSTS).map(c=>`<option value="${c}" ${st.custFilter===c?"selected":""}>${c} – ${CUSTS[c]}</option>`).join("")}</select><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:200px"></div>
  <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th>Khách hàng</th><th>ĐVT</th><th class="n">Tồn thực tế</th><th class="n">Đã giữ</th><th>Trạng thái</th></tr></thead><tbody>${rows.map(([c,[n,u,oh,rs,k]])=>`<tr><td>${c}</td><td>${n}</td><td>${k}</td><td>${u}</td><td class="n">${fmt(oh)}</td><td class="n">${fmt(rs)}</td><td><span class="chip ok">Đang dùng</span></td></tr>`).join("")}</tbody></table></div>
  <p class="hint">NPL đã dùng trong BOM hoặc giao dịch kho thì không đổi khách hàng. NPL cũ chưa gán khách hàng sẽ hiện cảnh báo cho tới khi được gán.</p>`},
-product(){return `<h1>Mã hàng & chủng loại</h1><p class="sub">MH-2204 · khách KH01 · lưới size mặc định: Vóc/Chiều cao (4 size)</p>
- <div class="grid2"><div class="panel"><h3>Cấu thành một bộ</h3><table><thead><tr><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th><th>Lưới</th></tr></thead>${VARIANTS.map(v=>`<tr><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td><td>${v.grid}</td></tr>`).join("")}</table>
-  <p class="hint">Nhóm Áo/Quần chỉ là thuộc tính phân loại, không gộp các chủng loại.</p></div>
- <div class="panel scroll"><h3>Bảng quy đổi size mặc định → size chủng loại</h3><table><thead><tr><th>Size mặc định</th>${VARIANTS.map(v=>`<th>${v.n}</th>`).join("")}</tr></thead>
+product(){return `<h1>Mã hàng</h1><p class="sub">Khai báo mã hàng: chọn khách hàng sở hữu và lưới size mặc định (dùng để nhập đơn).</p>
+ <div class="panel" style="margin-bottom:14px"><h3>Khai báo mã hàng</h3><div class="bar">
+  <label for="pCust">Khách hàng <span class="warnline">*</span></label><select id="pCust" style="max-width:230px"><option value="">— Chọn khách hàng —</option>${Object.entries(CUSTS).map(([c,n])=>`<option value="${c}">${c} – ${n}</option>`).join("")}</select>
+  <label for="pCode">Mã <span class="warnline">*</span></label><input type="text" id="pCode" style="max-width:120px"><label for="pName">Tên <span class="warnline">*</span></label><input type="text" id="pName" style="max-width:170px">
+  <label for="pGrid">Lưới mặc định <span class="warnline">*</span></label><select id="pGrid" style="max-width:190px"><option>G_VOC – Vóc/Chiều cao</option><option>G_SML – S M L XL</option></select>
+  <button class="btn primary" id="pSave">Lưu mã hàng</button></div><div id="pMsg" class="warnline"></div></div>
+ <div class="scroll"><table><thead><tr><th>Mã hàng</th><th>Tên</th><th>Khách hàng</th><th>Lưới mặc định</th><th class="n">Chủng loại</th></tr></thead><tbody>
+ ${Object.entries(PRODUCTS).map(([c,p])=>`<tr><td>${c}</td><td>${p.n}</td><td>${p.k}</td><td>${p.grid}</td><td class="n">${VARS_ALL.filter(v=>v.p===c).length}</td></tr>`).join("")}</tbody></table></div>`},
+variant(){const p=PRODUCTS[st.varP];const vs=VARS_ALL.filter(v=>v.p===st.varP);
+ return `<h1>Chủng loại & quy đổi size</h1><p class="sub">Chọn mã hàng; chủng loại tự thuộc khách hàng của mã hàng. Nhóm Áo/Quần chỉ để phân loại, không gộp chủng loại.</p>
+ <div class="panel" style="margin-bottom:14px"><h3>Khai báo chủng loại</h3><div class="bar">
+  <label for="vProd">Mã hàng <span class="warnline">*</span></label><select id="vProd" style="max-width:230px">${Object.entries(PRODUCTS).map(([c,x])=>`<option value="${c}" ${st.varP===c?"selected":""}>${c} – ${x.n}</option>`).join("")}</select>
+  <span class="chip muted">Khách hàng: ${p.k} – ${CUSTS[p.k]}</span><span class="tag">tự gán theo mã hàng</span></div>
+  <div class="bar"><label for="vCode">Mã <span class="warnline">*</span></label><input type="text" id="vCode" style="max-width:110px"><label for="vName">Tên <span class="warnline">*</span></label><input type="text" id="vName" style="max-width:150px">
+  <label for="vGroup">Nhóm</label><select id="vGroup" style="max-width:100px"><option>Áo</option><option>Quần</option><option>Khác</option></select>
+  <label for="vQty">SL/bộ <span class="warnline">*</span></label><input type="number" id="vQty" value="1" min="1" style="max-width:70px">
+  <label for="vGrid">Lưới size <span class="warnline">*</span></label><select id="vGrid" style="max-width:150px"><option>G_SML – S M L XL</option><option>G_VOC – Vóc/Chiều cao</option></select>
+  <button class="btn primary" data-t="Mô hình: đã lưu chủng loại cho ${st.varP} (khách hàng ${p.k})">Lưu chủng loại</button></div></div>
+ <div class="grid2"><div class="panel"><h3>Cấu thành một bộ – ${st.varP}</h3><table><thead><tr><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th><th>Lưới</th></tr></thead>${vs.map(v=>`<tr><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td><td>${v.grid}</td></tr>`).join("")}</table></div>
+ <div class="panel scroll"><h3>Quy đổi size mặc định → size chủng loại</h3>${st.varP==="MH-2204"?`<table><thead><tr><th>Size mặc định</th>${VARIANTS.map(v=>`<th>${v.n}</th>`).join("")}</tr></thead>
   ${DEF_SIZES.map(s=>`<tr><td>${s}</td>${VARIANTS.map(v=>`<td><select aria-label="${v.n} ${s}">${["S","M","L","XL"].map(z=>`<option ${MAP[v.c][s]===z?"selected":""}>${z}</option>`).join("")}</select></td>`).join("")}</tr>`).join("")}</table>
-  <p class="hint">Nhiều size mặc định có thể về cùng một size (ví dụ 110/56 và 110/60 đều là áo S). Thiếu quy đổi thì chặn xác nhận đơn.</p></div></div>`},
-grid(){return `<h1>Lưới size</h1><p class="sub">Khai báo một lần, dùng chung. Lưới đã dùng không sửa cấu trúc; tạo lưới mới rồi gán lại.</p>
+  <p class="hint">Nhiều size mặc định có thể về cùng một size (110/56 và 110/60 đều là áo S). Thiếu quy đổi thì chặn xác nhận đơn.</p>`:`<p class="hint">Mã hàng dùng lưới S M L XL cho cả đơn và chủng loại: quy đổi mặc định S→S, M→M…</p>`}</div></div>`},
+grid(){return `<h1>Lưới size</h1><p class="sub">Khai báo một lần, dùng chung cho mọi khách hàng và mã hàng. Lưới đã dùng không sửa cấu trúc; tạo lưới mới rồi gán lại.</p>
  <div class="grid2"><div class="panel"><h3>Danh sách lưới</h3><table><thead><tr><th>Mã</th><th>Tên</th><th>Dùng bởi</th></tr></thead>
   <tr><td>G_VOC</td><td>Vóc / Chiều cao</td><td><span class="chip warn">Đã dùng</span> 1 mã hàng</td></tr><tr><td>G_SML</td><td>S M L XL</td><td><span class="chip warn">Đã dùng</span> 3 chủng loại</td></tr><tr><td>G_VOC_2</td><td>Vóc / Chiều cao v2</td><td><span class="chip ok">Chưa dùng</span></td></tr></table>
   <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Đã sao chép G_VOC thành G_VOC_2 để chỉnh sửa">Sao chép thành lưới mới</button></div></div>
  <div class="panel"><h3>G_VOC – Vóc / Chiều cao <span class="chip warn">Khóa cấu trúc</span></h3><table><thead><tr><th>Size</th><th>Vóc</th><th>Chiều cao</th></tr></thead>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td>${s.split("/")[0]}</td><td>${s.split("/")[1]}</td></tr>`).join("")}</table></div></div>`},
-bom(){return `<h1>BOM & định mức</h1><p class="sub">MH-2204 · mỗi lần lưu tạo phiên bản mới; đơn lấy phiên bản có ngày tạo muộn nhất không muộn hơn ngày lập đơn.</p>
- <div class="bar"><select aria-label="BOM" style="max-width:200px"><option>BOM cắt</option><option>BOM phụ liệu</option></select><select aria-label="Phiên bản" style="max-width:200px"><option>v2 – 12/03/2026</option><option>v1 – 05/01/2026</option></select>
-  <button class="btn" data-t="Mô hình: tải file mẫu Excel (BOM, HƯỚNG DẪN, DANH SÁCH SIZE)">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button></div>
- <div class="scroll"><table><thead><tr><th>Chủng loại</th><th>Mã NPL</th><th>Size</th><th class="n">Định mức</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
- ${BOMS[0].lines.map(l=>`<tr><td>${VARIANTS.find(v=>v.c===l.v).n}</td><td>${l.m}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>
- <p class="hint">Chỉ chọn được NPL của khách hàng sở hữu mã hàng (KH01). Dòng size cụ thể thay thế dòng nền '*' cho đúng NPL và chủng loại đó; hai dòng không cộng chồng.</p>`},
+bom(){const v=VARS_ALL.find(x=>x.c===st.bomV);const p=PRODUCTS[v.p];const b=BOMS.find(x=>x.v===st.bomV&&x.t===st.bomT);
+ return `<h1>BOM & định mức</h1><p class="sub">Chọn chủng loại (mã hàng và khách hàng tự gán), rồi tích loại BOM. Mỗi chủng loại có tối đa một BOM mỗi loại; đổi định mức thì tạo phiên bản mới.</p>
+ <div class="panel" style="margin-bottom:14px"><div class="bar"><label for="bVar">Chủng loại <span class="warnline">*</span></label><select id="bVar" style="max-width:260px">${Object.keys(PRODUCTS).map(pc=>`<optgroup label="${pc} – ${PRODUCTS[pc].n}">${VARS_ALL.filter(x=>x.p===pc).map(x=>`<option value="${x.c}" ${st.bomV===x.c?"selected":""}>${x.n}</option>`).join("")}</optgroup>`).join("")}</select>
+  <span class="chip muted">Mã hàng: ${v.p}</span><span class="chip muted">Khách hàng: ${p.k}</span><span class="chip muted">Lưới: ${v.grid}</span></div>
+  <div class="bar" role="radiogroup" aria-label="Loại BOM"><span class="hint">Loại BOM <span class="warnline">*</span></span>${Object.entries(BT).map(([k,t])=>`<label class="btn ${st.bomT===k?"primary":""}"><input type="radio" name="bType" value="${k}" ${st.bomT===k?"checked":""} style="margin:0 6px 0 0">${t}</label>`).join("")}</div></div>
+ ${b?`<div class="bar"><select aria-label="Phiên bản" style="max-width:200px"><option>${b.ver}</option></select>
+  <button class="btn" data-t="Mô hình: tải file mẫu cho ${vName(st.bomV)} – ${BT[st.bomT]} (size theo lưới chủng loại, NPL của ${p.k})">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button><button class="btn" data-t="Mô hình: tạo phiên bản mới">Tạo phiên bản mới</button></div>
+ <div class="scroll"><table><thead><tr><th>Mã NPL</th><th>Tên</th><th>Size</th><th class="n">Định mức</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
+ ${b.lines.map(l=>`<tr><td>${l.m}</td><td>${MATS[l.m][0]}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>`
+ :`<div class="banner warn">Chủng loại ${v.n} chưa có BOM ${BT[st.bomT]}. <button class="btn primary" data-t="Mô hình: đã tạo BOM ${vName(st.bomV)} – ${BT[st.bomT]}">Tạo BOM</button></div>`}
+ <p class="hint">Danh sách NPL chỉ gồm NPL của khách hàng ${p.k}; size chỉ gồm size trong lưới của chủng loại và '*'. Dòng size cụ thể thay thế dòng nền '*' cho cùng NPL; hai dòng không cộng chồng.</p>`},
 report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["inout","Nhập – xuất – tồn"],["demand","Nhu cầu theo đơn"],["short","Cảnh báo thiếu"],["fulfil","Đáp ứng đơn hàng"],["hist","Lịch sử giao dịch"],["cfg","Lịch sử cấu hình"]];
  const d=demand(),a=avail(d);let body="";
  const ml=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.custFilter);
@@ -223,7 +252,7 @@ report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["ino
  if(k==="demand")body=tbl(["Mã NPL","Tên","Tổng nhu cầu"],Object.entries(d.tot).sort().map(([m,q])=>[m,MATS[m][0],fmt(q)]),[2]);
  if(k==="short")body=tbl(["Mã NPL","Nhu cầu","Khả dụng","Thiếu"],a.filter(x=>x.short>0).map(x=>[x.m,fmt(x.need),fmt(x.av),fmt(x.short)]),[1,2,3]);
  if(k==="fulfil")body=tbl(["Số đơn","Khách hàng","Mã hàng","Trạng thái","Mã NPL thiếu"],[["DH-0412","KH01","MH-2204",a.some(x=>x.short>0)?"THIẾU NPL":"ĐỦ NPL",a.filter(x=>x.short>0).map(x=>x.m).join(", ")],["DH-0409","KH02","MH-1180","ĐỦ NPL",""],["DH-0398","KH01","MH-2204","CHƯA ĐỦ DỮ LIỆU","(thiếu BOM size L)"]],[]);
- if(k==="hist")body=tbl(["Thời gian","Số phiếu","Loại","Mã NPL","Số lượng"],[["02/04/2026 08:12","NK-0230","Nhập","VAI_DO",fmt(180)],["03/04/2026 09:40","PX-0090","Xuất","VAI_DO",fmt(-60)],["04/04/2026 10:05","PX-0090B","Xuất bù","VAI_DO",fmt(-5)],["05/04/2026 14:30","TR-0012","Trả","VAI_DO",fmt(6)]],[4]);
+ if(k==="hist")body=tbl(["Thời gian","Số phiếu","Loại","Mã NPL","Số lượng"],[["02/04/2026 08:12","NK-0230","Nhập","VAI_DO",fmt(180)],["03/04/2026 09:40","PX-0090","Xuất","VAI_DO",fmt(-60)],["04/04/2026 10:05","PX-0090B","Xuất bù","VAI_DO",fmt(-5)],["05/04/2026 14:30","TR-0012","Trả","VAI_DO",fmt(6)],["10/04/2026 09:00","CH-0004-X","Chuyển sang khách hàng khác","VAI_DO",fmt(-20)],["10/04/2026 09:00","CH-0004-N","Nhận từ khách hàng khác","KH2_VAI_DO",fmt(20)]],[4]);
  if(k==="cfg")body=tbl(["Phiên bản","Thời điểm","Lý do","BOM áp dụng"],[["1","02/04/2026 08:30","Lập đơn","BOM cắt v2; BOM phụ liệu v1"],["2","09/04/2026 16:10","Khách tăng đơn từ 100 lên 120 bộ","BOM cắt v2; BOM phụ liệu v1"]],[]);
  return `<h1>${kinds.find(x=>x[0]===k)[1]}</h1><p class="sub">Lọc theo thời gian, khách hàng, mã hàng, đơn hàng, mã NPL. Xuất Excel / PDF.</p>
  <div class="bar"><input type="text" placeholder="Từ ngày dd/mm/yyyy" aria-label="Từ ngày" style="max-width:150px"><input type="text" placeholder="Đến ngày" aria-label="Đến ngày" style="max-width:150px"><select id="rpCust" aria-label="Khách hàng" style="max-width:170px"><option value="">Tất cả khách hàng</option>${Object.keys(CUSTS).map(c=>`<option value="${c}" ${st.custFilter===c?"selected":""}>${c}</option>`).join("")}</select><select aria-label="Đơn hàng" style="max-width:160px"><option>Tất cả đơn</option><option>DH-0412</option></select><input type="text" placeholder="Mã NPL" aria-label="Mã NPL" style="max-width:130px"><span style="flex:1"></span><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button></div>
@@ -237,7 +266,7 @@ security(){return `<h1>Bảo mật & khóa PIN</h1><p class="sub">Ứng dụng m
   <h3 style="margin-top:14px">Đổi mã PIN</h3><div class="bar"><input type="password" placeholder="PIN hiện tại" aria-label="PIN hiện tại" style="max-width:140px"><input type="password" placeholder="PIN mới (≥ 4 số)" aria-label="PIN mới" style="max-width:150px"></div>
   <button class="btn primary" data-t="Mô hình: đã đổi mã PIN">Đổi mã PIN</button><p class="hint">PIN được lưu dạng băm (PBKDF2 + salt), không lưu PIN gốc.</p></div>`},
 audit(){return `<h1>Nhật ký thay đổi</h1><p class="sub">Mọi điều chỉnh đơn, BOM, kiểm kê, hủy phiếu nháp đều lưu giá trị trước/sau và lý do.</p>
- <div class="scroll">${tbl(["Thời gian","Đối tượng","Hành động","Trước → Sau","Lý do"],[["09/04/2026 16:10","Đơn DH-0412","Điều chỉnh số lượng","100 → 120 bộ","Khách tăng đơn"],["08/04/2026 11:02","Phiếu xuất PX-0095","Hủy phiếu nháp","–","Làm lại theo phạm vi mới"],["05/04/2026 15:40","Kiểm kê KK-0007","Điều chỉnh giảm VAI_DO","180 → 176","Kiểm kê cuối tuần"],["03/04/2026 09:15","Lưới G_VOC","Sao chép thành G_VOC_2","–","Thêm size 130/64"]],[])}</div>`},
+ <div class="scroll">${tbl(["Thời gian","Đối tượng","Hành động","Trước → Sau","Lý do"],[["10/04/2026 09:00","Phiếu chuyển CH-0004","KH01 → KH02","VAI_DO → KH2_VAI_DO: 20 m","Mượn vải cho đơn MH-1180"],["09/04/2026 16:10","Đơn DH-0412","Điều chỉnh số lượng","100 → 120 bộ","Khách tăng đơn"],["08/04/2026 11:02","Phiếu xuất PX-0095","Hủy phiếu nháp","–","Làm lại theo phạm vi mới"],["05/04/2026 15:40","Kiểm kê KK-0007","Điều chỉnh giảm VAI_DO","180 → 176","Kiểm kê cuối tuần"],["03/04/2026 09:15","Lưới G_VOC","Sao chép thành G_VOC_2","–","Thêm size 130/64"]],[])}</div>`},
 cust(){return `<h1>Khách hàng</h1><p class="sub">Mã khách hàng không trùng. Khách đã phát sinh dữ liệu chỉ chuyển sang ngừng sử dụng, không xóa.</p>
  <div class="bar"><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:220px"><button class="btn primary" data-t="Mô hình: thêm khách hàng">Thêm khách hàng</button></div>
  <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th class="n">Mã hàng</th><th class="n">Đơn hàng</th><th>Trạng thái</th><th></th></tr></thead>
@@ -259,6 +288,18 @@ ret(){return `<h1>Trả NPL & xuất bù</h1><p class="sub">Trả vật lý vừ
  <div class="panel"><h3>Phiếu xuất bù PX-0090B <span class="chip muted">Nháp</span></h3><p class="hint">Liên kết phiếu gốc: PX-0090 (đã xác nhận)</p><table><thead><tr><th>Mã NPL</th><th class="n">Còn thiếu</th><th class="n">Bù</th></tr></thead>
   <tr><td>VAI_DO</td><td class="n">5,00</td><td class="n"><input type="number" value="5" aria-label="Bù VAI_DO"></td></tr></table>
   <p class="hint">Đi qua cùng kiểm tra tồn khả dụng và transaction như phiếu xuất.</p><div class="bar"><button class="btn primary" data-t="Đã xác nhận xuất bù">Xác nhận xuất bù</button></div></div></div>`},
+transfer(){const T=st.tr;const opt=(k,sel)=>Object.entries(MATS).filter(([,m])=>m[4]===k).map(([c,m])=>`<option value="${c}" ${sel===c?"selected":""}>${c} – ${m[0]} (${m[1]})</option>`).join("");
+ return `<h1>Chuyển NPL giữa khách hàng</h1><p class="sub">Dùng NPL của khách hàng A cho khách hàng B: A xuất theo mã NPL của A, B nhập theo mã NPL của B. Hai phiếu được xác nhận cùng lúc.</p>
+ <div class="panel" style="margin-bottom:14px"><div class="bar"><label for="trFrom">Từ khách hàng (A) <span class="warnline">*</span></label><select id="trFrom" style="max-width:230px" ${T.done?"disabled":""}>${Object.entries(CUSTS).map(([c,n])=>`<option value="${c}" ${T.from===c?"selected":""}>${c} – ${n}</option>`).join("")}</select>
+  <label for="trTo">Sang khách hàng (B) <span class="warnline">*</span></label><select id="trTo" style="max-width:230px" ${T.done?"disabled":""}>${Object.entries(CUSTS).map(([c,n])=>`<option value="${c}" ${T.to===c?"selected":""}>${c} – ${n}</option>`).join("")}</select>
+  <input type="text" placeholder="Lý do" aria-label="Lý do chuyển" style="max-width:220px" value="Mượn vải cho đơn MH-1180"></div>
+ <div class="scroll"><table><thead><tr><th>Mã NPL của A (xuất)</th><th>Mã NPL của B (nhập)</th><th class="n">Số lượng</th><th class="n">Khả dụng của A</th></tr></thead><tbody>
+ ${T.lines.map((l,i)=>`<tr><td><select data-trf="${i}" aria-label="NPL của A dòng ${i+1}" style="max-width:260px" ${T.done?"disabled":""}>${opt(T.from,l.f)}</select></td><td><select data-trt="${i}" aria-label="NPL của B dòng ${i+1}" style="max-width:260px" ${T.done?"disabled":""}>${opt(T.to,l.t)}</select></td>
+  <td class="n"><input type="number" min="0" data-trq="${i}" value="${l.q}" aria-label="Số lượng dòng ${i+1}" ${T.done?"disabled":""}></td><td class="n">${MATS[l.f]?fmt(MATS[l.f][2]-MATS[l.f][3]):"–"}</td></tr>`).join("")}</tbody></table></div>
+ <div class="bar" style="margin-top:8px">${T.done?"":`<button class="btn" id="trAdd">Thêm dòng</button>`}</div>
+ <div id="trMsg"></div></div>
+ <div class="panel"><h3>Phiếu sẽ tạo ${T.done?'<span class="chip ok">Đã xác nhận</span>':'<span class="chip muted">Nháp</span>'}</h3><div id="trPrev"></div>
+ <div class="bar" style="margin-top:8px">${T.done?`<button class="btn" id="trNew">Lập phiếu chuyển mới</button>`:`<button class="btn primary" id="trOk">Xác nhận chuyển</button><button class="btn danger" data-t="Đã hủy phiếu chuyển nháp (ghi nhật ký)">Hủy phiếu nháp</button>`}</div></div>`},
 carry(){return `<h1>Cân đối cấp phát</h1><p class="sub">Số dư cuối = số dư đầu + thực cấp − nhu cầu kỳ. Dương là cấp thừa (giảm nhu cầu lần sau), âm là cấp thiếu (cộng vào nhu cầu lần sau). Đọc số dư cuối mới nhất của đúng phạm vi.</p>
  <div class="scroll">${tbl(["Đơn","Mã NPL","Phạm vi","Số dư đầu","Thực cấp","Nhu cầu kỳ","Số dư cuối","Tình trạng"],[["DH-0412","VAI_DO","Cả đơn",fmt(0),fmt(60),fmt(70),fmt(-10),"Cấp thiếu"],["DH-0412","VAI_DO","Cả đơn",fmt(-10),fmt(5),fmt(0),fmt(-5),"Cấp thiếu"],["DH-0412","NUT","Cả đơn",fmt(0),fmt(1200),fmt(1200),fmt(0),"Cân đối"],["DH-0409","CHI","Cả đơn",fmt(0),fmt(8),fmt(6),fmt(2),"Cấp thừa"]],[3,4,5,6]).replace(/>(Cấp thiếu|Cân đối|Cấp thừa)</g,(m,t)=>`><span class="chip ${t==="Cấp thiếu"?"warn":t==="Cân đối"?"ok":"muted"}">${t}</span><`)}</div>`}
 };
@@ -291,6 +332,27 @@ mat(){document.getElementById("fCust").onchange=e=>{st.custFilter=e.target.value
    if(!g("mCode")||!g("mName")||!g("mUnit"))return m.textContent="Nhập đủ mã, tên và đơn vị tính.";
    if(MATS[g("mCode")])return m.textContent="Mã NPL đã tồn tại.";
    MATS[g("mCode")]=[g("mName"),g("mUnit"),0,0,g("mCust")];st.matMsg="";toast("Đã lưu NPL "+g("mCode")+" cho khách hàng "+g("mCust"));go()}},
+product(){document.getElementById("pSave").onclick=()=>{const g=id=>document.getElementById(id).value.trim();const m=document.getElementById("pMsg");
+   if(!g("pCust"))return m.textContent="Phải chọn khách hàng cho mã hàng.";if(!g("pCode")||!g("pName"))return m.textContent="Nhập đủ mã và tên.";
+   if(PRODUCTS[g("pCode")])return m.textContent="Mã hàng đã tồn tại.";PRODUCTS[g("pCode")]={n:g("pName"),k:g("pCust"),grid:g("pGrid")};toast("Đã lưu mã hàng "+g("pCode")+" cho khách hàng "+g("pCust"));go()}},
+variant(){document.getElementById("vProd").onchange=e=>{st.varP=e.target.value;go()}},
+bom(){document.getElementById("bVar").onchange=e=>{st.bomV=e.target.value;go()};document.querySelectorAll('input[name=bType]').forEach(r=>r.onchange=()=>{st.bomT=r.value;go()})},
+transfer(){const T=st.tr;
+  const check=()=>{const e=[];if(T.from===T.to)e.push("Khách hàng chuyển và nhận phải khác nhau.");
+   T.lines.forEach((l,i)=>{const a=MATS[l.f],b=MATS[l.t];if(!a||a[4]!==T.from)e.push(`Dòng ${i+1}: mã NPL nguồn phải thuộc ${T.from}.`);if(!b||b[4]!==T.to)e.push(`Dòng ${i+1}: mã NPL đích phải thuộc ${T.to}.`);
+    if(a&&b&&a[1]!==b[1])e.push(`Dòng ${i+1}: đơn vị tính khác nhau (${a[1]} / ${b[1]}).`);if(!(l.q>0))e.push(`Dòng ${i+1}: số lượng phải dương.`);
+    if(a&&!T.done&&l.q>a[2]-a[3])e.push(`Dòng ${i+1}: vượt tồn khả dụng của ${l.f}.`)});return e};
+  const paint=()=>{const e=check();document.getElementById("trMsg").innerHTML=e.length?`<p class="warnline">${e.join("<br>")}</p>`:`<p class="hint">Hợp lệ.</p>`;
+   const ok=T.lines.filter(l=>MATS[l.f]&&MATS[l.t]);document.getElementById("trPrev").innerHTML=tbl(["Phiếu","Khách hàng","Loại","Mã NPL","Số lượng"],
+    ok.map(l=>["CH-0005-X",T.from,"Xuất (chuyển đi)",l.f,fmt(-l.q)]).concat(ok.map(l=>["CH-0005-N",T.to,"Nhập (nhận về)",l.t,fmt(l.q)])),[4]);return e};
+  paint();if(T.done)return document.getElementById("trNew").onclick=()=>{st.tr={from:"KH01",to:"KH02",lines:[{f:"VAI_DO",t:"KH2_VAI_DO",q:20}],done:false};go()};
+  document.getElementById("trFrom").onchange=e=>{T.from=e.target.value;T.lines.forEach(l=>l.f=(Object.entries(MATS).find(([,m])=>m[4]===T.from)||[""])[0]);go()};
+  document.getElementById("trTo").onchange=e=>{T.to=e.target.value;T.lines.forEach(l=>l.t=(Object.entries(MATS).find(([,m])=>m[4]===T.to)||[""])[0]);go()};
+  document.querySelectorAll("[data-trf]").forEach(x=>x.onchange=()=>{T.lines[x.dataset.trf].f=x.value;go()});
+  document.querySelectorAll("[data-trt]").forEach(x=>x.onchange=()=>{T.lines[x.dataset.trt].t=x.value;go()});
+  document.querySelectorAll("[data-trq]").forEach(x=>x.oninput=()=>{T.lines[x.dataset.trq].q=+x.value;paint()});
+  document.getElementById("trAdd").onclick=()=>{T.lines.push({f:(Object.entries(MATS).find(([,m])=>m[4]===T.from)||[""])[0],t:(Object.entries(MATS).find(([,m])=>m[4]===T.to)||[""])[0],q:0});go()};
+  document.getElementById("trOk").onclick=()=>{if(paint().length)return;T.lines.forEach(l=>{MATS[l.f][2]-=l.q;MATS[l.t][2]+=l.q});T.done=true;toast(`Đã xác nhận: ${T.from} xuất, ${T.to} nhập trong cùng một giao dịch`);go()}},
 report(){const f=document.getElementById("rpCust");if(f)f.onchange=e=>{st.custFilter=e.target.value;go()}},
 adjust(){const ISSUED={VAI_DO:60,VAI_XANH:60,VAI_DEN:70,NUT:400,CHI:3,NHAN:100,KHOA:40};const adj={...st.sets};
   const paint=()=>{const b=demand(),a=demand(adj);const mats=[...new Set([...Object.keys(b.tot),...Object.keys(a.tot)])].sort();let warn=[];

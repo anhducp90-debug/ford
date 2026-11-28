@@ -68,11 +68,23 @@ Kho
 
 Theo mục 20 của tài liệu v2.0. Bộ test ưu tiên: phân rã (100 bộ size M), n→1 quy đổi, ghi đè `*`, không nhân đôi khi một NPL ở nhiều BOM, làm tròn half-up, tồn khả dụng, carry âm/dương, xác nhận trùng, rollback transaction.
 
-## 6. NPL gắn với khách hàng (bổ sung)
+## 6. Quy tắc khai báo và khách hàng (đồng bộ toàn hệ thống)
 
-- Khai báo NPL bắt buộc chọn khách hàng đang sử dụng. Mã NPL vẫn duy nhất toàn hệ thống (khác khách hàng cũng không trùng mã; nếu cần trùng mã giữa các khách hàng thì đổi thành `UNIQUE(customer_id, code)` và truyền khách hàng vào mọi chỗ tra mã).
-- BOM (nhập tay hoặc Excel) chỉ dùng NPL của khách hàng sở hữu mã hàng; sai thì báo theo số dòng và không ghi gì.
-- Phiếu gắn với đơn (trả, xuất bù, cấp phát) chỉ dùng NPL của khách hàng của đơn. Phiếu nhập/kiểm kê không gắn đơn thì chọn khách hàng để lọc danh sách NPL.
-- NPL đã dùng trong BOM hoặc giao dịch kho thì không đổi khách hàng.
-- Dữ liệu cũ (trước migration 3) có `customer_id` rỗng; phải gán khách hàng (`AssignMaterialCustomer`) trước khi đưa vào BOM mới.
-- Báo cáo Tồn hiện tại, Nhập–xuất–tồn và Lịch sử giao dịch có cột/bộ lọc khách hàng.
+Nguyên tắc: mỗi màn khai báo chỉ chọn **đối tượng cấp trên**; khách hàng được kế thừa, người dùng không phải gán lại.
+
+| Khai báo | Người dùng chọn | Khách hàng | Ràng buộc chính |
+|---|---|---|---|
+| Khách hàng | – | (gốc) | Mã không trùng; đã phát sinh dữ liệu thì chỉ ngừng sử dụng |
+| Lưới size | – | dùng chung mọi khách hàng | Đã dùng thì khóa cấu trúc, sao chép thành lưới mới |
+| Mã hàng | Khách hàng, lưới size mặc định | trực tiếp | Khách hàng phải đang sử dụng |
+| Chủng loại + quy đổi size | Mã hàng | theo mã hàng | Mã hàng phải đang sử dụng; size đích thuộc lưới chủng loại |
+| NPL | Khách hàng | trực tiếp | **Mã NPL duy nhất toàn hệ thống**; đã dùng thì không đổi khách hàng |
+| BOM | Chủng loại, rồi tích **Tổ cắt / Chủng loại / Đóng gói** | theo chủng loại → mã hàng | Mỗi chủng loại tối đa 1 BOM mỗi loại (đổi định mức = phiên bản mới); tên BOM tự đặt "<chủng loại> – <loại>"; NPL của đúng khách hàng; size thuộc lưới chủng loại hoặc '*' |
+| Đơn hàng | Mã hàng | theo mã hàng | Mã hàng và khách hàng đang sử dụng |
+| Phiếu nhập / kiểm kê | Khách hàng (hoặc suy ra từ NPL) | trực tiếp | Một phiếu chỉ gồm NPL của một khách hàng |
+| Phiếu cấp / trả / xuất bù / giữ kho | Đơn hàng | theo đơn | Chỉ NPL của khách hàng của đơn |
+| Chuyển NPL A → B | Khách hàng A, khách hàng B, cặp (mã NPL của A → mã NPL của B) | A và B | A ≠ B; cùng đơn vị tính; A đủ tồn khả dụng. Sinh phiếu A xuất (mã của A) và B nhập (mã của B), xác nhận cùng một transaction; hủy/xác nhận chỉ qua chức năng Chuyển NPL |
+
+Tồn kho vẫn tính theo mã NPL; vì mã NPL thuộc một khách hàng nên tồn được kiểm soát theo khách hàng. Dùng NPL của khách hàng khác bắt buộc qua phiếu chuyển, có lịch sử ("Chuyển sang khách hàng khác" / "Nhận từ khách hàng khác").
+
+Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán trước khi dùng trong BOM mới); migration 4 tự điền khách hàng cho phiếu kho cũ (theo đơn, hoặc theo NPL nếu phiếu chỉ có một khách hàng). BOM cũ không gắn chủng loại vẫn tính được nhu cầu; BOM mới luôn tạo theo chủng loại + loại.
