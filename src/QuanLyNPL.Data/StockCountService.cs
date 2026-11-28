@@ -22,6 +22,18 @@ public sealed class StockCountService(SqliteConnection c, StockService stock)
         return id;
     }
 
+    /// <summary>Hủy phiếu kiểm kê nháp (chưa phát sinh điều chỉnh), có ghi nhật ký.</summary>
+    public void DeleteDraft(long countId, string reason)
+    {
+        using var tx = c.BeginTransaction();
+        var st = Db.Scalar(c, "SELECT status FROM stock_count WHERE id=$i", tx, ("$i", countId)) as string ?? throw new BusinessException("Phiếu kiểm kê không tồn tại.");
+        if (st != "DRAFT") throw new BusinessException("Phiếu kiểm kê đã chốt, không xóa.");
+        Db.Exec(c, "DELETE FROM stock_count_line WHERE count_id=$i", tx, ("$i", countId));
+        Db.Exec(c, "DELETE FROM stock_count WHERE id=$i", tx, ("$i", countId));
+        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,reason,created_at) VALUES('stock_count_draft',$i,$r,$t)", tx, ("$i", countId), ("$r", reason), ("$t", Db.Date(DateTime.Now)));
+        tx.Commit();
+    }
+
     public void Confirm(long countId)
     {
         using var tx = c.BeginTransaction(deferred: false);

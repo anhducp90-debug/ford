@@ -4,7 +4,7 @@ namespace QuanLyNPL.Data;
 
 public sealed record CustomerRow(long Id, string Code, string Name, bool Active);
 public sealed record MaterialRow(long Id, string Code, string Name, string Unit, long? CustomerId, string CustomerCode, bool Active, string? Note);
-public sealed record GridRow(long Id, string Code, string Name, bool Active, string Sizes, bool Used);
+public sealed record SizeGridRow(long Id, string Code, string Name, bool Active, string Sizes, bool Used);
 public sealed record ProductRow(long Id, string Code, string Name, long CustomerId, string CustomerCode, long GridId, string GridCode, bool Active, int VariantCount);
 public sealed record VariantRow(long Id, string Code, string Name, string Group, decimal QtyPerSet);
 public sealed record BomRow(long Id, string Name, string Type, bool PerSet, long? VariantId, string VariantCode, int VersionCount);
@@ -38,12 +38,12 @@ public sealed class Queries(SqliteConnection c)
             r => new MaterialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetInt32(6) == 1, OptStr(r, 7)),
             null, ("$k", customerId), ("$a", activeOnly ? 1 : 0));
 
-    public List<GridRow> Grids() =>
+    public List<SizeGridRow> Grids() =>
         Db.Query(c, @"SELECT g.id,g.code,g.name,g.active,
                         COALESCE((SELECT group_concat(size_code,', ') FROM (SELECT size_code FROM size_grid_item WHERE grid_id=g.id ORDER BY id)),''),
                         (SELECT COUNT(*) FROM product WHERE default_grid_id=g.id)+(SELECT COUNT(*) FROM variant WHERE grid_id=g.id)
                       FROM size_grid g ORDER BY g.code",
-            r => new GridRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3) == 1, r.GetString(4), r.GetInt64(5) > 0));
+            r => new SizeGridRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3) == 1, r.GetString(4), r.GetInt64(5) > 0));
 
     public List<ProductRow> Products(long? customerId = null, bool activeOnly = false) =>
         Db.Query(c, @"SELECT p.id,p.code,p.name,p.customer_id,k.code,p.default_grid_id,g.code,p.active,(SELECT COUNT(*) FROM variant WHERE product_id=p.id)
