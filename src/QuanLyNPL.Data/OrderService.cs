@@ -84,6 +84,24 @@ public sealed class OrderService(SqliteConnection c)
         return new(variants.Select(v => new SnapshotVariant(v.code, v.qty)).ToList(), maps, boms);
     }
 
+    /// <summary>Đóng đơn (không cấp phát/điều chỉnh tiếp) hoặc mở lại. Đơn còn phiếu nháp thì không đóng.</summary>
+    public void SetStatus(long orderId, bool open)
+    {
+        if (!open && Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM stock_doc WHERE order_id=$o AND status='DRAFT'", null, ("$o", orderId))) > 0)
+            throw new BusinessException("Đơn còn phiếu nháp chưa xác nhận: xác nhận hoặc hủy trước khi đóng đơn.");
+        if (Db.Exec(c, "UPDATE \"order\" SET status=$s WHERE id=$o", null, ("$s", open ? "OPEN" : "CLOSED"), ("$o", orderId)) == 0)
+            throw new BusinessException("Đơn hàng không tồn tại.");
+        if (!open) Db.Exec(c, "UPDATE reservation SET active=0 WHERE order_id=$o", null, ("$o", orderId));
+        Db.Exec(c, "INSERT INTO audit_log(entity,entity_id,after_json,reason,created_at) VALUES('order',$o,$a,$r,$t)", null,
+            ("$o", orderId), ("$a", open ? "OPEN" : "CLOSED"), ("$r", open ? "Mở lại đơn" : "Đóng đơn"), ("$t", Db.Date(DateTime.Now)));
+    }
+
+    public static void RequireOpen(SqliteConnection c, long orderId)
+    {
+        var st = Db.Scalar(c, "SELECT status FROM \"order\" WHERE id=$o", null, ("$o", orderId)) as string ?? throw new BusinessException("Đơn hàng không tồn tại.");
+        if (st != "OPEN") throw new BusinessException("Đơn hàng đã đóng.");
+    }
+
     public OrderSnapshot LoadSnapshot(long orderId) =>
         JsonSerializer.Deserialize<OrderSnapshot>((string)Db.Scalar(c, "SELECT config_json FROM order_snapshot WHERE order_id=$o ORDER BY id DESC LIMIT 1", null, ("$o", orderId))!, Json)!;
 

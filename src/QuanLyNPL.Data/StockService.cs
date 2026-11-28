@@ -152,9 +152,35 @@ public sealed class StockService(SqliteConnection c)
         tx.Commit();
     }
 
+    /// <summary>Thay toàn bộ dòng của phiếu nháp thường (nhập, xuất tự do, trả, xuất bù). Phiếu cấp theo nhu cầu dùng SetActual; phiếu chuyển dùng chức năng Chuyển NPL.</summary>
+    public void ReplaceDraftLines(long docId, IReadOnlyList<(string material, decimal qty)> lines)
+    {
+        var d = Db.Query(c, "SELECT status,COALESCE(kind,''),customer_id,scope,ref_doc_id,type FROM stock_doc WHERE id=$i",
+            r => (st: r.GetString(0), kind: r.GetString(1), cust: r.IsDBNull(2) ? (long?)null : r.GetInt64(2), scope: r.IsDBNull(3) ? null : r.GetString(3), refDoc: !r.IsDBNull(4), type: r.GetString(5)),
+            null, ("$i", docId)).SingleOrDefault();
+        if (d == default) throw new BusinessException("Phiếu không tồn tại.");
+        if (d.st != "DRAFT") throw new BusinessException("Phiếu đã xác nhận, không sửa.");
+        if (d.kind == TransferService.Kind) throw new BusinessException("Phiếu chuyển NPL sửa ở chức năng Chuyển NPL.");
+        if (d.type == "OUT" && d.scope is not null && !d.refDoc) throw new BusinessException("Phiếu cấp theo nhu cầu: nhập thực cấp từng dòng.");
+        if (lines.Any(l => l.qty < 0)) throw new BusinessException("Số lượng không được âm.");
+        var cat = new CatalogRepository(c);
+        var cust = cat.ResolveDocCustomer(lines.Select(l => l.material), d.cust);
+        var resolved = lines.Select(l => (id: cat.MaterialId(l.material), l.qty)).ToList();
+        using var tx = c.BeginTransaction();
+        Db.Exec(c, "DELETE FROM stock_doc_line WHERE doc_id=$d", tx, ("$d", docId));
+        foreach (var (m, q) in resolved)
+            Db.Exec(c, "INSERT INTO stock_doc_line(doc_id,material_id,qty) VALUES($d,$m,$q)", tx, ("$d", docId), ("$m", m), ("$q", Db.D(q)));
+        Db.Exec(c, "UPDATE stock_doc SET customer_id=$k WHERE id=$d", tx, ("$k", cust), ("$d", docId));
+        tx.Commit();
+    }
+
+    public void ReleaseReservation(long reservationId) =>
+        Db.Exec(c, "UPDATE reservation SET active=0 WHERE id=$i", null, ("$i", reservationId));
+
     public void Reserve(long orderId, string materialCode, decimal qty)
     {
         if (qty <= 0) throw new BusinessException("Số lượng giữ phải dương.");
+        OrderService.RequireOpen(c, orderId);
         var oc = Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM \"order\" WHERE id=$o", null, ("$o", orderId)) ?? throw new BusinessException("Đơn hàng không tồn tại."));
         new CatalogRepository(c).RequireMaterialOfCustomer(materialCode, oc);
         var avail = OnHand(materialCode) - ReservedForOthers(materialCode, orderId);

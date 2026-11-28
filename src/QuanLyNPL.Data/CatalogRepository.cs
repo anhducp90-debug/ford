@@ -15,6 +15,27 @@ public sealed class CatalogRepository(SqliteConnection c)
             ("$c", code), ("$n", name), ("$u", unit), ("$k", customerId), ("$t", note));
     }
 
+    /// <summary>Không xóa dữ liệu đã phát sinh: chỉ chuyển trạng thái ngừng sử dụng / dùng lại.</summary>
+    public void SetCustomerActive(long id, bool active) => SetActive("customer", id, active);
+    public void SetProductActive(long id, bool active) => SetActive("product", id, active);
+    public void SetGridActive(long id, bool active) => SetActive("size_grid", id, active);
+    public void SetMaterialActive(string code, bool active) => SetActive("material", MaterialId(code), active);
+
+    void SetActive(string table, long id, bool active)
+    {
+        if (Db.Exec(c, $"UPDATE {table} SET active=$a WHERE id=$i", null, ("$a", active ? 1 : 0), ("$i", id)) == 0)
+            throw new BusinessException("Không tìm thấy đối tượng.");
+    }
+
+    public void UpdateMaterial(string code, string name, string unit, string? note)
+    {
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(unit)) throw new BusinessException("Nhập đủ tên và đơn vị tính.");
+        var used = Convert.ToInt32(Db.Scalar(c, "SELECT (SELECT COUNT(*) FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE m.code=$c)", null, ("$c", code)));
+        var oldUnit = (string?)Db.Scalar(c, "SELECT unit FROM material WHERE code=$c", null, ("$c", code)) ?? throw new BusinessException($"Mã NPL không tồn tại: {code}");
+        if (used > 0 && oldUnit != unit) throw new BusinessException("NPL đã phát sinh giao dịch, không đổi đơn vị tính.");
+        Db.Exec(c, "UPDATE material SET name=$n, unit=$u, note=$t WHERE code=$c", null, ("$n", name), ("$u", unit), ("$t", note), ("$c", code));
+    }
+
     public long? MaterialCustomerId(string code)
     {
         var v = Db.Scalar(c, "SELECT customer_id FROM material WHERE code=$c", null, ("$c", code));
@@ -71,6 +92,12 @@ public sealed class CatalogRepository(SqliteConnection c)
     /// <summary>Tạo lưới size cùng các size (không trùng mã size trong lưới).</summary>
     public long AddGrid(string code, string name, IEnumerable<(string size, string? voc, string? cao)> items)
     {
+        var list = items.ToList();
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name)) throw new BusinessException("Nhập mã và tên lưới size.");
+        if (list.Count == 0) throw new BusinessException("Lưới size chưa có size nào.");
+        if (list.Any(i => string.IsNullOrWhiteSpace(i.size) || i.size.Trim() == "*")) throw new BusinessException("Mã size không hợp lệ.");
+        if (list.GroupBy(i => i.size).Any(g => g.Count() > 1)) throw new BusinessException("Trùng mã size trong lưới.");
+        items = list;
         using var tx = c.BeginTransaction();
         var id = Db.Insert(c, "INSERT INTO size_grid(code,name) VALUES($c,$n)", tx, ("$c", code), ("$n", name));
         foreach (var (s, voc, cao) in items)

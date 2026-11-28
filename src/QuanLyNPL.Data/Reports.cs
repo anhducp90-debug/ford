@@ -83,6 +83,42 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         return new("Nhu cầu theo đơn – chi tiết nguồn", Describe(new ReportFilter(OrderId: orderId)), new[] { "Mã NPL", "BOM", "Chủng loại", "Size", "Nhu cầu (chưa làm tròn)" }, rows);
     }
 
+    /// <summary>
+    /// Định mức một bộ của mã hàng theo từng size: tổng (SL chủng loại/bộ × định mức × (1+hao hụt)) của mọi BOM theo chủng loại
+    /// cộng định mức các BOM theo bộ; dùng phiên bản BOM hiệu lực tại <paramref name="asOf"/>. Giá trị làm tròn 4 số lẻ để xem.
+    /// </summary>
+    public (ReportTable Summary, ReportTable Detail, IReadOnlyList<string> Issues) PerSetNorm(long productId, DateTime? asOf = null)
+    {
+        var at = asOf ?? DateTime.Now;
+        var snap = orders.BuildSnapshot(productId, at);
+        var sizes = new Queries(c).ProductSizes(productId);
+        var bomNames = snap.Boms.ToDictionary(b => b.Id, b => b.Name);
+        var perSize = new Dictionary<string, Dictionary<string, decimal>>();
+        var detail = new List<object?[]>();
+        var issues = new List<string>();
+        foreach (var s in sizes)
+        {
+            var r = OrderService.Calculate(snap, new[] { new OrderLine(s, 1m) });
+            issues.AddRange(r.Issues.Select(i => i.Message));
+            perSize[s] = r.Sources.GroupBy(x => x.MaterialCode).ToDictionary(g => g.Key, g => g.Sum(x => x.Qty));
+            detail.AddRange(r.Sources.OrderBy(x => x.MaterialCode, StringComparer.Ordinal).ThenBy(x => x.Variant)
+                .Select(x => new object?[] { s, x.MaterialCode, MatName(x.MaterialCode), bomNames.GetValueOrDefault(x.BomId, x.BomId),
+                    x.Variant == DemandCalculator.SetScope ? "Cả bộ" : x.Variant, Math.Round(x.Qty, 4) }));
+        }
+        var mats = perSize.Values.SelectMany(d => d.Keys).Distinct().OrderBy(m => m, StringComparer.Ordinal).ToList();
+        var rows = mats.Select(m => new object?[] { m, MatName(m), MatUnit(m) }
+            .Concat(sizes.Select(s => (object?)(perSize[s].TryGetValue(m, out var q) ? Math.Round(q, 4) : 0m))).ToArray()).ToList();
+        var p = Db.Query(c, "SELECT p.code,k.code FROM product p JOIN customer k ON k.id=p.customer_id WHERE p.id=$p", r => (r.GetString(0), r.GetString(1)), null, ("$p", productId)).Single();
+        var filters = new List<string> { $"Mã hàng: {p.Item1} · Khách hàng: {p.Item2}", $"Phiên bản BOM hiệu lực ngày {at:dd/MM/yyyy}", "Đã gồm hao hụt; làm tròn 4 số lẻ để xem" };
+        var distinctIssues = issues.Distinct().ToList();
+        if (distinctIssues.Count > 0) filters.Add("CHƯA ĐỦ DỮ LIỆU: " + string.Join("; ", distinctIssues));
+        return (new ReportTable("Định mức một bộ", filters, new[] { "Mã NPL", "Tên", "ĐVT" }.Concat(sizes.Select(s => "Size " + s)).ToList(), rows),
+                new ReportTable("Định mức một bộ – chi tiết nguồn", filters, new[] { "Size", "Mã NPL", "Tên", "BOM", "Chủng loại", "Lượng / bộ" }, detail),
+                distinctIssues);
+    }
+
+    string MatUnit(string code) => (string)Db.Scalar(c, "SELECT unit FROM material WHERE code=$c", null, ("$c", code))!;
+
     /// <summary>Khả năng đáp ứng một đơn: từng mã NPL kèm trạng thái.</summary>
     public ReportTable OrderAvailability(long orderId, bool onlyShortage = false)
     {

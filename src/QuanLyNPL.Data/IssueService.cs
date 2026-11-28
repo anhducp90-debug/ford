@@ -14,6 +14,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     /// </summary>
     public long CreateIssueDraft(long orderId, string docNo, string scope = AllScope)
     {
+        OrderService.RequireOpen(c, orderId);
         var demand = ScopeDemand(orderId, scope);
         if (demand.Count == 0) throw new BusinessException("Đơn chưa có nhu cầu NPL để cấp.");
         EnsureScopeConsistent(orderId, scope);
@@ -59,6 +60,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
             r => (order: r.IsDBNull(0) ? (long?)null : r.GetInt64(0), scope: r.IsDBNull(1) ? null : r.GetString(1), st: r.GetString(2), t: r.GetString(3)), null, ("$i", refDocId)).SingleOrDefault();
         if (o == default || o.order is null || o.scope is null || o.t != "OUT" || o.st != "CONFIRMED")
             throw new BusinessException("Xuất bù phải liên kết một phiếu cấp theo đơn đã xác nhận.");
+        OrderService.RequireOpen(c, o.order.Value);
         var id = stock.CreateDraft("OUT", docNo, lines, o.order);
         Db.Exec(c, "UPDATE stock_doc SET scope=$s, ref_doc_id=$r WHERE id=$i", null, ("$s", o.scope), ("$r", refDocId), ("$i", id));
         return id;
@@ -70,6 +72,7 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     /// </summary>
     public long CreateReturn(long orderId, string docNo, IReadOnlyList<(string material, decimal qty)> lines, string scope = AllScope)
     {
+        OrderService.RequireOpen(c, orderId);
         var id = stock.CreateDraft("RETURN", docNo, lines, orderId);
         Db.Exec(c, "UPDATE stock_doc SET scope=$s WHERE id=$i", null, ("$s", scope), ("$i", id));
         return id;
