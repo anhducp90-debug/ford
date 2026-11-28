@@ -244,9 +244,11 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
             throw new BusinessException("Đơn nhận chưa giao việc cho nơi nhận / phạm vi này.");
         var cat = new CatalogRepository(c);
         var errs = new List<string>();
+        var targetDemand = KeyDemand(toOrderId, toPlaceId, toScope);
         foreach (var (l, i) in lines.Select((l, i) => (l, i + 1)))
         {
             if (l.Qty <= 0) { errs.Add($"Dòng {i}: số lượng phải dương."); continue; }
+            if (!targetDemand.ContainsKey(l.Material)) { errs.Add($"Dòng {i}: {l.Material} không có trong định mức của nơi nhận đích."); continue; }
             var surplus = stock.CarryClosing(fromOrderId, cat.MaterialId(l.Material), fromScope, fromPlaceId);
             if (l.Qty > surplus) errs.Add($"Dòng {i}: {l.Material} chuyển {AuditLog.N(l.Qty)} vượt số dư {AuditLog.N(Math.Max(0, surplus))} của nơi chuyển.");
         }

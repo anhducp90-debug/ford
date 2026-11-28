@@ -131,9 +131,24 @@ Go("Lịch sử giao dịch"); RShot(Num() + "_lich_su_giao_dich_day_du");
 Go("Nhật ký thay đổi"); RShot(Num() + "_nhat_ky_thay_doi");
 Pick(All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString() == "Phiếu kho")), "Phiếu kho"); RShot(Num() + "_nhat_ky_loc_phieu_kho");
 Expect(x.Q.Audit().Count > 40, $"nhật ký có {x.Q.Audit().Count} dòng");
+// ---- Cấp phát theo nơi nhận ----
+var dh = x.Q.Orders().First(o => o.No == "DH-0412").Id;
+Go("Giao việc theo nơi nhận"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_giao_viec_theo_noi_nhan");
+Go("Điều chuyển NPL dư"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_dieu_chuyen_du_chon");
+var surplusGrid = All<DataGrid>().First(); surplusGrid.SelectedIndex = 0; Pump();
+RShot(Num() + "_dieu_chuyen_du_form");
+var before2 = x.Stock.CarryClosing(dh, x.Cat.MaterialId("VAI_DO"), IssueScopes.ToCat, x.Q.Places().First(p => p.Code == "TO-CAT-2").Id);
+var surplus1 = x.Issue.Surpluses(dh).First();
+Click("Điều chuyển");
+Expect(x.Q.SurplusTransfers(dh).Count == 1, "điều chuyển dư từ giao diện (" + surplus1.Material + " " + surplus1.Surplus + " từ " + surplus1.Place + ")");
+Go("Cân đối cấp phát"); RShot(Num() + "_can_doi_theo_noi_nhan");
+Go("Quyết toán & đóng đơn"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_quyet_toan_don");
+Go("Hao hụt vượt định mức"); RShot(Num() + "_hao_hut_vuot_dinh_muc");
+Go("Phiếu xuất (cấp phát)"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_phieu_xuat_theo_noi_nhan");
+Expect(x.Issue.Settlement(dh).Any(s => s.Loss == 3m && s.Material == "VAI_XANH"), "quyết toán ghi bù hao hụt VAI_XANH 3");
 var mx = x.Reports.MaxSets(x.Q.Orders().First(o => o.No == "DH-0412").Id).Summary;
 Expect(mx.Complete && mx.MaxSets > 0, $"số bộ tối đa DH-0412 = {mx.MaxSets}/{mx.OrderedSets}, giới hạn {string.Join(",", mx.Limiting)}");
-Expect(x.Q.Docs().First(d => d.DocNo == "PX-0001").ToPlace == "Tổ cắt", "phiếu xuất có nơi nhận");
+Expect(x.Q.Docs().First(d => d.DocNo == "PX-0001").ToPlace == "Chuyền may 1", "phiếu xuất có nơi nhận");
 
 // Khóa tự động
 x.Pin.IdleMinutes = 1; w.ResetIdle();
@@ -176,8 +191,10 @@ static void Seed(Ctx x)
     x.Bom.AddVersion(x.Bom.CreateSetBom(p, BomType.DongGoi), d, new[] { new BomLineInput("NHAN", "*", 3m), new BomLineInput("TUI", "*", 1m) });
     var kho = x.Places.Add("KHO", "Kho NPL – Xưởng 1", PlaceKind.CaHai, "Lô B2, KCN Phố Nối A");
     var ncc = x.Places.Add("NCC-PA", "Công ty Dệt Phúc An", PlaceKind.Xuat);
-    var toCat = x.Places.Add("TO-CAT", "Tổ cắt", PlaceKind.CaHai);
-    x.Places.Add("CHUYEN-1", "Chuyền may 1", PlaceKind.Nhan);
+    var toCat = x.Places.Add("TO-CAT", "Tổ cắt 1", PlaceKind.CaHai);
+    var toCat2 = x.Places.Add("TO-CAT-2", "Tổ cắt 2", PlaceKind.CaHai);
+    var chuyen = x.Places.Add("CHUYEN-1", "Chuyền may 1", PlaceKind.CaHai);
+    var ht = x.Places.Add("HT", "Tổ hoàn thiện", PlaceKind.CaHai);
     x.Places.DefaultInTo = kho; x.Places.DefaultOutFrom = kho;
     x.Company.Name = "CÔNG TY TNHH MAY MẶC HOÀNG LONG"; x.Company.Address = "Lô B2, KCN Phố Nối A, Hưng Yên";
     var o = x.Orders.CreateOrder(p, "DH-0412", new DateTime(2026, 4, 2), new[] { new OrderLine("110/56", 40), new OrderLine("110/60", 30), new OrderLine("120/60", 30), new OrderLine("130/64", 20) });
@@ -185,9 +202,19 @@ static void Seed(Ctx x)
     x.Places.SetDocPlaces(nk1, ncc, kho);
     x.Stock.Confirm(nk1);
     x.Stock.CreateDraft("IN", "NK-0002", new[] { ("CHI", 12m), ("NUT", 600m) });
-    var px = x.Issue.CreateIssueDraft(o, "PX-0001");
-    x.Places.SetDocPlaces(px, kho, toCat);
-    x.Issue.SetActual(px, "VAI_DO", 150m);
+    // Giao việc theo nơi nhận: 2 tổ cắt chia size, chuyền may phần sản xuất, tổ hoàn thiện phần đóng gói
+    x.Issue.SetAssignment(o, toCat, IssueScopes.ToCat, new[] { new OrderLine("110/56", 40), new OrderLine("110/60", 30) });
+    x.Issue.SetAssignment(o, toCat2, IssueScopes.ToCat, new[] { new OrderLine("120/60", 30), new OrderLine("130/64", 20) });
+    x.Issue.SetAssignment(o, chuyen, IssueScopes.SanXuat, x.Orders.LoadLines(o));
+    x.Issue.SetAssignment(o, ht, IssueScopes.DongGoi, x.Orders.LoadLines(o));
+    var px = x.Issue.CreateIssueDraft(o, chuyen, IssueScopes.SanXuat, "PX-0001");    // nháp cho chuyền may (thao tác ở giao diện)
+    x.Places.SetDocPlaces(px, kho, chuyen);
+    var pxc = x.Issue.CreateIssueDraft(o, toCat, IssueScopes.ToCat, "PX-0002");      // tổ cắt 1: cấp tròn cây vải → dư
+    x.Places.SetDocPlaces(pxc, kho, toCat);
+    foreach (var l in x.Q.DocLines(pxc)) x.Issue.SetActual(pxc, l.Material, Math.Ceiling(l.Suggested ?? 0) + (l.Material == "VAI_DO" ? 2 : 0));
+    x.Stock.Confirm(pxc);
+    var bu = x.Issue.CreateSupplement(pxc, "XB-0001", new[] { ("VAI_XANH", 3m) }, SupplementKind.BuHaoHut);   // cắt hỏng
+    x.Stock.Confirm(bu);
     x.Transfer.Confirm(x.Transfer.Create("CH-0001", k1, k2, new[] { new TransferLine("VAI_DO", "KH2_VAI_DO", 20m) }, "Mượn vải"));
     x.Count.Create("KK-0001", new[] { ("KHOA", 498m), ("NHAN", 300m) }, "Kiểm kê tháng");
 }

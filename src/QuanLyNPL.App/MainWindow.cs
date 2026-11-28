@@ -23,8 +23,9 @@ public sealed class MainWindow : Window
             new("Mã hàng", () => new ProductScreen()), new("Chủng loại", () => new VariantScreen()), new("BOM & định mức", () => new BomScreen()),
             new("Đơn hàng", () => new OrderScreen()), new("Điều chỉnh đơn", () => new AdjustScreen()) }),
         new("Nhập kho", new NavItem[] { new("Phiếu nhập", () => new ReceiptScreen()), new("Kiểm kê & điều chỉnh tồn", () => new CountScreen()) }),
-        new("Xuất kho", new NavItem[] { new("Kiểm tra đáp ứng", () => new CheckScreen()), new("Phiếu xuất (cấp phát)", () => new IssueScreen()),
-            new("Trả NPL & xuất bù", () => new ReturnScreen()), new("Chuyển NPL giữa khách hàng", () => new TransferScreen()), new("Cân đối cấp phát", () => new CarryScreen()) }),
+        new("Xuất kho", new NavItem[] { new("Kiểm tra đáp ứng", () => new CheckScreen()), new("Giao việc theo nơi nhận", () => new AssignScreen()),
+            new("Phiếu xuất (cấp phát)", () => new IssueScreen()), new("Trả NPL & xuất bù", () => new ReturnScreen()), new("Điều chuyển NPL dư", () => new SurplusScreen()),
+            new("Chuyển NPL giữa khách hàng", () => new TransferScreen()), new("Cân đối cấp phát", () => new CarryScreen()), new("Quyết toán & đóng đơn", () => new SettleScreen()) }),
         new("Báo cáo", ReportScreen.Kinds.Select(k => new NavItem(k.Title, () => new ReportScreen(k.Id))).ToArray()),
     };
 

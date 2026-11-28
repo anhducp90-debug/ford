@@ -206,12 +206,10 @@ public sealed class OrderScreen : Screen
                 Ui.Text($"Ngày đặt {Ui.D(o.OrderDate)} · Số bộ: " + string.Join(", ", lines.Select(l => $"{l.DefaultSize}: {Ui.N(l.Sets)}"))),
                 Ui.Btn("Kiểm tra đáp ứng", () => App.Main.Open("Kiểm tra đáp ứng", new CheckScreen(o.Id))),
                 Ui.Btn("Điều chỉnh đơn", () => App.Main.Open("Điều chỉnh đơn", new AdjustScreen(o.Id))),
+                Ui.Btn("Giao việc", () => App.Main.Open("Giao việc theo nơi nhận", new AssignScreen(o.Id))),
+                Ui.Btn("Quyết toán", () => App.Main.Open("Quyết toán & đóng đơn", new SettleScreen(o.Id))),
                 o.Status == "OPEN"
-                    ? Ui.BtnAsync("Đóng đơn", async () =>
-                    {
-                        if (!await Dialog.Confirm("Đóng đơn", $"Đóng đơn {o.No}? Đơn đã đóng không cấp phát, điều chỉnh tiếp; lượng giữ kho của đơn được nhả.")) return;
-                        X.Orders.SetStatus(o.Id, false); App.Main.Status("Đã đóng đơn.", "ok"); Reload();
-                    })
+                    ? Ui.BtnAsync("Đóng đơn", () => SettleScreen.CloseFlow(o.Id, o.No, Reload))
                     : Ui.Btn("Mở lại đơn", () => Ui.Try(() => { X.Orders.SetStatus(o.Id, true); Reload(); }, "Đã mở lại đơn."))),
             d.IsComplete ? null : Ui.Banner("CHƯA ĐỦ DỮ LIỆU: " + string.Join("; ", d.Issues.Select(i => i.Message).Distinct()), "warn"),
             Ui.Text("Phân rã theo chủng loại và size:", Ui.Muted),

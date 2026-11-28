@@ -8,7 +8,7 @@ public sealed class ReportScreen : Screen
     public static readonly (string Id, string Title)[] Kinds =
     {
         ("stock", "Tồn hiện tại"), ("inout", "Nhập – xuất – tồn"), ("norm", "Định mức một bộ"), ("demand", "Nhu cầu theo đơn"),
-        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("card", "Thẻ kho"), ("cfg", "Lịch sử cấu hình")
+        ("short", "Cảnh báo thiếu"), ("max", "Số bộ tối đa sản xuất được"), ("settle", "Quyết toán NPL theo đơn"), ("loss", "Hao hụt vượt định mức"), ("fulfil", "Đáp ứng đơn hàng"), ("hist", "Lịch sử giao dịch"), ("card", "Thẻ kho"), ("cfg", "Lịch sử cấu hình")
     };
 
     readonly string _kind;
@@ -20,7 +20,7 @@ public sealed class ReportScreen : Screen
     public ReportScreen(string kind)
     {
         _kind = kind;
-        if (kind is "inout" or "hist" or "card") { _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); _to = DateTime.Today; }
+        if (kind is "inout" or "hist" or "card" or "loss") { _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); _to = DateTime.Today; }
     }
 
     public override string Title => Kinds.First(k => k.Id == _kind).Title;
@@ -31,6 +31,8 @@ public sealed class ReportScreen : Screen
         "hist" => "Mọi biến động tồn đã xác nhận (nhập, xuất cấp phát, xuất bù, trả, điều chỉnh kiểm kê, chuyển NPL) kèm khách hàng, đơn, phạm vi, nơi xuất, nơi nhận, ghi chú.",
         "card" => "Thẻ kho của một mã NPL: tồn đầu kỳ, từng phiếu nhập/xuất trong kỳ với tồn sau mỗi giao dịch, cộng phát sinh và tồn cuối kỳ.",
         "short" => "Nhu cầu của đơn so với tồn khả dụng (đã trừ lượng giữ cho đơn khác).",
+        "settle" => "Theo nơi nhận / phạm vi / mã NPL: nhu cầu theo giao việc, đã cấp, bù hao hụt, trả/chuyển đi, số dư (dư – thiếu – đủ).",
+        "loss" => "Xuất bù hao hụt vượt định mức theo đơn / nơi nhận / mã NPL, so với nhu cầu theo định mức đã cấp.",
         "max" => "Theo cơ cấu size của đơn: số bộ tối đa = tổng số bộ × min(tồn khả dụng / nhu cầu) của mọi mã NPL. Riêng từng size: số bộ tối đa nếu chỉ sản xuất size đó (các size không cộng với nhau).",
         _ => ""
     };
@@ -42,12 +44,12 @@ public sealed class ReportScreen : Screen
         DatePickerFilter();
         void DatePickerFilter()
         {
-            if (_kind is not ("inout" or "hist" or "fulfil" or "card")) return;
+            if (_kind is not ("inout" or "hist" or "fulfil" or "card" or "loss")) return;
             var f = Ui.DateBox(_from); f.SelectedDateChanged += (_, _) => { if (f.SelectedDate?.Date != _from?.Date) { _from = f.SelectedDate?.Date; Reload(); } };
             var t = Ui.DateBox(_to); t.SelectedDateChanged += (_, _) => { if (t.SelectedDate?.Date != _to?.Date) { _to = t.SelectedDate?.Date; Reload(); } };
             filters.Children.Add(F("Từ ngày", f)); filters.Children.Add(F("Đến ngày", t));
         }
-        if (_kind is "stock" or "inout" or "fulfil" or "hist" or "card")
+        if (_kind is "stock" or "inout" or "fulfil" or "hist" or "card" or "loss")
             filters.Children.Add(F("Khách hàng", Ui.Combo(Opts.Customers(false, "Tất cả"), _cust, 220, v => { _cust = v; _mat = null; Reload(); })));
         if (_kind == "card")
         {
@@ -60,10 +62,10 @@ public sealed class ReportScreen : Screen
             var mats = Opts.Materials(_cust, false); mats.Insert(0, new Opt<string>("Tất cả NPL", ""));
             filters.Children.Add(F("Mã NPL", Ui.Combo(mats, _mat ?? "", 260, v => { _mat = v == "" ? null : v; Reload(); })));
         }
-        if (_kind is "demand" or "short" or "cfg" or "hist" or "max")
+        if (_kind is "demand" or "short" or "cfg" or "hist" or "max" or "settle" or "loss")
         {
             var orders = Opts.Orders(openOnly: false);
-            if (_kind == "hist") orders.Insert(0, new Opt<long?>("Tất cả đơn", null));
+            if (_kind is "hist" or "loss") orders.Insert(0, new Opt<long?>("Tất cả đơn", null));
             else _order ??= orders.FirstOrDefault()?.Value;
             filters.Children.Add(F("Đơn hàng", Ui.Combo(orders, _order, 320, v => { _order = v; Reload(); })));
         }
@@ -96,6 +98,8 @@ public sealed class ReportScreen : Screen
             case "inout": t = X.Reports.InOutStock(f); break;
             case "fulfil": t = X.Reports.Fulfillment(f with { OrderId = null }); break;
             case "hist": t = X.Reports.TransactionHistory(f); break;
+            case "settle": if (_order is long o5) t = X.Reports.SettlementReport(o5); else empty = "Chưa có đơn hàng."; break;
+            case "loss": t = X.Reports.LossReport(f); break;
             case "card": if (_mat is string mc) t = X.Reports.StockCard(mc, _from, _to); else empty = "Chưa có NPL."; break;
             case "demand": if (_order is long o1) t = _detail ? X.Reports.OrderDemandDetail(o1) : X.Reports.OrderDemand(o1); else empty = "Chưa có đơn hàng."; break;
             case "short": if (_order is long o2) t = X.Reports.OrderAvailability(o2, _onlyShort); else empty = "Chưa có đơn hàng."; break;
@@ -107,7 +111,7 @@ public sealed class ReportScreen : Screen
                 else empty = "Chưa có mã hàng."; break;
         }
         if (t is null) return Ui.Col(filters, Ui.Banner(empty ?? "Không có dữ liệu.", "warn"));
-        var notes = t.Filters.Where(x => x.StartsWith("CHƯA ĐỦ") || x.StartsWith("Trạng thái") || x.StartsWith("Theo cơ cấu")).ToList();
+        var notes = t.Filters.Where(x => x.StartsWith("CHƯA ĐỦ") || x.StartsWith("Trạng thái") || x.StartsWith("Theo cơ cấu") || x.StartsWith("Kết luận") || x.StartsWith("Chưa giao")).ToList();
         return Ui.Col(filters,
             Ui.Row(Ui.BtnAsync("Xuất Excel", () => Ui.Export(t, false), primary: true), Ui.BtnAsync("Xuất PDF", () => Ui.Export(t, true)),
                 Ui.Text($"{t.Rows.Count} dòng", Ui.Muted)),

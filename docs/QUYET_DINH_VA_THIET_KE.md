@@ -119,3 +119,18 @@ Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán t
 - Lọc nhật ký theo khoảng ngày, nhóm, từ khóa; không giới hạn 500 dòng; xuất Excel/PDF.
 - Không có người thực hiện (ứng dụng một người dùng, khóa PIN).
 - Lịch sử cấu hình đơn chỉ lấy các lần "Điều chỉnh" (không lẫn đóng/mở đơn).
+
+## 10. Cân đối cấp phát theo nơi nhận (thay thế cân đối theo đơn/chủng loại)
+
+- **Khóa sổ cân đối** = đơn + **nơi nhận** + **phạm vi** + mã NPL. Phạm vi = loại BOM: Cả bộ NPL (mọi loại) / Tổ cắt / Sản xuất / Đóng gói. Số dư của nơi nhận này **không bao giờ** tự bù cho nơi nhận khác, kể cả cùng mã NPL.
+- **Giao việc** (`assignment`): nơi nhận (loại nơi nhận hoặc cả hai) + phạm vi + số bộ theo size. Ràng buộc: với mỗi size và mỗi loại BOM, tổng số bộ giao (phạm vi "Cả bộ" chiếm chỗ của mọi loại) ≤ số bộ của đơn. Tăng số bộ giao = thêm đợt; giảm dưới phần đã cấp → phần đã cấp thành số dư.
+- **Nhu cầu của khóa** = định mức các BOM thuộc phạm vi × số bộ giao (làm tròn 2 số lẻ mỗi mã). Đề xuất = max(0, nhu cầu kỳ − số dư của đúng khóa).
+- **Nhiều phiếu nháp song song**: tối đa một phiếu nháp cho mỗi nơi nhận + phạm vi.
+- **Xuất bù**: Bù thiếu (issued += số lượng) – cảnh báo khi vượt phần đang thiếu; Bù hao hụt (issued += số lượng, loss += số lượng) → số dư không đổi, không làm giảm đề xuất sau; báo cáo "Hao hụt vượt định mức".
+- **Số dư cuối** = số dư đầu + thực cấp − nhu cầu kỳ − hao hụt.
+- **Trả NPL** theo nơi nhận + phạm vi; không trả vượt lượng nơi đó đã nhận.
+- **Điều chuyển NPL dư** (`surplus_transfer`): từ (đơn, nơi nhận, phạm vi) sang (đơn cùng khách hàng, nơi nhận, phạm vi) đã giao việc và có mã NPL trong định mức; chỉ trong phạm vi số dư dương; không đổi tồn kho; ghi sổ hai phía trong một giao dịch.
+- **Quyết toán & đóng đơn**: theo từng khóa – nhu cầu theo giao việc, đã cấp (không gồm hao hụt), bù hao hụt, trả/chuyển đi, số dư. Còn dư → không cho đóng; còn thiếu → phải xác nhận. Báo cáo cũng nêu số bộ chưa giao việc.
+- Kiểm tra đáp ứng / số bộ tối đa dùng "đã cấp ròng" = cấp + bù thiếu − trả (không tính hao hụt).
+- Điều chỉnh đơn không cho giảm số bộ dưới tổng đã giao việc (giảm giao việc trước).
+- Dữ liệu cũ (trước migration 9): sổ không có nơi nhận vẫn đọc được và vẫn quyết toán theo nhu cầu đã tính vào sổ.

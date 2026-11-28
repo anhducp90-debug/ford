@@ -9,16 +9,16 @@ internal static class DocText
 {
     public static string Type(DocRow d) => d.Kind == TransferService.Kind ? (d.Type == "OUT" ? "Chuyển sang KH khác" : "Nhận từ KH khác") : d.Type switch
     {
-        "IN" => "Nhập", "OUT" => d.RefDocId is not null ? "Xuất bù" : d.Scope is not null ? "Cấp phát" : "Xuất", "RETURN" => "Trả",
+        "IN" => "Nhập", "OUT" => d.RefDocId is not null ? (d.SubKind == "BU_HAO_HUT" ? "Bù hao hụt" : "Bù thiếu") : d.Scope is not null ? "Cấp phát" : "Xuất", "RETURN" => "Trả",
         "ADJUST_UP" => "Điều chỉnh tăng", "ADJUST_DOWN" => "Điều chỉnh giảm", _ => d.Type
     };
     public static string Status(string s) => s == "DRAFT" ? "Nháp" : "Đã xác nhận";
-    public static string Scope(string? s) => s switch { null => "", IssueService.AllScope => "Cả đơn", DemandCalculator.SetScope => "Theo bộ", _ => "Chủng loại " + s };
+    public static string Scope(string? s) => IssueScopes.Label(s);
 
     public static (string, Func<DocRow, string>, bool)[] Cols => new (string, Func<DocRow, string>, bool)[]
     {
         ("Số phiếu", d => d.DocNo, false), ("Loại", Type, false), ("Khách hàng", d => d.CustomerCode, false), ("Đơn", d => d.OrderNo, false),
-        ("Phạm vi", d => Scope(d.Scope), false), ("Nơi xuất", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
+        ("Nơi nhận cấp", d => d.IssuePlace, false), ("Phạm vi", d => Scope(d.Scope), false), ("Nơi xuất", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
         ("Xác nhận lúc", d => d.ConfirmedAt is DateTime t ? Ui.DT(t) : "", false), ("Ghi chú", d => d.Note ?? "", false)
     };
 
@@ -258,148 +258,6 @@ public sealed class CheckScreen : Screen
     }
 }
 
-public sealed class IssueScreen : Screen
-{
-    public override string Title => "Phiếu xuất (cấp phát)";
-    public override string Subtitle => "Đề xuất = nhu cầu kỳ − số dư cân đối (cấp thừa giảm, cấp thiếu cộng). Kho nhập thực cấp từng dòng; nhập 0 được giữ nguyên. Chỉ khi xác nhận mới trừ tồn.";
-    long? _order; string _scope = IssueService.AllScope; DocRow? _sel;
-    readonly Dictionary<string, string> _actual = new();
-
-    public IssueScreen(long? orderId = null) { _order = orderId; }
-
-    protected override Control Build()
-    {
-        var orders = Opts.Orders();
-        if (_order is null || orders.All(o => o.Value != _order)) _order = orders.FirstOrDefault()?.Value;
-        var orderCb = Ui.Combo(orders, _order, 380, v => { _order = v; _sel = null; _actual.Clear(); Reload(); });
-        if (_order is null) return Ui.Col(Ui.Row(Ui.Label("Đơn hàng"), orderCb), Ui.Banner("Không có đơn đang mở.", "warn"));
-        var o = X.Q.Orders().First(x => x.Id == _order);
-        var scopes = new List<Opt<string>> { new("Cả đơn", IssueService.AllScope), new("Theo bộ (NPL của BOM theo bộ)", DemandCalculator.SetScope) };
-        scopes.AddRange(X.Q.Variants(o.ProductId).Select(v => new Opt<string>("Chủng loại " + v.Code + " – " + v.Name, v.Code)));
-        var docs = X.Q.Docs("OUT", o.Id).Where(d => d.Scope is not null && d.RefDocId is null).ToList();
-        _sel = _sel is not null ? docs.FirstOrDefault(d => d.Id == _sel.Id) : docs.FirstOrDefault(d => d.Status == "DRAFT");
-        return Ui.Col(
-            Ui.Row(Ui.Label("Đơn hàng"), orderCb, Ui.Label("Phạm vi cấp"), Ui.Combo(scopes, _scope, 280, v => _scope = v),
-                Ui.Btn("Tạo phiếu xuất nháp", () => Ui.Try(() =>
-                {
-                    var id = X.Issue.CreateIssueDraft(o.Id, X.Q.NextNo("PX"), _scope);
-                    X.Places.SetDocPlaces(id, X.Places.DefaultOutFrom, null);
-                    _sel = X.Q.Docs("OUT", o.Id).First(d => d.Id == id); _actual.Clear(); Reload();
-                }, "Đã tạo phiếu xuất nháp theo nhu cầu còn lại."), primary: true)),
-            Ui.Hint("Không trộn phạm vi \"Cả đơn\" với phạm vi chủng loại/bộ trên cùng một đơn. Mỗi lúc chỉ có một phiếu nháp cho đơn."),
-            Ui.Card("Phiếu cấp phát của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; _actual.Clear(); Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : _sel.Status == "DRAFT" ? DraftCard(_sel) : Ui.Card($"Phiếu {_sel.DocNo} – đã xác nhận", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id)));
-    }
-
-    Control DraftCard(DocRow d)
-    {
-        var lines = X.Q.DocLines(d.Id);
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("140,240,110,130,130,*"), RowDefinitions = new RowDefinitions() };
-        void Cell(Control c, int row, int col) { c.Margin = new Avalonia.Thickness(0, 2, 10, 2); Grid.SetRow(c, row); Grid.SetColumn(c, col); grid.Children.Add(c); }
-        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        var hdr = new[] { "Mã NPL", "Tên", "Đề xuất", "Tồn khả dụng", "Thực cấp", "" };
-        for (var i = 0; i < hdr.Length; i++) Cell(Ui.Text(hdr[i], Ui.Muted, true), 0, i);
-        var r = 1;
-        foreach (var l in lines)
-        {
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            if (!_actual.ContainsKey(l.Material)) _actual[l.Material] = l.Entered ? Ui.N(l.Qty) : "";
-            var avail = X.Stock.OnHand(l.Material) - X.Stock.ReservedForOthers(l.Material, d.OrderId);
-            var tb = Ui.Input(110, "chưa nhập", _actual[l.Material]); tb.HorizontalContentAlignment = HorizontalAlignment.Right;
-            var mat = l.Material; tb.TextChanged += (_, _) => _actual[mat] = tb.Text ?? "";
-            Cell(Ui.Text(l.Material), r, 0); Cell(Ui.Text(l.MaterialName), r, 1); Cell(Ui.Text(Ui.N(l.Suggested ?? 0)), r, 2);
-            Cell(Ui.Text(Ui.N(avail), avail < (l.Suggested ?? 0) ? Ui.Bad : null), r, 3); Cell(tb, r, 4);
-            Cell(Ui.Text(l.Entered ? "" : "chưa nhập", Ui.Warn), r, 5);
-            r++;
-        }
-        List<string> SaveActual()
-        {
-            var warns = new List<string>();
-            foreach (var (m, v) in _actual.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)))
-                warns.AddRange(X.Issue.SetActual(d.Id, m, Ui.Dec(v, "thực cấp " + m)));
-            return warns;
-        }
-        return Ui.Card($"Phiếu nháp {d.DocNo} – {DocText.Scope(d.Scope)}", DocText.PlacesAndPrint(d, Reload), grid,
-            Ui.Row(
-                Ui.BtnAsync("Lưu thực cấp", async () =>
-                {
-                    var w = SaveActual(); Reload();
-                    if (w.Count > 0) await Dialog.Info("Cảnh báo", string.Join("\n", w)); else App.Main.Status("Đã lưu thực cấp.", "ok");
-                }),
-                Ui.BtnAsync("Xác nhận xuất", async () =>
-                {
-                    var w = SaveActual();
-                    var msg = $"Xác nhận phiếu {d.DocNo}? Hệ thống trừ tồn và ghi sổ cân đối cấp phát. Không sửa được sau khi xác nhận." + (w.Count > 0 ? "\n\nCảnh báo:\n" + string.Join("\n", w) : "");
-                    if (!await Dialog.Confirm("Xác nhận xuất", msg, "Xác nhận")) { Reload(); return; }
-                    X.Stock.Confirm(d.Id); _actual.Clear(); App.Main.Status("Đã xác nhận xuất kho.", "ok"); Reload();
-                }, primary: true),
-                Ui.BtnAsync("Hủy phiếu nháp", async () =>
-                {
-                    if (!await Dialog.Confirm("Hủy phiếu nháp", $"Hủy phiếu nháp {d.DocNo}?", "Hủy phiếu", danger: true)) return;
-                    X.Stock.DeleteDraft(d.Id, "Hủy phiếu xuất nháp"); _sel = null; _actual.Clear(); Reload();
-                }, danger: true)));
-    }
-}
-
-public sealed class ReturnScreen : Screen
-{
-    public override string Title => "Trả NPL & xuất bù";
-    public override string Subtitle => "Trả NPL theo đơn: khi xác nhận vừa tăng tồn vừa giảm lượng đã cấp (một lần, không tính hai lần). Xuất bù: phiếu bổ sung liên kết phiếu cấp gốc đã xác nhận.";
-    long? _order; string _scope = IssueService.AllScope; long? _src; DocRow? _sel;
-    readonly List<LineState> _ret = new(), _sup = new();
-
-    protected override Control Build()
-    {
-        var orders = Opts.Orders();
-        if (_order is null || orders.All(o => o.Value != _order)) _order = orders.FirstOrDefault()?.Value;
-        var orderCb = Ui.Combo(orders, _order, 380, v => { _order = v; _sel = null; _src = null; _ret.Clear(); _sup.Clear(); Reload(); });
-        if (_order is null) return Ui.Col(Ui.Row(Ui.Label("Đơn hàng"), orderCb), Ui.Banner("Không có đơn đang mở.", "warn"));
-        var o = X.Q.Orders().First(x => x.Id == _order);
-        var mats = Opts.Materials(o.CustomerId);
-        var scopes = new List<Opt<string>> { new("Cả đơn", IssueService.AllScope), new("Theo bộ", DemandCalculator.SetScope) };
-        scopes.AddRange(X.Q.Variants(o.ProductId).Select(v => new Opt<string>("Chủng loại " + v.Code, v.Code)));
-        var sources = X.Q.Docs("OUT", o.Id, "CONFIRMED").Where(d => d.Scope is not null && d.RefDocId is null).ToList();
-        _src ??= sources.FirstOrDefault()?.Id;
-        var docs = X.Q.Docs(null, o.Id).Where(d => d.Type == "RETURN" || (d.Type == "OUT" && d.RefDocId is not null)).ToList();
-        if (_sel is not null) _sel = docs.FirstOrDefault(d => d.Id == _sel.Id);
-        return Ui.Col(
-            Ui.Row(Ui.Label("Đơn hàng"), orderCb),
-            Ui.Card("Phiếu trả NPL",
-                Ui.Row(Ui.Label("Phạm vi"), Ui.Combo(scopes, _scope, 240, v => _scope = v)),
-                new LinesEditor(_ret, mats, "Số lượng trả").View,
-                Ui.Row(Ui.Btn("Tạo phiếu trả nháp", () => Ui.Try(() =>
-                {
-                    var id = X.Issue.CreateReturn(o.Id, X.Q.NextNo("TR"), LinesEditor.Read(_ret, "số lượng trả"), _scope);
-                    X.Places.SetDocPlaces(id, null, X.Places.DefaultInTo);
-                    _ret.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
-                }, "Đã tạo phiếu trả nháp."), primary: true))),
-            Ui.Card("Phiếu xuất bù",
-                sources.Count == 0 ? Ui.Hint("Đơn chưa có phiếu cấp phát đã xác nhận để xuất bù.") :
-                Ui.Row(Ui.Label("Phiếu cấp gốc"), Ui.Combo(sources.Select(s => new Opt<long?>($"{s.DocNo} ({DocText.Scope(s.Scope)})", s.Id)), _src, 260, v => _src = v)),
-                new LinesEditor(_sup, mats, "Số lượng bù").View,
-                Ui.Row(Ui.Btn("Tạo phiếu xuất bù nháp", () => Ui.Try(() =>
-                {
-                    var id = X.Issue.CreateSupplement(_src ?? throw new BusinessException("Chọn phiếu cấp gốc."), X.Q.NextNo("XB"), LinesEditor.Read(_sup, "số lượng bù"));
-                    var srcDoc = X.Q.Docs().First(x => x.Id == _src);
-                    X.Places.SetDocPlaces(id, srcDoc.FromPlaceId ?? X.Places.DefaultOutFrom, srcDoc.ToPlaceId);
-                    _sup.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
-                }, "Đã tạo phiếu xuất bù nháp."), primary: true))),
-            Ui.Card("Phiếu trả / xuất bù của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : Ui.Card($"{DocText.Type(_sel)} {_sel.DocNo} – {DocText.Status(_sel.Status)}", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id),
-                _sel.Status != "DRAFT" ? null : Ui.Row(
-                    Ui.BtnAsync("Xác nhận", async () =>
-                    {
-                        if (!await Dialog.Confirm("Xác nhận phiếu", $"Xác nhận {DocText.Type(_sel)} {_sel.DocNo}? Không sửa được sau khi xác nhận.", "Xác nhận")) return;
-                        X.Stock.Confirm(_sel.Id); App.Main.Status("Đã xác nhận phiếu.", "ok"); Reload();
-                    }, primary: true),
-                    Ui.BtnAsync("Hủy phiếu nháp", async () =>
-                    {
-                        if (!await Dialog.Confirm("Hủy phiếu nháp", $"Hủy phiếu nháp {_sel.DocNo}?", "Hủy phiếu", danger: true)) return;
-                        X.Stock.DeleteDraft(_sel.Id, "Hủy phiếu nháp"); _sel = null; Reload();
-                    }, danger: true))));
-    }
-}
-
 public sealed class TransferScreen : Screen
 {
     public override string Title => "Chuyển NPL giữa khách hàng";
@@ -449,25 +307,5 @@ public sealed class TransferScreen : Screen
                         if (!await Dialog.Confirm("Hủy phiếu chuyển", $"Hủy phiếu nháp {_sel.DocNo}?", "Hủy phiếu", danger: true)) return;
                         X.Transfer.DeleteDraft(_sel.Id, "Hủy phiếu chuyển nháp"); _sel = null; Reload();
                     }, danger: true))));
-    }
-}
-
-public sealed class CarryScreen : Screen
-{
-    public override string Title => "Cân đối cấp phát";
-    public override string Subtitle => "Số dư cuối = số dư đầu + thực cấp − nhu cầu kỳ. Dương: cấp thừa (giảm nhu cầu lần sau); âm: cấp thiếu (cộng vào nhu cầu lần sau). Hệ thống đọc số dư cuối mới nhất, không cộng dồn lịch sử.";
-    long? _order;
-
-    protected override Control Build()
-    {
-        var orders = Opts.Orders(openOnly: false); orders.Insert(0, new Opt<long?>("Tất cả đơn", null));
-        return Ui.Col(Ui.Row(Ui.Label("Đơn hàng"), Ui.Combo(orders, _order, 380, v => { _order = v; Reload(); })),
-            Ui.List(X.Q.Carry(_order), new (string, Func<CarryRow, string>, bool)[]
-            {
-                ("Đơn", r => r.OrderNo, false), ("Mã NPL", r => r.Material, false), ("Phạm vi", r => DocText.Scope(r.Scope), false),
-                ("Số dư đầu", r => Ui.N(r.Opening), true), ("Thực cấp", r => Ui.N(r.Issued), true), ("Nhu cầu kỳ", r => Ui.N(r.Demand), true),
-                ("Số dư cuối", r => Ui.N(r.Closing), true), ("Tình trạng", r => r.Closing > 0 ? "Cấp thừa" : r.Closing < 0 ? "Cấp thiếu" : "Cân đối", false),
-                ("Phiếu", r => r.DocNo, false), ("Thời điểm", r => Ui.DT(r.At), false)
-            }, maxHeight: 620));
     }
 }

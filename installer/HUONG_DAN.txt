@@ -23,7 +23,16 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
    - Nhập kho > Phiếu nhập: lập phiếu, Lưu nháp, Xác nhận nhập (chỉ khi xác nhận mới cộng tồn).
    - Khai báo > Đơn hàng: chọn mã hàng, nhập số bộ theo size, Lưu đơn.
    - Xuất kho > Kiểm tra đáp ứng: xem ĐỦ / THIẾU / CHƯA ĐỦ DỮ LIỆU, giữ kho cho đơn.
-   - Xuất kho > Phiếu xuất: tạo phiếu nháp theo nhu cầu còn lại, nhập thực cấp, Xác nhận xuất.
+   - Xuất kho > Giao việc theo nơi nhận: giao cho từng nơi nhận (tổ cắt, chuyền, tổ hoàn thiện…)
+     phạm vi NPL (Cả bộ / Tổ cắt / Sản xuất / Đóng gói) và số bộ theo size. Tăng số bộ = thêm đợt.
+   - Xuất kho > Phiếu xuất: chọn nơi nhận + phạm vi đã giao, tạo phiếu nháp theo nhu cầu còn lại
+     của ĐÚNG nơi nhận đó, nhập thực cấp, Xác nhận xuất. Các nơi nhận lập phiếu song song được.
+   - Cân đối cấp phát tính riêng từng nơi nhận: số dư của tổ này KHÔNG dùng cho tổ khác.
+     Muốn dùng NPL dư của tổ này cho tổ/đơn khác: Xuất kho > Điều chuyển NPL dư.
+   - Xuất bù: "Bù thiếu" (tính vào cân đối) hoặc "Bù hao hụt" (hao hụt vượt định mức, xem Báo cáo
+     > Hao hụt vượt định mức). Trả NPL theo nơi nhận.
+   - Xuất kho > Quyết toán & đóng đơn: còn DƯ phải trả kho hoặc điều chuyển trước khi đóng;
+     còn THIẾU phải xác nhận khi đóng.
    - Trả NPL, xuất bù, chuyển NPL giữa khách hàng, kiểm kê: ở các mục tương ứng.
    - Báo cáo: tồn, nhập–xuất–tồn, nhu cầu, cảnh báo thiếu…; xuất Excel / PDF.
 

@@ -142,6 +142,9 @@ public class PlaceBalanceTests
         var d2 = iss.CreateIssueDraft(o, f.Place("TO2"), IssueScopes.ToCat, "X2");
         Assert.Equal(7m, Sug(f, d2, "VAI"));                                  // 10 − 3 đã nhận qua điều chuyển
         Assert.Contains(new Queries(f.C).Carry(o), r => r.DocNo == "DC1");
+        f.Assign(o, S(10), "HT", IssueScopes.DongGoi);
+        Assert.Contains("không có trong định mức", Assert.Throws<BusinessException>(() =>
+            iss.TransferSurplus("DCx", o, f.Place("TO2"), IssueScopes.ToCat, o, f.Place("HT"), IssueScopes.DongGoi, new[] { new SurplusLine("VAI", 1m) })).Message);
         // khác khách hàng
         var kh2 = f.Cat.AddCustomer("KH2", "K2");
         var g = (long)Db.Scalar(f.C, "SELECT id FROM size_grid WHERE code='G_VOC'")!;
