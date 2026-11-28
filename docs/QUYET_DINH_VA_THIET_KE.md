@@ -77,7 +77,7 @@ Nguyên tắc: mỗi màn khai báo chỉ chọn **đối tượng cấp trên**
 | Khách hàng | – | (gốc) | Mã không trùng; đã phát sinh dữ liệu thì chỉ ngừng sử dụng |
 | Lưới size | – | dùng chung mọi khách hàng | Đã dùng thì khóa cấu trúc, sao chép thành lưới mới |
 | Mã hàng | Khách hàng, lưới size mặc định | trực tiếp | Khách hàng phải đang sử dụng |
-| Chủng loại + quy đổi size | Mã hàng | theo mã hàng | Mã hàng phải đang sử dụng; size đích thuộc lưới chủng loại |
+| Chủng loại + quy đổi size | Mã hàng; lưới size (mặc định = lưới của mã hàng, chỉ đổi khi chủng loại có quy ước size riêng) | theo mã hàng | Chủng loại dùng lưới mặc định: size tự tương ứng, không quy đổi (hệ thống chặn nhập quy đổi). Chủng loại khác lưới: với mỗi size mặc định chọn một size của chủng loại; nhiều size mặc định có thể về cùng một size; còn thiếu thì đơn hàng CHƯA ĐỦ DỮ LIỆU |
 | NPL | Khách hàng | trực tiếp | **Mã NPL duy nhất toàn hệ thống**; đã dùng thì không đổi khách hàng |
 | BOM | Mã hàng, loại (**Tổ cắt / Sản xuất / Đóng gói**), phạm vi (**theo bộ** hoặc **theo chủng loại** → chọn chủng loại) | theo mã hàng | Tổ cắt, Sản xuất: theo bộ hoặc theo chủng loại; **Đóng gói: bắt buộc theo bộ**. Một mã hàng + một loại chỉ chọn MỘT cách (theo bộ hoặc theo chủng loại) để không tính trùng. Theo bộ: số lượng = số bộ, size = lưới mặc định của mã hàng; theo chủng loại: số lượng = số sản phẩm, size = lưới chủng loại. Mỗi phạm vi tối đa 1 BOM mỗi loại (đổi định mức = phiên bản mới); tên tự đặt "<chủng loại> – <loại>" hoặc "<mã hàng> – <loại> (theo bộ)"; NPL của đúng khách hàng |
 | Đơn hàng | Mã hàng | theo mã hàng | Mã hàng và khách hàng đang sử dụng |
