@@ -4,7 +4,7 @@
 
 | # | Vấn đề | Quyết định |
 |---|--------|-----------|
-| 1 | Quy đổi size | Ánh xạ (size mặc định, chủng loại) → đúng 1 size đích của chủng loại. Nhiều size mặc định (Vóc/Chiều cao) được phép cùng về 1 size đích (S/M/L/XL). Không cần tỷ lệ. |
+| 1 | Quy đổi size | **Không quy đổi size trong hệ thống.** Mỗi mã hàng có một lưới size; mọi chủng loại và BOM dùng lưới đó. Định mức theo quy ước size khác (ví dụ áo S M L) phải được người dùng quy đổi sang size của mã hàng ngoài hệ thống trước khi khai báo BOM. |
 | 2 | Phiên bản BOM | Mỗi lần sửa BOM tạo phiên bản mới với `created_at`. Khi lập đơn, chọn phiên bản có `created_at` lớn nhất mà <= ngày lập đơn, ghi cố định vào snapshot của đơn. |
 | 3 | Làm tròn | Tính bằng `decimal` đủ độ chính xác, làm tròn half-up 2 chữ số thập phân ở **tổng nhu cầu mỗi mã NPL** (không làm tròn từng dòng trung gian). Các dòng chi tiết hiển thị 2 số lẻ, có ghi chú "tổng có thể lệch do làm tròn hiển thị". |
 | 4 | Bảo mật | Không đăng nhập. Khóa PIN (lưu hash PBKDF2 + salt), tự khóa sau N phút không thao tác (mặc định 5, cấu hình được). Thao tác nhạy cảm (xác nhận xuất, phục hồi DB) không đòi PIN lại, trừ khi ứng dụng đang khóa. |
@@ -32,7 +32,7 @@ Danh mục
 - `size_grid(id, code UNIQUE, name, active, used_flag)`; `size_grid_item(id, grid_id, size_code, voc, chieu_cao, UNIQUE(grid_id,size_code))`
 - `product(id, customer_id, code, name, default_grid_id, active, UNIQUE(customer_id,code))`
 - `variant(id, product_id, code, name, group_name, qty_per_set, grid_id)`
-- `size_map(id, variant_id, default_size_code, variant_size_code, UNIQUE(variant_id, default_size_code))`
+- `size_map(...)` – **không dùng nữa** (migration 6 đưa mọi chủng loại về lưới của mã hàng); giữ bảng để tra cứu dữ liệu cũ.
 
 BOM
 - `bom(id, product_id, name, type, scope_variant_id NULL)`
@@ -57,7 +57,7 @@ Kho
 
 ## 4. Thuật toán nhu cầu (Core)
 
-1. Với mỗi `order_line` (size mặc định S, Q bộ) và mỗi `variant` V: `qty = Q × K(V)`, size đích = `size_map(V, S)`; thiếu map → trạng thái CHƯA ĐỦ DỮ LIỆU.
+1. Với mỗi `order_line` (size S, Q bộ) và mỗi `variant` V: `qty = Q × K(V)`, size của chủng loại = S (không quy đổi).
 2. Cộng gộp theo (V, size đích).
 3. Với mỗi (V, size đích) lấy các dòng của mọi BOM áp dụng (bản đã snapshot): dòng size cụ thể thắng dòng `*` **trong cùng (bom, material, variant)**; không có dòng nào → CHƯA ĐỦ DỮ LIỆU.
 4. Lượng = qty × usage × (1 + waste/100). Cộng theo (material) giữ nguyên nguồn (bom, V, size) để drill-down. Dùng GROUP BY trên bảng đã khử trùng, không join nhân dòng.
@@ -76,8 +76,8 @@ Nguyên tắc: mỗi màn khai báo chỉ chọn **đối tượng cấp trên**
 |---|---|---|---|
 | Khách hàng | – | (gốc) | Mã không trùng; đã phát sinh dữ liệu thì chỉ ngừng sử dụng |
 | Lưới size | – | dùng chung mọi khách hàng | Đã dùng thì khóa cấu trúc, sao chép thành lưới mới |
-| Mã hàng | Khách hàng, lưới size mặc định | trực tiếp | Khách hàng phải đang sử dụng |
-| Chủng loại + quy đổi size | Mã hàng; lưới size (mặc định = lưới của mã hàng, chỉ đổi khi chủng loại có quy ước size riêng) | theo mã hàng | Chủng loại dùng lưới mặc định: size tự tương ứng, không quy đổi (hệ thống chặn nhập quy đổi). Chủng loại khác lưới: với mỗi size mặc định chọn một size của chủng loại; nhiều size mặc định có thể về cùng một size; còn thiếu thì đơn hàng CHƯA ĐỦ DỮ LIỆU |
+| Mã hàng | Khách hàng, lưới size | trực tiếp | Khách hàng phải đang sử dụng; lưới size dùng cho đơn hàng, mọi chủng loại và BOM |
+| Chủng loại | Mã hàng | theo mã hàng | Dùng lưới size của mã hàng; không có quy đổi size |
 | NPL | Khách hàng | trực tiếp | **Mã NPL duy nhất toàn hệ thống**; đã dùng thì không đổi khách hàng |
 | BOM | Mã hàng, loại (**Tổ cắt / Sản xuất / Đóng gói**), phạm vi (**theo bộ** hoặc **theo chủng loại** → chọn chủng loại) | theo mã hàng | Tổ cắt, Sản xuất: theo bộ hoặc theo chủng loại; **Đóng gói: bắt buộc theo bộ**. Một mã hàng + một loại chỉ chọn MỘT cách (theo bộ hoặc theo chủng loại) để không tính trùng. Theo bộ: số lượng = số bộ, size = lưới mặc định của mã hàng; theo chủng loại: số lượng = số sản phẩm, size = lưới chủng loại. Mỗi phạm vi tối đa 1 BOM mỗi loại (đổi định mức = phiên bản mới); tên tự đặt "<chủng loại> – <loại>" hoặc "<mã hàng> – <loại> (theo bộ)"; NPL của đúng khách hàng |
 | Đơn hàng | Mã hàng | theo mã hàng | Mã hàng và khách hàng đang sử dụng |
@@ -92,7 +92,7 @@ Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán t
 ### Tính nhu cầu với BOM theo bộ
 
 - BOM theo bộ: nhu cầu = số bộ (theo size mặc định) × định mức size đó (hoặc '*') × (1 + hao hụt). Nguồn nhu cầu ghi chủng loại là "(Bộ)".
-- BOM theo chủng loại: nhu cầu = số sản phẩm (số bộ × SL/bộ, theo size đã quy đổi) × định mức × (1 + hao hụt).
+- BOM theo chủng loại: nhu cầu = số sản phẩm (số bộ × SL/bộ, cùng size của đơn) × định mức × (1 + hao hụt).
 - Đơn hàng đủ dữ liệu khi: mọi BOM đã khai báo đều có định mức cho các size của đơn, và mỗi chủng loại/size có ít nhất một nguồn định mức (BOM riêng của chủng loại hoặc BOM theo bộ).
 - Cấp phát theo phạm vi: "ALL" (cả đơn), mã chủng loại, hoặc "(Bộ)" (chỉ NPL từ BOM theo bộ, ví dụ cấp riêng cho tổ đóng gói).
 - Migration 5 đổi loại cũ "Chủng loại" thành "Sản xuất". BOM Đóng gói theo chủng loại tạo trước đó vẫn tính được, nhưng không tạo mới được.

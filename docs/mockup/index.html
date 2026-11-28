@@ -104,22 +104,22 @@ input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
 // ---------- Dữ liệu mẫu ----------
 const DEF_SIZES=["110/56","110/60","120/60","130/64"];
 const PRODUCTS={"MH-2204":{n:"Bộ đồng phục",k:"KH01",grid:"G_VOC – Vóc/Chiều cao"},"MH-1180":{n:"Áo khoác",k:"KH02",grid:"G_SML – S M L XL"}};
-// def:true = chủng loại dùng lưới size mặc định của mã hàng → size tự tương ứng, không cần quy đổi
-const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"Vóc/Chiều cao",def:true,p:"MH-2204"}];
-const VARS_ALL=VARIANTS.concat([{c:"AK_XAM",n:"Áo khoác xám",g:"Áo",k:1,grid:"S M L XL",def:true,p:"MH-1180"}]);
+// Mọi chủng loại dùng lưới size của mã hàng; hệ thống không quy đổi size.
+const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,p:"MH-2204"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,p:"MH-2204"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,p:"MH-2204"}];
+const VARS_ALL=VARIANTS.concat([{c:"AK_XAM",n:"Áo khoác xám",g:"Áo",k:1,p:"MH-1180"}]);
+const pSizes=pc=>pc==="MH-2204"?DEF_SIZES:["S","M","L","XL"];
 const vName=c=>VARS_ALL.find(v=>v.c===c).n;
 const BT={TO_CAT:"Tổ cắt",SAN_XUAT:"Sản xuất",DONG_GOI:"Đóng gói"};
 const SET="(Bộ)";const vLabel=c=>c===SET?"Cả bộ":vName(c);
-const MAP={AO_DO:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},AO_XANH:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},QUAN_DEN:{"110/56":"110/56","110/60":"110/60","120/60":"120/60","130/64":"130/64"}};   // lưới mặc định: tự tương ứng
 const CUSTS={KH01:"Công ty Hoàng Long",KH02:"May xuất khẩu Đại Phát"};
 // [tên, ĐVT, tồn, đã giữ, khách hàng] — mỗi NPL thuộc đúng một khách hàng
 const MATS={VAI_DO:["Vải đỏ","m",180,0,"KH01"],VAI_XANH:["Vải xanh","m",150,0,"KH01"],VAI_DEN:["Vải đen","m",160,20,"KH01"],CHI:["Chỉ may","cuộn",4,0,"KH01"],NUT:["Nút","cái",800,0,"KH01"],KHOA:["Khóa kéo","cái",500,0,"KH01"],NHAN:["Nhãn chính","cái",300,0,"KH01"],TUI:["Túi đựng bộ","cái",150,0,"KH01"],
  KH2_KAKI:["Vải kaki","m",90,0,"KH02"],KH2_CHI:["Chỉ may KH02","cuộn",6,0,"KH02"],KH2_VAI_DO:["Vải đỏ (mã KH02)","m",0,0,"KH02"]};
 // BOM: Tổ cắt / Sản xuất khai báo theo bộ hoặc theo chủng loại; Đóng gói bắt buộc theo bộ. Đã chọn phiên bản theo ngày lập đơn.
-// Theo bộ: số bộ × định mức theo size mặc định. Theo chủng loại: số sản phẩm × định mức theo size quy đổi. '*' = nền; size cụ thể ghi đè.
+// Theo bộ: số bộ × định mức theo size. Theo chủng loại: số sản phẩm × định mức theo size (size của mã hàng, không quy đổi). '*' = nền; size cụ thể ghi đè.
 const BOMS=[
- {v:"AO_DO",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_DO",s:"*",u:1.2,w:3},{m:"VAI_DO",s:"M",u:1.3,w:3},{m:"VAI_DO",s:"L",u:1.4,w:3}]},
- {v:"AO_XANH",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_XANH",s:"*",u:1.2,w:3},{m:"VAI_XANH",s:"M",u:1.3,w:3},{m:"VAI_XANH",s:"L",u:1.4,w:3}]},
+ {v:"AO_DO",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_DO",s:"*",u:1.2,w:3},{m:"VAI_DO",s:"120/60",u:1.3,w:3},{m:"VAI_DO",s:"130/64",u:1.4,w:3}]},
+ {v:"AO_XANH",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_XANH",s:"*",u:1.2,w:3},{m:"VAI_XANH",s:"120/60",u:1.3,w:3},{m:"VAI_XANH",s:"130/64",u:1.4,w:3}]},
  {v:"QUAN_DEN",t:"TO_CAT",ver:"v1 (05/01/2026)",lines:[{m:"VAI_DEN",s:"*",u:1,w:3},{m:"VAI_DEN",s:"110/56",u:.95,w:3},{m:"VAI_DEN",s:"110/60",u:1.05,w:3},{m:"VAI_DEN",s:"120/60",u:1.05,w:3},{m:"VAI_DEN",s:"130/64",u:1.15,w:3}]},
  {v:"AO_DO",t:"SAN_XUAT",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
  {v:"AO_XANH",t:"SAN_XUAT",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
@@ -130,7 +130,7 @@ const fmt=(n,d=2)=>Number(n).toLocaleString("vi-VN",{minimumFractionDigits:d,max
 const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 
 // ---------- Phần lõi (cùng quy tắc với QuanLyNPL.Core) ----------
-function breakdown(sets=st.sets){const acc={};for(const ds of DEF_SIZES){const q=+sets[ds]||0;for(const v of VARIANTS){const t=MAP[v.c][ds];const k=v.c+"|"+t;acc[k]=(acc[k]||0)+q*v.k}}
+function breakdown(sets=st.sets){const acc={};for(const ds of DEF_SIZES){const q=+sets[ds]||0;for(const v of VARIANTS){const k=v.c+"|"+ds;acc[k]=(acc[k]||0)+q*v.k}}
   return Object.entries(acc).map(([k,q])=>{const[v,s]=k.split("|");return{v,s,q}})}
 function demand(sets=st.sets){const rows=breakdown(sets),src=[];
   for(const b of BOMS.filter(b=>b.set)){for(const ds of DEF_SIZES){const q=+sets[ds]||0;if(!q)continue;
@@ -145,7 +145,7 @@ function avail(d){return Object.keys(d.tot).sort().map(m=>{const[,,oh,rs]=MATS[m
 // ---------- Khung ----------
 const MODULES=[
  {id:"admin",t:"Quản trị",items:[["backup","Sao lưu / Phục hồi"],["security","Bảo mật & khóa PIN"],["audit","Nhật ký thay đổi"]]},
- {id:"decl",t:"Khai báo",items:[["cust","Khách hàng"],["mat","Nguyên phụ liệu"],["grid","Lưới size"],["product","Mã hàng"],["variant","Chủng loại & quy đổi size"],["bom","BOM & định mức"],["order","Đơn hàng"],["adjust","Điều chỉnh đơn"]]},
+ {id:"decl",t:"Khai báo",items:[["cust","Khách hàng"],["mat","Nguyên phụ liệu"],["grid","Lưới size"],["product","Mã hàng"],["variant","Chủng loại"],["bom","BOM & định mức"],["order","Đơn hàng"],["adjust","Điều chỉnh đơn"]]},
  {id:"in",t:"Nhập kho",items:[["recv","Phiếu nhập"],["count","Kiểm kê & điều chỉnh tồn"]]},
  {id:"out",t:"Xuất kho",items:[["check","Kiểm tra đáp ứng"],["issue","Phiếu xuất (cấp phát)"],["ret","Trả NPL & xuất bù"],["transfer","Chuyển NPL giữa khách hàng"],["carry","Cân đối cấp phát"]]},
  {id:"rep",t:"Báo cáo",items:[["report:stock","Tồn hiện tại"],["report:inout","Nhập – xuất – tồn"],["report:demand","Nhu cầu theo đơn"],["report:short","Cảnh báo thiếu"],["report:fulfil","Đáp ứng đơn hàng"],["report:hist","Lịch sử giao dịch"],["report:cfg","Lịch sử cấu hình"]]}];
@@ -164,7 +164,7 @@ function statusBanner(d,a){if(d.rows.length===0)return"";const sh=a.filter(x=>x.
 
 // ---------- Màn hình ----------
 const VIEWS={
-order(){return `<h1>Đơn hàng</h1><p class="sub">Nhập số bộ theo size mặc định; hệ thống tự phân rã theo chủng loại và quy đổi size.</p>
+order(){return `<h1>Đơn hàng</h1><p class="sub">Nhập số bộ theo size của mã hàng; hệ thống tự phân rã thành số lượng từng chủng loại, giữ nguyên size.</p>
  <div class="bar"><button class="btn primary" data-t="Đã lưu đơn và chụp cấu hình (snapshot)">Lưu đơn</button><button class="btn" data-t="Mở màn Điều chỉnh đơn: xem chênh lệch nhu cầu trước khi lưu">Điều chỉnh đơn…</button><button class="btn" data-t="Lịch sử cấu hình: v1 Lập đơn 02/04/2026">Lịch sử cấu hình</button></div>
  <div class="grid2"><div class="panel"><h3>Thông tin đơn</h3>
   <table><tr><td class="hint">Mã hàng <span class="warnline">*</span></td><td><select aria-label="Mã hàng"><option>MH-2204 – Bộ đồng phục</option></select></td></tr>
@@ -173,7 +173,7 @@ order(){return `<h1>Đơn hàng</h1><p class="sub">Nhập số bộ theo size m�
   <h3 style="margin-top:14px">Số bộ theo size mặc định <span class="tag">(lưới Vóc/Chiều cao)</span></h3>
   <table><tr><th>Size</th><th class="n">Số bộ</th></tr>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td class="n"><input type="number" min="0" data-ds="${s}" value="${st.sets[s]}" aria-label="Số bộ size ${s}"></td></tr>`).join("")}
   <tr><td><b>Tổng</b></td><td class="n" id="totSets"></td></tr></table></div>
-  <div class="panel scroll"><h3>Kết quả phân rã (theo chủng loại và size đích)</h3><div id="outPane"></div></div></div>`},
+  <div class="panel scroll"><h3>Kết quả phân rã (theo chủng loại và size)</h3><div id="outPane"></div></div></div>`},
 check(){const d=demand(),a=avail(d);return `<h1>Kiểm tra khả năng đáp ứng</h1><p class="sub">Đơn DH-0412 · tồn khả dụng = tồn thực tế − lượng giữ cho đơn khác</p>${statusBanner(d,a)}
  <div class="bar"><label><input type="checkbox" id="onlyShort"> Chỉ mã thiếu</label><button class="btn" data-t="Mô hình: xuất Excel">Xuất Excel</button><button class="btn" data-t="Mô hình: xuất PDF">Xuất PDF</button><span class="hint">Bấm một dòng để xem nhu cầu đến từ BOM / chủng loại / size nào.</span></div>
  <div style="display:grid;gap:14px"><div class="scroll"><table id="chk"><thead><tr><th>Mã NPL</th><th>Tên</th><th>ĐVT</th><th class="n">Nhu cầu</th><th class="n">Tồn</th><th class="n">Đã giữ</th><th class="n">Khả dụng</th><th class="n">Thiếu</th><th></th></tr></thead><tbody id="chkBody"></tbody></table></div>
@@ -209,31 +209,25 @@ mat(){const rows=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.c
  <div class="bar"><label for="fCust">Lọc theo khách hàng</label><select id="fCust" style="max-width:230px"><option value="">Tất cả khách hàng</option>${Object.keys(CUSTS).map(c=>`<option value="${c}" ${st.custFilter===c?"selected":""}>${c} – ${CUSTS[c]}</option>`).join("")}</select><input type="text" placeholder="Tìm mã hoặc tên" aria-label="Tìm" style="max-width:200px"></div>
  <div class="scroll"><table><thead><tr><th>Mã</th><th>Tên</th><th>Khách hàng</th><th>ĐVT</th><th class="n">Tồn thực tế</th><th class="n">Đã giữ</th><th>Trạng thái</th></tr></thead><tbody>${rows.map(([c,[n,u,oh,rs,k]])=>`<tr><td>${c}</td><td>${n}</td><td>${k}</td><td>${u}</td><td class="n">${fmt(oh)}</td><td class="n">${fmt(rs)}</td><td><span class="chip ok">Đang dùng</span></td></tr>`).join("")}</tbody></table></div>
  <p class="hint">NPL đã dùng trong BOM hoặc giao dịch kho thì không đổi khách hàng. NPL cũ chưa gán khách hàng sẽ hiện cảnh báo cho tới khi được gán.</p>`},
-product(){return `<h1>Mã hàng</h1><p class="sub">Khai báo mã hàng: chọn khách hàng sở hữu và lưới size mặc định (dùng để nhập đơn).</p>
+product(){return `<h1>Mã hàng</h1><p class="sub">Khai báo mã hàng: chọn khách hàng sở hữu và lưới size. Lưới size dùng chung cho đơn hàng, mọi chủng loại và BOM của mã hàng.</p>
  <div class="panel" style="margin-bottom:14px"><h3>Khai báo mã hàng</h3><div class="bar">
   <label for="pCust">Khách hàng <span class="warnline">*</span></label><select id="pCust" style="max-width:230px"><option value="">— Chọn khách hàng —</option>${Object.entries(CUSTS).map(([c,n])=>`<option value="${c}">${c} – ${n}</option>`).join("")}</select>
   <label for="pCode">Mã <span class="warnline">*</span></label><input type="text" id="pCode" style="max-width:120px"><label for="pName">Tên <span class="warnline">*</span></label><input type="text" id="pName" style="max-width:170px">
-  <label for="pGrid">Lưới mặc định <span class="warnline">*</span></label><select id="pGrid" style="max-width:190px"><option>G_VOC – Vóc/Chiều cao</option><option>G_SML – S M L XL</option></select>
+  <label for="pGrid">Lưới size <span class="warnline">*</span></label><select id="pGrid" style="max-width:190px"><option>G_VOC – Vóc/Chiều cao</option><option>G_SML – S M L XL</option></select>
   <button class="btn primary" id="pSave">Lưu mã hàng</button></div><div id="pMsg" class="warnline"></div></div>
- <div class="scroll"><table><thead><tr><th>Mã hàng</th><th>Tên</th><th>Khách hàng</th><th>Lưới mặc định</th><th class="n">Chủng loại</th></tr></thead><tbody>
+ <div class="scroll"><table><thead><tr><th>Mã hàng</th><th>Tên</th><th>Khách hàng</th><th>Lưới size</th><th class="n">Chủng loại</th></tr></thead><tbody>
  ${Object.entries(PRODUCTS).map(([c,p])=>`<tr><td>${c}</td><td>${p.n}</td><td>${p.k}</td><td>${p.grid}</td><td class="n">${VARS_ALL.filter(v=>v.p===c).length}</td></tr>`).join("")}</tbody></table></div>`},
-variant(){const p=PRODUCTS[st.varP];const vs=VARS_ALL.filter(v=>v.p===st.varP);const other=vs.filter(v=>!v.def),same=vs.filter(v=>v.def);
- const defSizes=st.varP==="MH-2204"?DEF_SIZES:["S","M","L","XL"];
- return `<h1>Chủng loại & quy đổi size</h1><p class="sub">Chọn mã hàng; chủng loại tự thuộc khách hàng của mã hàng. Chủng loại mặc định dùng lưới size của mã hàng; chỉ chọn lưới khác khi chủng loại có quy ước size riêng.</p>
+variant(){const p=PRODUCTS[st.varP];const vs=VARS_ALL.filter(v=>v.p===st.varP);
+ return `<h1>Chủng loại</h1><p class="sub">Chọn mã hàng; chủng loại tự thuộc khách hàng và dùng lưới size của mã hàng. Nhóm Áo/Quần chỉ để phân loại, không gộp chủng loại.</p>
  <div class="panel" style="margin-bottom:14px"><h3>Khai báo chủng loại</h3><div class="bar">
   <label for="vProd">Mã hàng <span class="warnline">*</span></label><select id="vProd" style="max-width:230px">${Object.entries(PRODUCTS).map(([c,x])=>`<option value="${c}" ${st.varP===c?"selected":""}>${c} – ${x.n}</option>`).join("")}</select>
-  <span class="chip muted">Khách hàng: ${p.k} – ${CUSTS[p.k]}</span><span class="chip muted">Lưới mặc định: ${p.grid}</span></div>
-  <div class="bar"><label for="vCode">Mã <span class="warnline">*</span></label><input type="text" id="vCode" style="max-width:110px"><label for="vName">Tên <span class="warnline">*</span></label><input type="text" id="vName" style="max-width:150px">
+  <span class="chip muted">Khách hàng: ${p.k} – ${CUSTS[p.k]}</span><span class="chip muted">Lưới size: ${p.grid}</span></div>
+  <div class="bar"><label for="vCode">Mã <span class="warnline">*</span></label><input type="text" id="vCode" style="max-width:110px"><label for="vName">Tên <span class="warnline">*</span></label><input type="text" id="vName" style="max-width:160px">
   <label for="vGroup">Nhóm</label><select id="vGroup" style="max-width:100px"><option>Áo</option><option>Quần</option><option>Khác</option></select>
   <label for="vQty">SL/bộ <span class="warnline">*</span></label><input type="number" id="vQty" value="1" min="1" style="max-width:70px">
-  <label for="vGrid">Lưới size</label><select id="vGrid" style="max-width:240px"><option>Theo mã hàng (mặc định): ${p.grid}</option><option>G_SML – S M L XL</option><option>G_VOC – Vóc/Chiều cao</option></select>
-  <button class="btn primary" data-t="Mô hình: đã lưu chủng loại cho ${st.varP} (khách hàng ${p.k})">Lưu chủng loại</button></div>
-  <p class="hint" style="margin:0">Giữ lưới mặc định thì size của chủng loại trùng size của đơn hàng, không cần quy đổi.</p></div>
- <div class="grid2"><div class="panel"><h3>Cấu thành một bộ – ${st.varP}</h3><table><thead><tr><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th><th>Lưới size</th></tr></thead>${vs.map(v=>`<tr><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td><td>${v.grid} ${v.def?'<span class="chip ok">mặc định</span>':'<span class="chip warn">cần quy đổi</span>'}</td></tr>`).join("")}</table></div>
- <div class="panel scroll"><h3>Quy đổi size (chủng loại có quy ước size khác)</h3>${other.length?`<table><thead><tr><th>Size mặc định</th>${other.map(v=>`<th>${v.n} <span class="tag">(${v.grid})</span></th>`).join("")}</tr></thead>
-  ${defSizes.map(s=>`<tr><td>${s}</td>${other.map(v=>`<td><select aria-label="${v.n} ứng với ${s}"><option value="">— chọn —</option>${v.grid.split(" ").map(z=>`<option ${MAP[v.c]&&MAP[v.c][s]===z?"selected":""}>${z}</option>`).join("")}</select></td>`).join("")}</tr>`).join("")}</table>
-  <p class="hint">Mỗi size mặc định chọn một size tương ứng của chủng loại; nhiều size mặc định có thể về cùng một size (110/56 và 110/60 đều là áo S). Còn ô trống thì đơn hàng báo CHƯA ĐỦ DỮ LIỆU.</p>`:`<p class="hint">Mọi chủng loại dùng lưới mặc định, không cần quy đổi.</p>`}
-  ${same.length?`<p class="hint">Tự tương ứng (dùng lưới mặc định): ${same.map(v=>v.n).join(", ")}.</p>`:""}</div></div>`},
+  <button class="btn primary" data-t="Mô hình: đã lưu chủng loại cho ${st.varP} (khách hàng ${p.k})">Lưu chủng loại</button></div></div>
+ <div class="panel" style="max-width:640px"><h3>Cấu thành một bộ – ${st.varP}</h3><table><thead><tr><th>Mã</th><th>Chủng loại</th><th>Nhóm</th><th class="n">SL/bộ</th></tr></thead>${vs.map(v=>`<tr><td>${v.c}</td><td>${v.n}</td><td>${v.g}</td><td class="n">${v.k}</td></tr>`).join("")}</table>
+  <p class="hint">Size của chủng loại là size của mã hàng (${pSizes(st.varP).join(", ")}). Nếu định mức thực tế theo quy ước size khác, hãy quy đổi định mức sang size của mã hàng ngoài hệ thống trước khi khai báo BOM.</p></div>`},
 grid(){return `<h1>Lưới size</h1><p class="sub">Khai báo một lần, dùng chung cho mọi khách hàng và mã hàng. Lưới đã dùng không sửa cấu trúc; tạo lưới mới rồi gán lại.</p>
  <div class="grid2"><div class="panel"><h3>Danh sách lưới</h3><table><thead><tr><th>Mã</th><th>Tên</th><th>Dùng bởi</th></tr></thead>
   <tr><td>G_VOC</td><td>Vóc / Chiều cao</td><td><span class="chip warn">Đã dùng</span> 1 mã hàng</td></tr><tr><td>G_SML</td><td>S M L XL</td><td><span class="chip warn">Đã dùng</span> 3 chủng loại</td></tr><tr><td>G_VOC_2</td><td>Vóc / Chiều cao v2</td><td><span class="chip ok">Chưa dùng</span></td></tr></table>
@@ -244,7 +238,7 @@ bom(){const P=st.bomP,p=PRODUCTS[P],T=st.bomT;if(T==="DONG_GOI")st.bomScope="SET
  const isSet=st.bomScope==="SET";const setB=BOMS.find(b=>b.set&&b.p===P&&b.t===T);const varBs=BOMS.filter(b=>!b.set&&b.t===T&&vs.some(x=>x.c===b.v));
  const b=isSet?setB:BOMS.find(x=>!x.set&&x.v===st.bomV&&x.t===T);
  const conflict=isSet&&varBs.length?`Mã hàng đã có BOM ${BT[T]} theo chủng loại (${varBs.map(x=>vName(x.v)).join(", ")}).`:(!isSet&&setB?`Mã hàng đã có BOM ${BT[T]} theo bộ.`:"");
- const sizes=isSet?DEF_SIZES.join(", "):(VARS_ALL.find(x=>x.c===st.bomV)||{grid:""}).grid;
+ const sizes=pSizes(P).join(", ");
  return `<h1>BOM & định mức</h1><p class="sub">Chọn mã hàng (khách hàng tự gán), loại BOM và phạm vi. Tổ cắt và Sản xuất: theo bộ hoặc theo chủng loại. Đóng gói: luôn theo bộ.</p>
  <div class="panel" style="margin-bottom:14px">
   <div class="bar"><label for="bProd">Mã hàng <span class="warnline">*</span></label><select id="bProd" style="max-width:240px">${Object.entries(PRODUCTS).map(([c,x])=>`<option value="${c}" ${P===c?"selected":""}>${c} – ${x.n}</option>`).join("")}</select>
@@ -255,14 +249,14 @@ bom(){const P=st.bomP,p=PRODUCTS[P],T=st.bomT;if(T==="DONG_GOI")st.bomScope="SET
    <label class="btn ${!isSet?"primary":""}" ${T==="DONG_GOI"?'style="opacity:.45"':""}><input type="radio" name="bScope" value="VAR" ${!isSet?"checked":""} ${T==="DONG_GOI"?"disabled":""} style="margin:0 6px 0 0">Theo chủng loại</label>
    ${T==="DONG_GOI"?'<span class="tag">BOM đóng gói luôn tính theo bộ</span>':""}
    ${!isSet?`<select id="bVar" aria-label="Chủng loại" style="max-width:200px">${vs.map(x=>`<option value="${x.c}" ${st.bomV===x.c?"selected":""}>${x.n}</option>`).join("")}</select>`:""}</div>
-  <p class="hint" style="margin:0">${isSet?`Số lượng = số bộ; size theo lưới mặc định của mã hàng (${sizes}).`:`Số lượng = số sản phẩm của chủng loại; size theo lưới chủng loại (${sizes}).`}</p></div>
+  <p class="hint" style="margin:0">${isSet?`Số lượng = số bộ; size theo lưới size của mã hàng (${sizes}).`:`Số lượng = số sản phẩm của chủng loại; size theo lưới size của mã hàng (${sizes}).`}</p></div>
  ${conflict?`<div class="banner warn">${conflict} <small>Một loại BOM chỉ khai báo theo bộ hoặc theo chủng loại để không tính trùng.</small></div>`
  :b?`<div class="bar"><span class="chip muted">${isSet?P+" – "+BT[T]+" (theo bộ)":vName(st.bomV)+" – "+BT[T]}</span><select aria-label="Phiên bản" style="max-width:200px"><option>${b.ver}</option></select>
   <button class="btn" data-t="Mô hình: tải file mẫu (size: ${sizes}; NPL của ${p.k})">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button><button class="btn" data-t="Mô hình: tạo phiên bản mới">Tạo phiên bản mới</button></div>
  <div class="scroll"><table><thead><tr><th>Mã NPL</th><th>Tên</th><th>Size</th><th class="n">Định mức ${isSet?"/ bộ":"/ sản phẩm"}</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
  ${b.lines.map(l=>`<tr><td>${l.m}</td><td>${MATS[l.m][0]}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>`
  :`<div class="banner warn">Chưa có BOM ${BT[T]} ${isSet?"theo bộ cho "+P:"cho chủng loại "+vName(st.bomV)}. <button class="btn primary" data-t="Mô hình: đã tạo BOM ${BT[T]} ${isSet?"theo bộ":"cho "+vName(st.bomV)}">Tạo BOM</button></div>`}
- <p class="hint">Chỉ chọn được NPL của khách hàng ${p.k}. Dòng size cụ thể thay thế dòng nền '*' cho cùng NPL; hai dòng không cộng chồng.</p>`},
+ <p class="hint">Hệ thống không quy đổi size: định mức theo quy ước size khác phải quy đổi sang size của mã hàng trước khi nhập. Chỉ chọn được NPL của khách hàng ${p.k}. Dòng size cụ thể thay thế dòng nền '*' cho cùng NPL; hai dòng không cộng chồng.</p>`},
 report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["inout","Nhập – xuất – tồn"],["demand","Nhu cầu theo đơn"],["short","Cảnh báo thiếu"],["fulfil","Đáp ứng đơn hàng"],["hist","Lịch sử giao dịch"],["cfg","Lịch sử cấu hình"]];
  const d=demand(),a=avail(d);let body="";
  const ml=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.custFilter);
@@ -329,7 +323,7 @@ function tbl(h,rows,numCols){const body=rows.length?rows.map(r=>`<tr>${r.map((c,
 const AFTER={
 order(){const paint=()=>{const d=demand(),a=avail(d);
    document.getElementById("totSets").textContent=Object.values(st.sets).reduce((x,y)=>x+(+y||0),0);
-   document.getElementById("outPane").innerHTML=statusBanner(d,a)+tbl(["Chủng loại","Size đích","Số lượng"],d.rows.map(r=>[VARIANTS.find(v=>v.c===r.v).n,r.s,fmt(r.q,0)]),[2])+
+   document.getElementById("outPane").innerHTML=statusBanner(d,a)+tbl(["Chủng loại","Size","Số lượng"],d.rows.map(r=>[VARIANTS.find(v=>v.c===r.v).n,r.s,fmt(r.q,0)]),[2])+
      `<p class="hint" style="margin-top:8px">Tổng nhu cầu NPL: ${Object.keys(d.tot).length} mã · thiếu: ${a.filter(x=>x.short>0).length} mã (xem màn Kiểm tra đáp ứng).</p>`};
   paint();document.querySelectorAll("[data-ds]").forEach(i=>i.oninput=()=>{st.sets[i.dataset.ds]=Math.max(0,+i.value||0);paint()})},
 check(){const d=demand(),a=avail(d);const paint=()=>{const only=document.getElementById("onlyShort").checked;
