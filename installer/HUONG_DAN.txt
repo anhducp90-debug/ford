@@ -1,0 +1,30 @@
+QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
+==========================================
+
+1. Lần đầu mở phần mềm: tạo mã PIN (ít nhất 4 chữ số). Phần mềm tự khóa sau 5 phút
+   không thao tác (đổi ở Quản trị > Bảo mật & khóa PIN).
+
+2. Dữ liệu: %LOCALAPPDATA%\QuanLyNPL\data.db
+   - Mỗi ngày mở phần mềm, hệ thống tự sao lưu vào thư mục backups (giữ 14 bản).
+   - Nên sao lưu ra USB/ổ khác định kỳ: Quản trị > Sao lưu / Phục hồi.
+   - Gỡ cài đặt KHÔNG xóa dữ liệu.
+
+3. Trình tự khai báo (phân hệ Khai báo):
+   Khách hàng → Nguyên phụ liệu (gắn khách hàng) → Lưới size → Mã hàng (chọn khách hàng
+   + lưới size) → Chủng loại (chọn mã hàng, SL trong 1 bộ) → BOM & định mức.
+   - BOM: chọn mã hàng, loại (Tổ cắt / Sản xuất / Đóng gói), phạm vi (theo bộ hoặc theo
+     chủng loại). Đóng gói luôn theo bộ. Một loại BOM chỉ chọn MỘT phạm vi.
+   - Size của mọi chủng loại = size của mã hàng. Định mức theo quy ước size khác phải
+     quy đổi sang size của mã hàng trước khi nhập.
+   - Có thể nhập BOM từ Excel: "Tải file mẫu Excel" rồi "Nhập từ Excel".
+   - Báo cáo > Định mức một bộ: xem lượng NPL cho 1 bộ theo từng size.
+
+4. Vận hành hằng ngày:
+   - Nhập kho > Phiếu nhập: lập phiếu, Lưu nháp, Xác nhận nhập (chỉ khi xác nhận mới cộng tồn).
+   - Khai báo > Đơn hàng: chọn mã hàng, nhập số bộ theo size, Lưu đơn.
+   - Xuất kho > Kiểm tra đáp ứng: xem ĐỦ / THIẾU / CHƯA ĐỦ DỮ LIỆU, giữ kho cho đơn.
+   - Xuất kho > Phiếu xuất: tạo phiếu nháp theo nhu cầu còn lại, nhập thực cấp, Xác nhận xuất.
+   - Trả NPL, xuất bù, chuyển NPL giữa khách hàng, kiểm kê: ở các mục tương ứng.
+   - Báo cáo: tồn, nhập–xuất–tồn, nhu cầu, cảnh báo thiếu…; xuất Excel / PDF.
+
+5. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.

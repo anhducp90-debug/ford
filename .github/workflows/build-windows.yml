@@ -1,0 +1,51 @@
+name: Build Windows installer
+
+on:
+  push:
+    branches: [ "ccr-5d2fbbd2-h9u6sa", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Unit tests
+        run: |
+          dotnet test tests/QuanLyNPL.Core.Tests -c Release
+          dotnet test tests/QuanLyNPL.Data.Tests -c Release
+
+      - name: UI smoke test (headless, all screens + main flows)
+        run: dotnet run --project tools/UiSmoke -c Release -- shots
+
+      - name: Upload UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: shots
+
+      - name: Publish app (self-contained win-x64)
+        shell: pwsh
+        run: |
+          dotnet publish src/QuanLyNPL.App -c Release -r win-x64 --self-contained true -p:DebugType=none -o publish
+          Copy-Item src/QuanLyNPL.App/app.ico publish/
+          (Get-Content installer/HUONG_DAN.txt) | Set-Content -Encoding utf8 publish/HUONG_DAN.txt
+
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & "C:\Program Files (x86)\NSIS\makensis.exe" -V2 -DVERSION=1.0.0 "-DSRC=$PWD\publish" "-DOUT=$PWD\dist\QuanLyNPL_Setup_1.0.0.exe" installer\QuanLyNPL.nsi
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyNPL_Setup
+          path: dist/QuanLyNPL_Setup_1.0.0.exe
