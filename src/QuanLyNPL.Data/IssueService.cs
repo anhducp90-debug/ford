@@ -457,15 +457,17 @@ public sealed class IssueService(SqliteConnection c, OrderService orders, StockS
     /// Đóng đơn có quyết toán: nơi nhận còn DƯ thì không cho đóng (trả kho hoặc điều chuyển);
     /// còn THIẾU (nơi nhận thiếu NPL hoặc chưa cấp hết số lượng đơn) thì chỉ đóng khi người dùng xác nhận.
     /// </summary>
+    static string Where(SettlementLine x) => x.Scope == IssueScopes.Place ? $"{x.Place} / " : $"{x.Place} / {IssueScopes.Label(x.Scope)} / ";
+
     public void CloseOrder(long orderId, bool allowShortage = false)
     {
         var s = Settlement(orderId);
         var surplus = s.Where(x => Math.Round(x.Balance, 2) > 0).ToList();
         if (surplus.Count > 0)
             throw new BusinessException("Còn NPL dư, cần trả kho hoặc điều chuyển trước khi đóng đơn:\n" +
-                string.Join("\n", surplus.Select(x => $"  {x.Place} / {IssueScopes.Label(x.Scope)} / {x.Material}: dư {AuditLog.N(x.Balance)} {x.Unit}")));
+                string.Join("\n", surplus.Select(x => $"  {Where(x)}{x.Material}: dư {AuditLog.N(x.Balance)} {x.Unit}")));
         var msgs = s.Where(x => Math.Round(x.Balance, 2) < 0)
-            .Select(x => $"  {x.Place} / {IssueScopes.Label(x.Scope)} / {x.Material}: thiếu {AuditLog.N(-x.Balance)} {x.Unit}").ToList();
+            .Select(x => $"  {Where(x)}{x.Material}: thiếu {AuditLog.N(-x.Balance)} {x.Unit}").ToList();
         msgs.AddRange(Progress(orderId).Where(p => p.P.Ordered - p.P.Issued > 0)
             .Select(p => $"  {IssueScopes.Label(p.Type)} / {p.Obj.Label} size {p.P.Size}: chưa cấp {AuditLog.N(p.P.Ordered - p.P.Issued)} / {AuditLog.N(p.P.Ordered)}"));
         if (msgs.Count > 0 && !allowShortage) throw new ShortageOnCloseException("Đơn còn chưa cấp đủ:\n" + string.Join("\n", msgs));

@@ -109,7 +109,9 @@ public sealed class OrderService(SqliteConnection c)
         JsonSerializer.Deserialize<OrderSnapshot>((string)Db.Scalar(c, "SELECT config_json FROM order_snapshot WHERE order_id=$o ORDER BY id DESC LIMIT 1", null, ("$o", orderId))!, Json)!;
 
     public List<OrderLine> LoadLines(long orderId) =>
-        Db.Query(c, "SELECT default_size_code,sets_qty FROM order_line WHERE order_id=$o", r => new OrderLine(r.GetString(0), Db.D(r.GetString(1))), null, ("$o", orderId));
+        Db.Query(c, @"SELECT l.default_size_code,l.sets_qty FROM order_line l JOIN ""order"" o ON o.id=l.order_id JOIN product p ON p.id=o.product_id
+                      LEFT JOIN size_grid_item i ON i.grid_id=p.default_grid_id AND i.size_code=l.default_size_code
+                      WHERE l.order_id=$o ORDER BY COALESCE(i.id, 1e18), l.id", r => new OrderLine(r.GetString(0), Db.D(r.GetString(1))), null, ("$o", orderId));
 
     /// <summary>Tính nhu cầu hoàn toàn từ snapshot: đổi BOM/cấu hình về sau không ảnh hưởng đơn cũ.</summary>
     public DemandResult CalculateDemand(long orderId) => Calculate(LoadSnapshot(orderId), LoadLines(orderId));

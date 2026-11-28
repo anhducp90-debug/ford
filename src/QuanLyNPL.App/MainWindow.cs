@@ -103,6 +103,7 @@ public sealed class MainWindow : Window
 
     public void Navigate(int module, int item, Screen? screen = null)
     {
+        if (module != _mod || item != _item) Status("Sẵn sàng.", "muted");   // không để thông báo của màn trước nằm lại
         _mod = module; _item = item;
         _modBar.Children.Clear();
         for (var i = 0; i < Modules.Length; i++)

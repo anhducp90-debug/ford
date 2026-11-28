@@ -137,6 +137,8 @@ public class BomAndCarryTests
         var v = new[] { new BomVersion("B", 1, new(2026, 1, 1)), new BomVersion("B", 2, new(2026, 3, 1)), new BomVersion("B", 3, new(2026, 6, 1)) };
         Assert.Equal(2, BomVersioning.Pick(v, new(2026, 4, 1))!.VersionNo);
         Assert.Null(BomVersioning.Pick(v, new(2025, 12, 31)));
+        // BOM tạo lúc 10:50 áp dụng cho đơn lập cùng ngày (ngày đặt hàng không có giờ)
+        Assert.Equal(1, BomVersioning.Pick(new[] { new BomVersion("B", 1, new DateTime(2026, 11, 28, 10, 50, 0)) }, new DateTime(2026, 11, 28))!.VersionNo);
     }
 
     [Fact]

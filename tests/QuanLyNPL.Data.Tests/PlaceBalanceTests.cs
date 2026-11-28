@@ -247,6 +247,16 @@ public class PlaceBalanceTests
     }
 
     [Fact]
+    public void OrderLines_FollowSizeGridOrder_NotAlphabetical()
+    {
+        var f = new Fixture();
+        var g = (long)Db.Scalar(f.C, "SELECT id FROM size_grid WHERE code='G_SML'")!;
+        var p = f.Cat.AddProduct(f.Cust, "MH-SML", "x", g); f.Cat.AddVariant(p, "A", "a", "Áo", 1);
+        var o = f.Orders.CreateOrder(p, "DH-S", new DateTime(2026, 1, 1), new[] { new OrderLine("L", 1), new OrderLine("S", 2), new OrderLine("M", 3) });
+        Assert.Equal(new[] { "S", "M", "L" }, f.Orders.LoadLines(o).Select(l => l.DefaultSize));
+    }
+
+    [Fact]
     public void Migration11_MergesPlaceLedgerAcrossBomTypes()
     {
         using var c = new SqliteConnection("Data Source=:memory:"); c.Open();
