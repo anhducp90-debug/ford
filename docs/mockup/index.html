@@ -107,25 +107,24 @@ const PRODUCTS={"MH-2204":{n:"Bộ đồng phục",k:"KH01",grid:"G_VOC – Vóc
 const VARIANTS=[{c:"AO_DO",n:"Áo đỏ",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"AO_XANH",n:"Áo xanh",g:"Áo",k:1,grid:"S M L XL",p:"MH-2204"},{c:"QUAN_DEN",n:"Quần đen",g:"Quần",k:1,grid:"S M L XL",p:"MH-2204"}];
 const VARS_ALL=VARIANTS.concat([{c:"AK_XAM",n:"Áo khoác xám",g:"Áo",k:1,grid:"S M L XL",p:"MH-1180"}]);
 const vName=c=>VARS_ALL.find(v=>v.c===c).n;
-const BT={TO_CAT:"Tổ cắt",CHUNG_LOAI:"Chủng loại",DONG_GOI:"Đóng gói"};
+const BT={TO_CAT:"Tổ cắt",SAN_XUAT:"Sản xuất",DONG_GOI:"Đóng gói"};
+const SET="(Bộ)";const vLabel=c=>c===SET?"Cả bộ":vName(c);
 const MAP={AO_DO:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},AO_XANH:{"110/56":"S","110/60":"S","120/60":"M","130/64":"L"},QUAN_DEN:{"110/56":"S","110/60":"M","120/60":"M","130/64":"L"}};
 const CUSTS={KH01:"Công ty Hoàng Long",KH02:"May xuất khẩu Đại Phát"};
 // [tên, ĐVT, tồn, đã giữ, khách hàng] — mỗi NPL thuộc đúng một khách hàng
-const MATS={VAI_DO:["Vải đỏ","m",180,0,"KH01"],VAI_XANH:["Vải xanh","m",150,0,"KH01"],VAI_DEN:["Vải đen","m",160,20,"KH01"],CHI:["Chỉ may","cuộn",4,0,"KH01"],NUT:["Nút","cái",800,0,"KH01"],KHOA:["Khóa kéo","cái",500,0,"KH01"],NHAN:["Nhãn chính","cái",300,0,"KH01"],
+const MATS={VAI_DO:["Vải đỏ","m",180,0,"KH01"],VAI_XANH:["Vải xanh","m",150,0,"KH01"],VAI_DEN:["Vải đen","m",160,20,"KH01"],CHI:["Chỉ may","cuộn",4,0,"KH01"],NUT:["Nút","cái",800,0,"KH01"],KHOA:["Khóa kéo","cái",500,0,"KH01"],NHAN:["Nhãn chính","cái",300,0,"KH01"],TUI:["Túi đựng bộ","cái",150,0,"KH01"],
  KH2_KAKI:["Vải kaki","m",90,0,"KH02"],KH2_CHI:["Chỉ may KH02","cuộn",6,0,"KH02"],KH2_VAI_DO:["Vải đỏ (mã KH02)","m",0,0,"KH02"]};
-// BOM khai báo theo CHỦNG LOẠI + LOẠI (Tổ cắt / Chủng loại / Đóng gói); đã chọn phiên bản theo ngày lập đơn.
-// size '*' = nền; size cụ thể ghi đè nền cùng NPL trong cùng BOM.
+// BOM: Tổ cắt / Sản xuất khai báo theo bộ hoặc theo chủng loại; Đóng gói bắt buộc theo bộ. Đã chọn phiên bản theo ngày lập đơn.
+// Theo bộ: số bộ × định mức theo size mặc định. Theo chủng loại: số sản phẩm × định mức theo size quy đổi. '*' = nền; size cụ thể ghi đè.
 const BOMS=[
  {v:"AO_DO",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_DO",s:"*",u:1.2,w:3},{m:"VAI_DO",s:"M",u:1.3,w:3},{m:"VAI_DO",s:"L",u:1.4,w:3}]},
  {v:"AO_XANH",t:"TO_CAT",ver:"v2 (12/03/2026)",lines:[{m:"VAI_XANH",s:"*",u:1.2,w:3},{m:"VAI_XANH",s:"M",u:1.3,w:3},{m:"VAI_XANH",s:"L",u:1.4,w:3}]},
  {v:"QUAN_DEN",t:"TO_CAT",ver:"v1 (05/01/2026)",lines:[{m:"VAI_DEN",s:"*",u:1,w:3},{m:"VAI_DEN",s:"S",u:.95,w:3},{m:"VAI_DEN",s:"M",u:1.05,w:3},{m:"VAI_DEN",s:"L",u:1.15,w:3}]},
- {v:"AO_DO",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
- {v:"AO_XANH",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
- {v:"QUAN_DEN",t:"CHUNG_LOAI",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"KHOA",s:"*",u:1,w:0}]},
- {v:"AO_DO",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]},
- {v:"AO_XANH",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]},
- {v:"QUAN_DEN",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:1,w:0}]}];
-const st={bomV:"AO_DO",bomT:"TO_CAT",varP:"MH-2204",tr:{from:"KH01",to:"KH02",lines:[{f:"VAI_DO",t:"KH2_VAI_DO",q:20}],done:false},screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock",custFilter:"",matMsg:""};
+ {v:"AO_DO",t:"SAN_XUAT",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
+ {v:"AO_XANH",t:"SAN_XUAT",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"NUT",s:"*",u:5,w:0}]},
+ {v:"QUAN_DEN",t:"SAN_XUAT",ver:"v1 (02/03/2026)",lines:[{m:"CHI",s:"*",u:.02,w:0},{m:"KHOA",s:"*",u:1,w:0}]},
+ {set:true,p:"MH-2204",t:"DONG_GOI",ver:"v1 (02/03/2026)",lines:[{m:"NHAN",s:"*",u:3,w:0},{m:"TUI",s:"*",u:1,w:0}]}];
+const st={bomP:"MH-2204",bomScope:"VAR",bomV:"AO_DO",bomT:"TO_CAT",varP:"MH-2204",tr:{from:"KH01",to:"KH02",lines:[{f:"VAI_DO",t:"KH2_VAI_DO",q:20}],done:false},screen:"order",sets:{"110/56":40,"110/60":30,"120/60":30,"130/64":20},actual:{},drill:null,reportKind:"stock",custFilter:"",matMsg:""};
 const fmt=(n,d=2)=>Number(n).toLocaleString("vi-VN",{minimumFractionDigits:d,maximumFractionDigits:d});
 const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 
@@ -133,7 +132,10 @@ const r2=x=>Math.round((x+1e-9)*100)/100;   // làm tròn half-up 2 số lẻ
 function breakdown(sets=st.sets){const acc={};for(const ds of DEF_SIZES){const q=+sets[ds]||0;for(const v of VARIANTS){const t=MAP[v.c][ds];const k=v.c+"|"+t;acc[k]=(acc[k]||0)+q*v.k}}
   return Object.entries(acc).map(([k,q])=>{const[v,s]=k.split("|");return{v,s,q}})}
 function demand(sets=st.sets){const rows=breakdown(sets),src=[];
-  for(const r of rows){for(const b of BOMS.filter(b=>b.v===r.v)){const ls=b.lines;
+  for(const b of BOMS.filter(b=>b.set)){for(const ds of DEF_SIZES){const q=+sets[ds]||0;if(!q)continue;
+    for(const m of [...new Set(b.lines.map(l=>l.m))]){const g=b.lines.filter(l=>l.m===m);const sp=g.filter(l=>l.s===ds);const ch=sp.length?sp:g.filter(l=>l.s==="*");
+      for(const l of ch)src.push({bom:b.p+" – "+BT[b.t]+" (theo bộ)",v:SET,s:ds,m,q:q*l.u*(1+l.w/100),u:l.u,w:l.w,base:l.s==="*"})}}}
+  for(const r of rows){for(const b of BOMS.filter(b=>!b.set&&b.v===r.v)){const ls=b.lines;
     for(const m of [...new Set(ls.map(l=>l.m))]){const g=ls.filter(l=>l.m===m);const sp=g.filter(l=>l.s===r.s);const ch=sp.length?sp:g.filter(l=>l.s==="*");
       for(const l of ch)src.push({bom:vName(b.v)+" – "+BT[b.t],v:r.v,s:r.s,m,q:r.q*l.u*(1+l.w/100),u:l.u,w:l.w,base:l.s==="*"})}}}
   const tot={};src.forEach(x=>tot[x.m]=(tot[x.m]||0)+x.q);Object.keys(tot).forEach(k=>tot[k]=r2(tot[k]));return{rows,src,tot}}
@@ -233,17 +235,30 @@ grid(){return `<h1>Lưới size</h1><p class="sub">Khai báo một lần, dùng 
   <tr><td>G_VOC</td><td>Vóc / Chiều cao</td><td><span class="chip warn">Đã dùng</span> 1 mã hàng</td></tr><tr><td>G_SML</td><td>S M L XL</td><td><span class="chip warn">Đã dùng</span> 3 chủng loại</td></tr><tr><td>G_VOC_2</td><td>Vóc / Chiều cao v2</td><td><span class="chip ok">Chưa dùng</span></td></tr></table>
   <div class="bar" style="margin-top:10px"><button class="btn primary" data-t="Đã sao chép G_VOC thành G_VOC_2 để chỉnh sửa">Sao chép thành lưới mới</button></div></div>
  <div class="panel"><h3>G_VOC – Vóc / Chiều cao <span class="chip warn">Khóa cấu trúc</span></h3><table><thead><tr><th>Size</th><th>Vóc</th><th>Chiều cao</th></tr></thead>${DEF_SIZES.map(s=>`<tr><td>${s}</td><td>${s.split("/")[0]}</td><td>${s.split("/")[1]}</td></tr>`).join("")}</table></div></div>`},
-bom(){const v=VARS_ALL.find(x=>x.c===st.bomV);const p=PRODUCTS[v.p];const b=BOMS.find(x=>x.v===st.bomV&&x.t===st.bomT);
- return `<h1>BOM & định mức</h1><p class="sub">Chọn chủng loại (mã hàng và khách hàng tự gán), rồi tích loại BOM. Mỗi chủng loại có tối đa một BOM mỗi loại; đổi định mức thì tạo phiên bản mới.</p>
- <div class="panel" style="margin-bottom:14px"><div class="bar"><label for="bVar">Chủng loại <span class="warnline">*</span></label><select id="bVar" style="max-width:260px">${Object.keys(PRODUCTS).map(pc=>`<optgroup label="${pc} – ${PRODUCTS[pc].n}">${VARS_ALL.filter(x=>x.p===pc).map(x=>`<option value="${x.c}" ${st.bomV===x.c?"selected":""}>${x.n}</option>`).join("")}</optgroup>`).join("")}</select>
-  <span class="chip muted">Mã hàng: ${v.p}</span><span class="chip muted">Khách hàng: ${p.k}</span><span class="chip muted">Lưới: ${v.grid}</span></div>
-  <div class="bar" role="radiogroup" aria-label="Loại BOM"><span class="hint">Loại BOM <span class="warnline">*</span></span>${Object.entries(BT).map(([k,t])=>`<label class="btn ${st.bomT===k?"primary":""}"><input type="radio" name="bType" value="${k}" ${st.bomT===k?"checked":""} style="margin:0 6px 0 0">${t}</label>`).join("")}</div></div>
- ${b?`<div class="bar"><select aria-label="Phiên bản" style="max-width:200px"><option>${b.ver}</option></select>
-  <button class="btn" data-t="Mô hình: tải file mẫu cho ${vName(st.bomV)} – ${BT[st.bomT]} (size theo lưới chủng loại, NPL của ${p.k})">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button><button class="btn" data-t="Mô hình: tạo phiên bản mới">Tạo phiên bản mới</button></div>
- <div class="scroll"><table><thead><tr><th>Mã NPL</th><th>Tên</th><th>Size</th><th class="n">Định mức</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
+bom(){const P=st.bomP,p=PRODUCTS[P],T=st.bomT;if(T==="DONG_GOI")st.bomScope="SET";
+ const vs=VARS_ALL.filter(x=>x.p===P);if(!vs.some(x=>x.c===st.bomV))st.bomV=(vs[0]||{}).c;
+ const isSet=st.bomScope==="SET";const setB=BOMS.find(b=>b.set&&b.p===P&&b.t===T);const varBs=BOMS.filter(b=>!b.set&&b.t===T&&vs.some(x=>x.c===b.v));
+ const b=isSet?setB:BOMS.find(x=>!x.set&&x.v===st.bomV&&x.t===T);
+ const conflict=isSet&&varBs.length?`Mã hàng đã có BOM ${BT[T]} theo chủng loại (${varBs.map(x=>vName(x.v)).join(", ")}).`:(!isSet&&setB?`Mã hàng đã có BOM ${BT[T]} theo bộ.`:"");
+ const sizes=isSet?DEF_SIZES.join(", "):(VARS_ALL.find(x=>x.c===st.bomV)||{grid:""}).grid;
+ return `<h1>BOM & định mức</h1><p class="sub">Chọn mã hàng (khách hàng tự gán), loại BOM và phạm vi. Tổ cắt và Sản xuất: theo bộ hoặc theo chủng loại. Đóng gói: luôn theo bộ.</p>
+ <div class="panel" style="margin-bottom:14px">
+  <div class="bar"><label for="bProd">Mã hàng <span class="warnline">*</span></label><select id="bProd" style="max-width:240px">${Object.entries(PRODUCTS).map(([c,x])=>`<option value="${c}" ${P===c?"selected":""}>${c} – ${x.n}</option>`).join("")}</select>
+   <span class="chip muted">Khách hàng: ${p.k}</span></div>
+  <div class="bar" role="radiogroup" aria-label="Loại BOM"><span class="hint" style="min-width:90px">Loại BOM <span class="warnline">*</span></span>${Object.entries(BT).map(([k,t])=>`<label class="btn ${T===k?"primary":""}"><input type="radio" name="bType" value="${k}" ${T===k?"checked":""} style="margin:0 6px 0 0">${t}</label>`).join("")}</div>
+  <div class="bar" role="radiogroup" aria-label="Phạm vi"><span class="hint" style="min-width:90px">Phạm vi <span class="warnline">*</span></span>
+   <label class="btn ${isSet?"primary":""}"><input type="radio" name="bScope" value="SET" ${isSet?"checked":""} style="margin:0 6px 0 0">Theo bộ</label>
+   <label class="btn ${!isSet?"primary":""}" ${T==="DONG_GOI"?'style="opacity:.45"':""}><input type="radio" name="bScope" value="VAR" ${!isSet?"checked":""} ${T==="DONG_GOI"?"disabled":""} style="margin:0 6px 0 0">Theo chủng loại</label>
+   ${T==="DONG_GOI"?'<span class="tag">BOM đóng gói luôn tính theo bộ</span>':""}
+   ${!isSet?`<select id="bVar" aria-label="Chủng loại" style="max-width:200px">${vs.map(x=>`<option value="${x.c}" ${st.bomV===x.c?"selected":""}>${x.n}</option>`).join("")}</select>`:""}</div>
+  <p class="hint" style="margin:0">${isSet?`Số lượng = số bộ; size theo lưới mặc định của mã hàng (${sizes}).`:`Số lượng = số sản phẩm của chủng loại; size theo lưới chủng loại (${sizes}).`}</p></div>
+ ${conflict?`<div class="banner warn">${conflict} <small>Một loại BOM chỉ khai báo theo bộ hoặc theo chủng loại để không tính trùng.</small></div>`
+ :b?`<div class="bar"><span class="chip muted">${isSet?P+" – "+BT[T]+" (theo bộ)":vName(st.bomV)+" – "+BT[T]}</span><select aria-label="Phiên bản" style="max-width:200px"><option>${b.ver}</option></select>
+  <button class="btn" data-t="Mô hình: tải file mẫu (size: ${sizes}; NPL của ${p.k})">Tải file mẫu</button><button class="btn primary" data-t="Mô hình: kiểm tra toàn bộ file trước khi ghi; lỗi thì không ghi dòng nào">Nhập từ Excel…</button><button class="btn" data-t="Mô hình: tạo phiên bản mới">Tạo phiên bản mới</button></div>
+ <div class="scroll"><table><thead><tr><th>Mã NPL</th><th>Tên</th><th>Size</th><th class="n">Định mức ${isSet?"/ bộ":"/ sản phẩm"}</th><th class="n">Hao hụt %</th><th></th></tr></thead><tbody>
  ${b.lines.map(l=>`<tr><td>${l.m}</td><td>${MATS[l.m][0]}</td><td>${l.s==="*"?'* <span class="tag">(nền)</span>':l.s}</td><td class="n">${fmt(l.u)}</td><td class="n">${fmt(l.w)}</td><td>${l.s==="*"?"":'<span class="chip muted">ghi đè nền</span>'}</td></tr>`).join("")}</tbody></table></div>`
- :`<div class="banner warn">Chủng loại ${v.n} chưa có BOM ${BT[st.bomT]}. <button class="btn primary" data-t="Mô hình: đã tạo BOM ${vName(st.bomV)} – ${BT[st.bomT]}">Tạo BOM</button></div>`}
- <p class="hint">Danh sách NPL chỉ gồm NPL của khách hàng ${p.k}; size chỉ gồm size trong lưới của chủng loại và '*'. Dòng size cụ thể thay thế dòng nền '*' cho cùng NPL; hai dòng không cộng chồng.</p>`},
+ :`<div class="banner warn">Chưa có BOM ${BT[T]} ${isSet?"theo bộ cho "+P:"cho chủng loại "+vName(st.bomV)}. <button class="btn primary" data-t="Mô hình: đã tạo BOM ${BT[T]} ${isSet?"theo bộ":"cho "+vName(st.bomV)}">Tạo BOM</button></div>`}
+ <p class="hint">Chỉ chọn được NPL của khách hàng ${p.k}. Dòng size cụ thể thay thế dòng nền '*' cho cùng NPL; hai dòng không cộng chồng.</p>`},
 report(){const k=st.reportKind;const kinds=[["stock","Tồn hiện tại"],["inout","Nhập – xuất – tồn"],["demand","Nhu cầu theo đơn"],["short","Cảnh báo thiếu"],["fulfil","Đáp ứng đơn hàng"],["hist","Lịch sử giao dịch"],["cfg","Lịch sử cấu hình"]];
  const d=demand(),a=avail(d);let body="";
  const ml=Object.entries(MATS).filter(([,m])=>!st.custFilter||m[4]===st.custFilter);
@@ -317,7 +332,7 @@ check(){const d=demand(),a=avail(d);const paint=()=>{const only=document.getElem
    document.getElementById("chkBody").innerHTML=a.filter(x=>!only||x.short>0).map(x=>`<tr class="click ${st.drill===x.m?"sel":""}" data-m="${x.m}"><td>${x.m}</td><td>${MATS[x.m][0]}</td><td>${MATS[x.m][1]}</td><td class="n">${fmt(x.need)}</td><td class="n">${fmt(x.oh)}</td><td class="n">${fmt(x.rs)}</td><td class="n">${fmt(x.av)}</td><td class="n">${x.short?`<b>${fmt(x.short)}</b>`:"–"}</td><td>${x.short?'<span class="chip bad">THIẾU</span>':'<span class="chip ok">ĐỦ</span>'}</td></tr>`).join("");
    document.querySelectorAll("#chkBody tr").forEach(tr=>tr.onclick=()=>{st.drill=tr.dataset.m;paint();drill()})};
   const drill=()=>{const m=st.drill;if(!m)return;document.getElementById("drillT").textContent="Nguồn nhu cầu: "+m;
-   const rows=d.src.filter(s=>s.m===m);document.getElementById("drill").innerHTML=tbl(["BOM","Chủng loại","Size","Nhu cầu"],rows.map(s=>[s.bom,VARIANTS.find(v=>v.c===s.v).n,s.s+(s.base?"":" (ghi đè)"),fmt(s.q)]),[3])+`<p class="hint" style="margin-top:6px">Tổng làm tròn 2 số lẻ: <b>${fmt(d.tot[m])}</b> ${MATS[m][1]}</p>`};
+   const rows=d.src.filter(s=>s.m===m);document.getElementById("drill").innerHTML=tbl(["BOM","Chủng loại","Size","Nhu cầu"],rows.map(s=>[s.bom,vLabel(s.v),s.s+(s.base?"":" (ghi đè)"),fmt(s.q)]),[3])+`<p class="hint" style="margin-top:6px">Tổng làm tròn 2 số lẻ: <b>${fmt(d.tot[m])}</b> ${MATS[m][1]}</p>`};
   document.getElementById("onlyShort").onchange=paint;paint();drill()},
 issue(){const a=avail(demand());const warn=m=>{const x=a.find(y=>y.m===m),v=st.actual[m];const el=document.getElementById("w-"+m);const ws=[];
    if(v!==undefined&&v!==""){if(+v>x.need)ws.push("Vượt đề xuất");if(+v>x.av)ws.push("Vượt tồn khả dụng")}el.innerHTML=ws.map(w=>`<span class="warnline">${w}</span>`).join(" · ")};
@@ -336,7 +351,9 @@ product(){document.getElementById("pSave").onclick=()=>{const g=id=>document.get
    if(!g("pCust"))return m.textContent="Phải chọn khách hàng cho mã hàng.";if(!g("pCode")||!g("pName"))return m.textContent="Nhập đủ mã và tên.";
    if(PRODUCTS[g("pCode")])return m.textContent="Mã hàng đã tồn tại.";PRODUCTS[g("pCode")]={n:g("pName"),k:g("pCust"),grid:g("pGrid")};toast("Đã lưu mã hàng "+g("pCode")+" cho khách hàng "+g("pCust"));go()}},
 variant(){document.getElementById("vProd").onchange=e=>{st.varP=e.target.value;go()}},
-bom(){document.getElementById("bVar").onchange=e=>{st.bomV=e.target.value;go()};document.querySelectorAll('input[name=bType]').forEach(r=>r.onchange=()=>{st.bomT=r.value;go()})},
+bom(){document.getElementById("bProd").onchange=e=>{st.bomP=e.target.value;go()};const v=document.getElementById("bVar");if(v)v.onchange=e=>{st.bomV=e.target.value;go()};
+  document.querySelectorAll('input[name=bType]').forEach(r=>r.onchange=()=>{st.bomT=r.value;if(r.value!=="DONG_GOI"&&st.bomScope==="SET"&&!BOMS.some(b=>b.set&&b.p===st.bomP&&b.t===r.value))st.bomScope="VAR";go()});
+  document.querySelectorAll('input[name=bScope]').forEach(r=>r.onchange=()=>{st.bomScope=r.value;go()})},
 transfer(){const T=st.tr;
   const check=()=>{const e=[];if(T.from===T.to)e.push("Khách hàng chuyển và nhận phải khác nhau.");
    T.lines.forEach((l,i)=>{const a=MATS[l.f],b=MATS[l.t];if(!a||a[4]!==T.from)e.push(`Dòng ${i+1}: mã NPL nguồn phải thuộc ${T.from}.`);if(!b||b[4]!==T.to)e.push(`Dòng ${i+1}: mã NPL đích phải thuộc ${T.to}.`);

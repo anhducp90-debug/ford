@@ -79,7 +79,7 @@ Nguyên tắc: mỗi màn khai báo chỉ chọn **đối tượng cấp trên**
 | Mã hàng | Khách hàng, lưới size mặc định | trực tiếp | Khách hàng phải đang sử dụng |
 | Chủng loại + quy đổi size | Mã hàng | theo mã hàng | Mã hàng phải đang sử dụng; size đích thuộc lưới chủng loại |
 | NPL | Khách hàng | trực tiếp | **Mã NPL duy nhất toàn hệ thống**; đã dùng thì không đổi khách hàng |
-| BOM | Chủng loại, rồi tích **Tổ cắt / Chủng loại / Đóng gói** | theo chủng loại → mã hàng | Mỗi chủng loại tối đa 1 BOM mỗi loại (đổi định mức = phiên bản mới); tên BOM tự đặt "<chủng loại> – <loại>"; NPL của đúng khách hàng; size thuộc lưới chủng loại hoặc '*' |
+| BOM | Mã hàng, loại (**Tổ cắt / Sản xuất / Đóng gói**), phạm vi (**theo bộ** hoặc **theo chủng loại** → chọn chủng loại) | theo mã hàng | Tổ cắt, Sản xuất: theo bộ hoặc theo chủng loại; **Đóng gói: bắt buộc theo bộ**. Một mã hàng + một loại chỉ chọn MỘT cách (theo bộ hoặc theo chủng loại) để không tính trùng. Theo bộ: số lượng = số bộ, size = lưới mặc định của mã hàng; theo chủng loại: số lượng = số sản phẩm, size = lưới chủng loại. Mỗi phạm vi tối đa 1 BOM mỗi loại (đổi định mức = phiên bản mới); tên tự đặt "<chủng loại> – <loại>" hoặc "<mã hàng> – <loại> (theo bộ)"; NPL của đúng khách hàng |
 | Đơn hàng | Mã hàng | theo mã hàng | Mã hàng và khách hàng đang sử dụng |
 | Phiếu nhập / kiểm kê | Khách hàng (hoặc suy ra từ NPL) | trực tiếp | Một phiếu chỉ gồm NPL của một khách hàng |
 | Phiếu cấp / trả / xuất bù / giữ kho | Đơn hàng | theo đơn | Chỉ NPL của khách hàng của đơn |
@@ -88,3 +88,11 @@ Nguyên tắc: mỗi màn khai báo chỉ chọn **đối tượng cấp trên**
 Tồn kho vẫn tính theo mã NPL; vì mã NPL thuộc một khách hàng nên tồn được kiểm soát theo khách hàng. Dùng NPL của khách hàng khác bắt buộc qua phiếu chuyển, có lịch sử ("Chuyển sang khách hàng khác" / "Nhận từ khách hàng khác").
 
 Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán trước khi dùng trong BOM mới); migration 4 tự điền khách hàng cho phiếu kho cũ (theo đơn, hoặc theo NPL nếu phiếu chỉ có một khách hàng). BOM cũ không gắn chủng loại vẫn tính được nhu cầu; BOM mới luôn tạo theo chủng loại + loại.
+
+### Tính nhu cầu với BOM theo bộ
+
+- BOM theo bộ: nhu cầu = số bộ (theo size mặc định) × định mức size đó (hoặc '*') × (1 + hao hụt). Nguồn nhu cầu ghi chủng loại là "(Bộ)".
+- BOM theo chủng loại: nhu cầu = số sản phẩm (số bộ × SL/bộ, theo size đã quy đổi) × định mức × (1 + hao hụt).
+- Đơn hàng đủ dữ liệu khi: mọi BOM đã khai báo đều có định mức cho các size của đơn, và mỗi chủng loại/size có ít nhất một nguồn định mức (BOM riêng của chủng loại hoặc BOM theo bộ).
+- Cấp phát theo phạm vi: "ALL" (cả đơn), mã chủng loại, hoặc "(Bộ)" (chỉ NPL từ BOM theo bộ, ví dụ cấp riêng cho tổ đóng gói).
+- Migration 5 đổi loại cũ "Chủng loại" thành "Sản xuất". BOM Đóng gói theo chủng loại tạo trước đó vẫn tính được, nhưng không tạo mới được.
