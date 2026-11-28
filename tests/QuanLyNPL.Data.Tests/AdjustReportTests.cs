@@ -179,7 +179,7 @@ public class ReportTests
         Assert.Equal(2, all.Rows.Count);
         Assert.Contains("THIẾU NPL", all.Filters[0]);
         var short1 = rep.OrderAvailability(o, onlyShortage: true).Rows.Single();
-        Assert.Equal("CHI", short1[0]); Assert.Equal(3.5m, short1[6]); Assert.Equal("THIẾU", short1[7]);
+        Assert.Equal("CHI", short1[0]); Assert.Equal(3.5m, short1[7]); Assert.Equal("THIẾU", short1[8]);
     }
 
     [Fact]

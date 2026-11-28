@@ -74,7 +74,7 @@ Expect(x.Q.BomVersions(x.Bom.Find(x.Q.Variants(x.Q.Products().First(p => p.Code 
 Go("Phiếu nhập"); Click("Phiếu mới");
 Pick(All<ComboBox>().First(), "KH01");
 var ed = All<ComboBox>().ToList();  // [khách hàng, NPL dòng 1]
-Pick(ed[1], "CHI"); All<TextBox>().First(t => t.Watermark == "0").Text = "8"; Pump();
+Pick(ed.First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith("CHI"))), "CHI"); All<TextBox>().First(t => t.Watermark == "0").Text = "8"; Pump();
 Click("Xác nhận nhập");
 Expect(x.Stock.OnHand("CHI") == 12m, "nhập + xác nhận phiếu nhập (CHI 4 → 12)");
 
@@ -98,6 +98,35 @@ x.Count.Confirm(cnt.Id);
 Expect(x.Stock.OnHand("KHOA") == 498m, "chốt kiểm kê (KHOA 500 → 498)");
 Go("Nhập – xuất – tồn"); Shot(w, "905_nxt");
 Go("Lịch sử giao dịch"); Shot(w, "906_lich_su");
+
+// ---------- Mẫu báo cáo chụp từ ứng dụng ----------
+var repDir = Path.Combine(outDir, "mau_bao_cao"); Directory.CreateDirectory(repDir);
+w.Height = 1000; Pump();
+void RShot(string name) { var f = w.CaptureRenderedFrame(); f?.Save(Path.Combine(repDir, name + ".png")); Console.WriteLine("mẫu " + name); }
+void Toggle(string content) { var cb = All<CheckBox>().First(c => (c.Content as string) == content); cb.IsChecked = true; Pump(); }
+var n = 1;
+string Num() => (n++).ToString("00");
+Go("Tồn hiện tại"); RShot(Num() + "_ton_hien_tai");
+Go("Nhập – xuất – tồn"); RShot(Num() + "_nhap_xuat_ton");
+Go("Định mức một bộ"); RShot(Num() + "_dinh_muc_mot_bo"); Toggle("Chi tiết nguồn"); RShot(Num() + "_dinh_muc_mot_bo_chi_tiet");
+Go("Nhu cầu theo đơn"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_nhu_cau_theo_don"); Toggle("Chi tiết nguồn"); RShot(Num() + "_nhu_cau_chi_tiet_nguon");
+Go("Cảnh báo thiếu"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_canh_bao_thieu");
+Go("Số bộ tối đa sản xuất được"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_so_bo_toi_da_theo_co_cau_don"); Toggle("Riêng từng size"); RShot(Num() + "_so_bo_toi_da_tung_size");
+Go("Đáp ứng đơn hàng"); RShot(Num() + "_dap_ung_don_hang");
+Go("Lịch sử giao dịch"); RShot(Num() + "_lich_su_giao_dich");
+Go("Lịch sử cấu hình"); Pick(All<ComboBox>().First(), "DH-0413"); RShot(Num() + "_lich_su_cau_hinh");
+Go("Kiểm tra đáp ứng"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_man_kiem_tra_dap_ung");
+Go("Nơi xuất / Nơi nhận"); RShot(Num() + "_quan_tri_noi_xuat_noi_nhan");
+Go("Phiếu xuất (cấp phát)"); Pick(All<ComboBox>().First(), "DH-0412"); RShot(Num() + "_phieu_xuat_noi_xuat_nhan");
+foreach (var d in x.Q.Docs().Where(d => d.DocNo is "NK-0001" or "PX-0001"))
+{
+    var pdf = Path.Combine(repDir, $"phieu_{d.DocNo}.pdf");
+    using (var fs = File.Create(pdf)) VoucherPdf.Generate(x.C, d.Id, fs);
+    Console.WriteLine("phiếu " + pdf);
+}
+var mx = x.Reports.MaxSets(x.Q.Orders().First(o => o.No == "DH-0412").Id).Summary;
+Expect(mx.Complete && mx.MaxSets > 0, $"số bộ tối đa DH-0412 = {mx.MaxSets}/{mx.OrderedSets}, giới hạn {string.Join(",", mx.Limiting)}");
+Expect(x.Q.Docs().First(d => d.DocNo == "PX-0001").ToPlace == "Tổ cắt", "phiếu xuất có nơi nhận");
 
 // Khóa tự động
 x.Pin.IdleMinutes = 1; w.ResetIdle();
@@ -138,10 +167,19 @@ static void Seed(Ctx x)
     x.Bom.AddVersion(x.Bom.CreateBom(ax, BomType.SanXuat), d, new[] { new BomLineInput("CHI", "*", 0.02m), new BomLineInput("NUT", "*", 5m) });
     x.Bom.AddVersion(x.Bom.CreateBom(qd, BomType.SanXuat), d, new[] { new BomLineInput("CHI", "*", 0.02m), new BomLineInput("KHOA", "*", 1m) });
     x.Bom.AddVersion(x.Bom.CreateSetBom(p, BomType.DongGoi), d, new[] { new BomLineInput("NHAN", "*", 3m), new BomLineInput("TUI", "*", 1m) });
+    var kho = x.Places.Add("KHO", "Kho NPL – Xưởng 1", PlaceKind.CaHai, "Lô B2, KCN Phố Nối A");
+    var ncc = x.Places.Add("NCC-PA", "Công ty Dệt Phúc An", PlaceKind.Xuat);
+    var toCat = x.Places.Add("TO-CAT", "Tổ cắt", PlaceKind.CaHai);
+    x.Places.Add("CHUYEN-1", "Chuyền may 1", PlaceKind.Nhan);
+    x.Places.DefaultInTo = kho; x.Places.DefaultOutFrom = kho;
+    x.Company.Name = "CÔNG TY TNHH MAY MẶC HOÀNG LONG"; x.Company.Address = "Lô B2, KCN Phố Nối A, Hưng Yên";
     var o = x.Orders.CreateOrder(p, "DH-0412", new DateTime(2026, 4, 2), new[] { new OrderLine("110/56", 40), new OrderLine("110/60", 30), new OrderLine("120/60", 30), new OrderLine("130/64", 20) });
-    x.Stock.Confirm(x.Stock.CreateDraft("IN", "NK-0001", new[] { ("VAI_DO", 180m), ("VAI_XANH", 150m), ("VAI_DEN", 160m), ("CHI", 4m), ("NUT", 800m), ("KHOA", 500m), ("NHAN", 300m), ("TUI", 150m) }));
+    var nk1 = x.Stock.CreateDraft("IN", "NK-0001", new[] { ("VAI_DO", 180m), ("VAI_XANH", 150m), ("VAI_DEN", 160m), ("CHI", 4m), ("NUT", 800m), ("KHOA", 500m), ("NHAN", 300m), ("TUI", 150m) }, note: "Nhập theo hóa đơn 0012345");
+    x.Places.SetDocPlaces(nk1, ncc, kho);
+    x.Stock.Confirm(nk1);
     x.Stock.CreateDraft("IN", "NK-0002", new[] { ("CHI", 12m), ("NUT", 600m) });
     var px = x.Issue.CreateIssueDraft(o, "PX-0001");
+    x.Places.SetDocPlaces(px, kho, toCat);
     x.Issue.SetActual(px, "VAI_DO", 150m);
     x.Transfer.Confirm(x.Transfer.Create("CH-0001", k1, k2, new[] { new TransferLine("VAI_DO", "KH2_VAI_DO", 20m) }, "Mượn vải"));
     x.Count.Create("KK-0001", new[] { ("KHOA", 498m), ("NHAN", 300m) }, "Kiểm kê tháng");

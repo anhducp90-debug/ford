@@ -18,7 +18,7 @@ public sealed class MainWindow : Window
 {
     public static readonly Module[] Modules =
     {
-        new("Quản trị", new NavItem[] { new("Sao lưu / Phục hồi", () => new BackupScreen()), new("Bảo mật & khóa PIN", () => new SecurityScreen()), new("Nhật ký thay đổi", () => new AuditScreen()) }),
+        new("Quản trị", new NavItem[] { new("Sao lưu / Phục hồi", () => new BackupScreen()), new("Bảo mật & khóa PIN", () => new SecurityScreen()), new("Nơi xuất / Nơi nhận", () => new PlaceScreen()), new("Nhật ký thay đổi", () => new AuditScreen()) }),
         new("Khai báo", new NavItem[] { new("Khách hàng", () => new CustomerScreen()), new("Nguyên phụ liệu", () => new MaterialScreen()), new("Lưới size", () => new GridScreen()),
             new("Mã hàng", () => new ProductScreen()), new("Chủng loại", () => new VariantScreen()), new("BOM & định mức", () => new BomScreen()),
             new("Đơn hàng", () => new OrderScreen()), new("Điều chỉnh đơn", () => new AdjustScreen()) }),

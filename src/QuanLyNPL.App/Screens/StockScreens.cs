@@ -18,9 +18,34 @@ internal static class DocText
     public static (string, Func<DocRow, string>, bool)[] Cols => new (string, Func<DocRow, string>, bool)[]
     {
         ("Số phiếu", d => d.DocNo, false), ("Loại", Type, false), ("Khách hàng", d => d.CustomerCode, false), ("Đơn", d => d.OrderNo, false),
-        ("Phạm vi", d => Scope(d.Scope), false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
+        ("Phạm vi", d => Scope(d.Scope), false), ("Nơi xuất", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false),
         ("Xác nhận lúc", d => d.ConfirmedAt is DateTime t ? Ui.DT(t) : "", false), ("Ghi chú", d => d.Note ?? "", false)
     };
+
+    public static List<Opt<long?>> PlaceOpts(bool fromSide) =>
+        new[] { new Opt<long?>("(chưa chọn)", null) }.Concat(App.X.Q.Places(fromSide, activeOnly: true).Select(p => new Opt<long?>($"{p.Code} – {p.Name}", p.Id))).ToList();
+
+    /// <summary>Nơi xuất / nơi nhận (sửa được khi phiếu còn nháp) + in phiếu PDF.</summary>
+    public static Control PlacesAndPrint(DocRow d, Action reload)
+    {
+        if (d.Status != "DRAFT" || d.Kind == TransferService.Kind)
+            return Ui.Row(Ui.Text($"Nơi xuất: {(d.FromPlace.Length > 0 ? d.FromPlace : "—")}   ·   Nơi nhận: {(d.ToPlace.Length > 0 ? d.ToPlace : "—")}", Ui.Muted), PrintButton(d.Id));
+        var from = Ui.Combo(PlaceOpts(true), d.FromPlaceId, 240);
+        var to = Ui.Combo(PlaceOpts(false), d.ToPlaceId, 240);
+        return Ui.Row(Ui.Label("Nơi xuất"), from, Ui.Label("Nơi nhận"), to,
+            Ui.Btn("Lưu nơi xuất/nhận", () => Ui.Try(() => { App.X.Places.SetDocPlaces(d.Id, Ui.Sel<long?>(from), Ui.Sel<long?>(to)); reload(); }, "Đã lưu nơi xuất / nơi nhận.")),
+            PrintButton(d.Id));
+    }
+
+    public static Button PrintButton(long docId) => Ui.BtnAsync("In phiếu (PDF)", async () =>
+    {
+        var d = App.X.Q.Docs().First(x => x.Id == docId);
+        var path = await Ui.SavePath("Lưu phiếu PDF", $"{d.DocNo} {VoucherPdf.Title(d)}", "pdf", "Tệp PDF");
+        if (path is null) return;
+        await using (var fs = File.Create(path)) VoucherPdf.Generate(App.X.C, docId, fs);
+        App.Main.Status("Đã lưu phiếu: " + path, "ok");
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); } catch { /* không có trình xem PDF thì bỏ qua */ }
+    });
 
     public static Control Lines(long docId) =>
         Ui.List(App.X.Q.DocLines(docId), new (string, Func<DocLineRow, string>, bool)[]
@@ -35,6 +60,7 @@ public sealed class ReceiptScreen : Screen
     public override string Title => "Phiếu nhập kho";
     public override string Subtitle => "Mỗi phiếu thuộc một khách hàng. Phiếu nháp không đổi tồn; chỉ khi xác nhận mới ghi sổ. Phiếu đã xác nhận không sửa, chỉ điều chỉnh có lưu vết.";
     DocRow? _sel; long? _cust; string _no = "", _note = "";
+    long? _fromPlace, _toPlace = App.X.Places.DefaultInTo;
     readonly List<LineState> _lines = new();
 
     protected override Control Build()
@@ -53,6 +79,9 @@ public sealed class ReceiptScreen : Screen
 
         var form = Ui.Card(editingDraft ? $"Phiếu nháp {_sel!.DocNo}" : "Phiếu nhập mới",
             Ui.Row(Ui.Label("Khách hàng", true), custCb, Ui.Label("Số phiếu", true), no, Ui.Label("Ghi chú"), note),
+            Ui.Row(Ui.Label("Nơi xuất (bên giao)"), Ui.Combo(DocText.PlaceOpts(true), _fromPlace, 260, v => _fromPlace = v),
+                Ui.Label("Nơi nhận"), Ui.Combo(DocText.PlaceOpts(false), _toPlace, 260, v => _toPlace = v),
+                editingDraft ? DocText.PrintButton(_sel!.Id) : null),
             editor.View,
             Ui.Row(
                 Ui.Btn("Lưu nháp", () => Ui.Try(() => { Save(); Reload(); }, "Đã lưu phiếu nháp."), primary: !editingDraft),
@@ -82,22 +111,24 @@ public sealed class ReceiptScreen : Screen
                     {
                         _lines.Clear(); _lines.AddRange(X.Q.DocLines(d.Id).Select(l => new LineState { Mat = l.Material, Qty = Ui.N(l.Qty) }));
                         _no = d.DocNo; _note = d.Note ?? ""; _cust = X.Q.Customers().FirstOrDefault(c => c.Code == d.CustomerCode)?.Id ?? _cust;
+                        _fromPlace = d.FromPlaceId; _toPlace = d.ToPlaceId;
                     }
                     Reload();
                 }, 300, d => d.Id == _sel?.Id)),
-            _sel is { } s && !(s is { Status: "DRAFT", Kind: null }) ? Ui.Card($"Chi tiết {s.DocNo} ({DocText.Type(s)} – {DocText.Status(s.Status)})", DocText.Lines(s.Id)) : null);
+            _sel is { } s && !(s is { Status: "DRAFT", Kind: null }) ? Ui.Card($"Chi tiết {s.DocNo} ({DocText.Type(s)} – {DocText.Status(s.Status)})", DocText.PlacesAndPrint(s, Reload), DocText.Lines(s.Id)) : null);
     }
 
     long Save()
     {
         var lines = LinesEditor.Read(_lines);
-        if (_sel is { Status: "DRAFT", Kind: null } d) { X.Stock.ReplaceDraftLines(d.Id, lines); return d.Id; }
+        if (_sel is { Status: "DRAFT", Kind: null } d) { X.Stock.ReplaceDraftLines(d.Id, lines); X.Places.SetDocPlaces(d.Id, _fromPlace, _toPlace); return d.Id; }
         var id = X.Stock.CreateDraft("IN", _no.Trim(), lines, null, _note, _cust ?? throw new BusinessException("Chọn khách hàng."));
+        X.Places.SetDocPlaces(id, _fromPlace, _toPlace);
         _sel = X.Q.Docs("IN").First(x => x.Id == id);
         return id;
     }
 
-    void New() { _sel = null; _lines.Clear(); _no = ""; _note = ""; }
+    void New() { _sel = null; _lines.Clear(); _no = ""; _note = ""; _fromPlace = null; _toPlace = X.Places.DefaultInTo; }
 }
 
 public sealed class CountScreen : Screen
@@ -252,11 +283,12 @@ public sealed class IssueScreen : Screen
                 Ui.Btn("Tạo phiếu xuất nháp", () => Ui.Try(() =>
                 {
                     var id = X.Issue.CreateIssueDraft(o.Id, X.Q.NextNo("PX"), _scope);
+                    X.Places.SetDocPlaces(id, X.Places.DefaultOutFrom, null);
                     _sel = X.Q.Docs("OUT", o.Id).First(d => d.Id == id); _actual.Clear(); Reload();
                 }, "Đã tạo phiếu xuất nháp theo nhu cầu còn lại."), primary: true)),
             Ui.Hint("Không trộn phạm vi \"Cả đơn\" với phạm vi chủng loại/bộ trên cùng một đơn. Mỗi lúc chỉ có một phiếu nháp cho đơn."),
             Ui.Card("Phiếu cấp phát của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; _actual.Clear(); Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : _sel.Status == "DRAFT" ? DraftCard(_sel) : Ui.Card($"Phiếu {_sel.DocNo} – đã xác nhận", DocText.Lines(_sel.Id)));
+            _sel is null ? null : _sel.Status == "DRAFT" ? DraftCard(_sel) : Ui.Card($"Phiếu {_sel.DocNo} – đã xác nhận", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id)));
     }
 
     Control DraftCard(DocRow d)
@@ -287,7 +319,7 @@ public sealed class IssueScreen : Screen
                 warns.AddRange(X.Issue.SetActual(d.Id, m, Ui.Dec(v, "thực cấp " + m)));
             return warns;
         }
-        return Ui.Card($"Phiếu nháp {d.DocNo} – {DocText.Scope(d.Scope)}", grid,
+        return Ui.Card($"Phiếu nháp {d.DocNo} – {DocText.Scope(d.Scope)}", DocText.PlacesAndPrint(d, Reload), grid,
             Ui.Row(
                 Ui.BtnAsync("Lưu thực cấp", async () =>
                 {
@@ -338,6 +370,7 @@ public sealed class ReturnScreen : Screen
                 Ui.Row(Ui.Btn("Tạo phiếu trả nháp", () => Ui.Try(() =>
                 {
                     var id = X.Issue.CreateReturn(o.Id, X.Q.NextNo("TR"), LinesEditor.Read(_ret, "số lượng trả"), _scope);
+                    X.Places.SetDocPlaces(id, null, X.Places.DefaultInTo);
                     _ret.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
                 }, "Đã tạo phiếu trả nháp."), primary: true))),
             Ui.Card("Phiếu xuất bù",
@@ -347,10 +380,12 @@ public sealed class ReturnScreen : Screen
                 Ui.Row(Ui.Btn("Tạo phiếu xuất bù nháp", () => Ui.Try(() =>
                 {
                     var id = X.Issue.CreateSupplement(_src ?? throw new BusinessException("Chọn phiếu cấp gốc."), X.Q.NextNo("XB"), LinesEditor.Read(_sup, "số lượng bù"));
+                    var srcDoc = X.Q.Docs().First(x => x.Id == _src);
+                    X.Places.SetDocPlaces(id, srcDoc.FromPlaceId ?? X.Places.DefaultOutFrom, srcDoc.ToPlaceId);
                     _sup.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
                 }, "Đã tạo phiếu xuất bù nháp."), primary: true))),
             Ui.Card("Phiếu trả / xuất bù của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : Ui.Card($"{DocText.Type(_sel)} {_sel.DocNo} – {DocText.Status(_sel.Status)}", DocText.Lines(_sel.Id),
+            _sel is null ? null : Ui.Card($"{DocText.Type(_sel)} {_sel.DocNo} – {DocText.Status(_sel.Status)}", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id),
                 _sel.Status != "DRAFT" ? null : Ui.Row(
                     Ui.BtnAsync("Xác nhận", async () =>
                     {

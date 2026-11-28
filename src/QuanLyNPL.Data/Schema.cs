@@ -101,5 +101,12 @@ CREATE UNIQUE INDEX ux_bom_set_type ON bom(product_id,type) WHERE per_set=1;
 -- Bỏ quy đổi size: mọi chủng loại dùng lưới size của mã hàng. Bảng size_map giữ lại để tra cứu lịch sử, không dùng nữa.
 UPDATE variant SET grid_id=(SELECT p.default_grid_id FROM product p WHERE p.id=variant.product_id);
 "
+    ,
+@"
+CREATE TABLE place(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, address TEXT,
+  kind TEXT NOT NULL DEFAULT 'CA_HAI' CHECK(kind IN ('XUAT','NHAN','CA_HAI')), active INTEGER NOT NULL DEFAULT 1);
+ALTER TABLE stock_doc ADD COLUMN from_place_id INTEGER REFERENCES place(id);
+ALTER TABLE stock_doc ADD COLUMN to_place_id INTEGER REFERENCES place(id);
+"
     };
 }

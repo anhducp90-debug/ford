@@ -131,7 +131,8 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         var lines = orders.LoadLines(orderId);
         var total = lines.Sum(l => l.Sets);
         var d = OrderService.Calculate(snap, lines);
-        decimal Avail(string m) => Math.Max(0m, stock.OnHand(m) - stock.ReservedForOthers(m, orderId));
+        // Năng lực của mỗi mã = phần đã cấp cho đơn + tồn khả dụng hiện tại.
+        decimal Avail(string m) => Math.Max(0m, stock.OnHand(m) - stock.ReservedForOthers(m, orderId)) + Math.Max(0m, stock.IssuedNet(orderId, m));
         var need = d.Sources.GroupBy(x => x.MaterialCode).ToDictionary(g => g.Key, g => g.Sum(x => x.Qty));
 
         var mixRows = need.Where(kv => kv.Value > 0)
@@ -147,7 +148,7 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         else filters.Add($"Theo cơ cấu size của đơn: tối đa {maxMix:#,##0} / {total:#,##0} bộ ({k * 100:0.#}%), giới hạn bởi: {string.Join(", ", limiting)}");
 
         var byMix = new ReportTable("Số bộ tối đa – theo cơ cấu size của đơn", filters,
-            new[] { "Mã NPL", "Tên", "Nhu cầu cả đơn", "Tồn khả dụng", "Đáp ứng %", "Số bộ tối đa theo mã" },
+            new[] { "Mã NPL", "Tên", "Nhu cầu cả đơn", "Đã cấp + tồn khả dụng", "Đáp ứng %", "Số bộ tối đa theo mã" },
             mixRows.Select(x => new object?[] { x.mat, MatName(x.mat), Math.Round(x.need, 2), x.avail, Math.Round(Math.Min(x.ratio, 9.99m) * 100, 1), Math.Floor(Math.Min(x.ratio, 1m) * total) }).ToList());
 
         var sizeRows = new List<object?[]>();
@@ -171,10 +172,10 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
     {
         var r = stock.CheckOrder(orderId, orders);
         var rows = r.Lines.Where(l => !onlyShortage || l.Shortage > 0)
-            .Select(l => new object?[] { l.MaterialCode, MatName(l.MaterialCode), l.Demand, l.OnHand, l.Reserved, l.Available, l.Shortage, l.Shortage > 0 ? "THIẾU" : "ĐỦ" }).ToList();
+            .Select(l => new object?[] { l.MaterialCode, MatName(l.MaterialCode), l.Demand, l.Issued, l.OnHand, l.Reserved, l.Available, l.Shortage, l.Shortage > 0 ? "THIẾU" : "ĐỦ" }).ToList();
         var filters = Describe(new ReportFilter(OrderId: orderId, OnlyShortage: onlyShortage));
         filters.Insert(0, "Trạng thái đơn: " + StatusText(r.Status));
-        return new("Cảnh báo thiếu NPL", filters, new[] { "Mã NPL", "Tên", "Nhu cầu", "Tồn thực tế", "Đã giữ", "Tồn khả dụng", "Thiếu", "Trạng thái" }, rows);
+        return new("Cảnh báo thiếu NPL", filters, new[] { "Mã NPL", "Tên", "Nhu cầu", "Đã cấp cho đơn", "Tồn thực tế", "Giữ cho đơn khác", "Tồn khả dụng", "Thiếu", "Trạng thái" }, rows);
     }
 
     /// <summary>Đáp ứng đơn hàng: mỗi đơn mở một dòng, kèm danh sách mã thiếu.</summary>

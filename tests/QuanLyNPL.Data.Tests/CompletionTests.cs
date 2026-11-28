@@ -193,3 +193,93 @@ public class MaxSetsTests
         Assert.Contains(r.ByOrderMix.Filters, x => x.StartsWith("CHƯA ĐỦ"));
     }
 }
+
+public class PlaceTests
+{
+    static (Fixture f, PlaceService p, long kho, long ncc, long toCat) Setup()
+    {
+        var f = new Fixture(); var p = new PlaceService(f.C);
+        var kho = p.Add("KHO", "Kho NPL", PlaceKind.CaHai, "Xưởng 1");
+        var ncc = p.Add("NCC1", "Nhà cung cấp Phúc An", PlaceKind.Xuat);
+        var toCat = p.Add("TOCAT", "Tổ cắt", PlaceKind.Nhan);
+        return (f, p, kho, ncc, toCat);
+    }
+
+    [Fact]
+    public void Places_ByKind_AndDefaults()
+    {
+        var (f, p, kho, ncc, toCat) = Setup();
+        var q = new Queries(f.C);
+        Assert.Equal(new[] { "KHO", "NCC1" }, q.Places(forFrom: true).Select(x => x.Code));
+        Assert.Equal(new[] { "KHO", "TOCAT" }, q.Places(forFrom: false).Select(x => x.Code));
+        Assert.Null(p.DefaultInTo);
+        p.DefaultInTo = kho; p.DefaultOutFrom = kho;
+        Assert.Equal(kho, p.DefaultInTo);
+        p.DefaultInTo = null; Assert.Null(p.DefaultInTo);
+        Assert.Throws<SqliteException>(() => p.Add("KHO", "Trùng", PlaceKind.CaHai));
+    }
+
+    [Fact]
+    public void DocPlaces_ValidatedByKind_OnlyOnDraft_ShownInList()
+    {
+        var (f, p, kho, ncc, toCat) = Setup();
+        var d = f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 10m) });
+        Assert.Throws<BusinessException>(() => p.SetDocPlaces(d, toCat, kho));     // tổ cắt chỉ là nơi nhận
+        Assert.Throws<BusinessException>(() => p.SetDocPlaces(d, kho, ncc));       // NCC chỉ là nơi xuất
+        Assert.Throws<BusinessException>(() => p.SetDocPlaces(d, kho, kho));
+        p.SetDocPlaces(d, ncc, kho);
+        var row = new Queries(f.C).Docs("IN").Single();
+        Assert.Equal(("Nhà cung cấp Phúc An", "Kho NPL"), (row.FromPlace, row.ToPlace));
+        f.Stock.Confirm(d);
+        Assert.Throws<BusinessException>(() => p.SetDocPlaces(d, null, null));
+        p.SetActive(toCat, false);
+        var x = f.Stock.CreateDraft("OUT", "X1", new[] { ("VAI", 1m) });
+        Assert.Throws<BusinessException>(() => p.SetDocPlaces(x, kho, toCat));     // đã ngừng sử dụng
+    }
+
+    [Fact]
+    public void Voucher_Pdf_ForInAndIssue()
+    {
+        var (f, p, kho, ncc, toCat) = Setup();
+        new CompanyInfo(f.C) { Name = "Công ty May Ford", Address = "KCN A" };
+        var d = f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 10m), ("CHI", 3m) }, note: "Nhập theo HĐ 12");
+        p.SetDocPlaces(d, ncc, kho);
+        var ms = new MemoryStream(); VoucherPdf.Generate(f.C, d, ms);
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(ms.ToArray(), 0, 4));
+        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        f.Stock.Confirm(d);
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 2) });
+        var px = new IssueService(f.C, f.Orders, f.Stock).CreateIssueDraft(o, "PX1");
+        p.SetDocPlaces(px, kho, toCat);
+        var ms2 = new MemoryStream(); VoucherPdf.Generate(f.C, px, ms2);
+        Assert.True(ms2.Length > 1000);
+        Assert.Equal("PHIẾU XUẤT KHO (CẤP PHÁT NPL)", VoucherPdf.Title(new Queries(f.C).Docs().First(x => x.Id == px)));
+    }
+
+    [Fact]
+    public void Migration7_AddsPlaces()
+    {
+        using var c = Db.Open(":memory:");
+        Assert.Equal((long)Schema.Migrations.Length, Db.Scalar(c, "PRAGMA user_version"));
+        Db.Exec(c, "SELECT from_place_id,to_place_id FROM stock_doc");
+    }
+}
+
+public class IssuedCountsTowardsDemandTests
+{
+    [Fact]
+    public void AfterIssue_CheckAndMaxSets_CountIssuedQuantities()
+    {
+        using var f = new Fixture();
+        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10) });   // cần 20
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 20m) }));
+        Assert.Equal(FulfillStatus.Enough, f.Stock.CheckOrder(o, f.Orders).Status);
+        var iss = new IssueService(f.C, f.Orders, f.Stock);
+        var d = iss.CreateIssueDraft(o, "X1"); iss.SetActual(d, "VAI", 15m); f.Stock.Confirm(d);   // tồn còn 5, đã cấp 15
+        var r = f.Stock.CheckOrder(o, f.Orders);
+        Assert.Equal(FulfillStatus.Enough, r.Status);                     // 20 − 15 đã cấp − 5 tồn = 0
+        Assert.Equal(15m, r.Lines.Single().Issued);
+        Assert.Equal(10m, new ReportService(f.C, f.Orders, f.Stock).MaxSets(o).Summary.MaxSets);
+    }
+}

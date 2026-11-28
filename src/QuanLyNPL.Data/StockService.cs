@@ -130,6 +130,11 @@ public sealed class StockService(SqliteConnection c)
         Db.Query(c, "SELECT demand FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
             r => Db.D(r.GetString(0)), tx, ("$o", orderId), ("$m", materialId), ("$s", scope)).Sum();
 
+    /// <summary>Lượng đã cấp ròng cho đơn trên mọi phạm vi (cấp + bù − trả).</summary>
+    public decimal IssuedNet(long orderId, string materialCode) =>
+        Db.Query(c, "SELECT l.issued FROM carry_ledger l JOIN material m ON m.id=l.material_id WHERE l.order_id=$o AND m.code=$c",
+            r => Db.D(r.GetString(0)), null, ("$o", orderId), ("$c", materialCode)).Sum();
+
     /// <summary>Lượng đã cấp ròng cho đơn (cấp + bù − trả).</summary>
     public decimal CarryIssued(long orderId, long materialId, string scope, SqliteTransaction? tx = null) =>
         Db.Query(c, "SELECT issued FROM carry_ledger WHERE order_id=$o AND material_id=$m AND scope=$s",
@@ -196,7 +201,7 @@ public sealed class StockService(SqliteConnection c)
     public AvailabilityResult CheckOrder(long orderId, OrderService orders)
     {
         var demand = orders.CalculateDemand(orderId);
-        var pos = demand.TotalByMaterial.Keys.Select(m => new StockPosition(m, OnHand(m), ReservedForOthers(m, orderId)));
+        var pos = demand.TotalByMaterial.Keys.Select(m => new StockPosition(m, OnHand(m), ReservedForOthers(m, orderId), IssuedNet(orderId, m)));
         return Stock.Check(demand, pos);
     }
 }

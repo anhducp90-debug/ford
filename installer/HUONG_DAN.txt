@@ -27,4 +27,12 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
    - Trả NPL, xuất bù, chuyển NPL giữa khách hàng, kiểm kê: ở các mục tương ứng.
    - Báo cáo: tồn, nhập–xuất–tồn, nhu cầu, cảnh báo thiếu…; xuất Excel / PDF.
 
-5. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.
+5. Nơi xuất / Nơi nhận (Quản trị > Nơi xuất / Nơi nhận):
+   - Khai báo kho, nhà cung cấp, tổ cắt, chuyền may…; chọn nơi mặc định cho phiếu nhập và phiếu xuất.
+   - Khai báo Thông tin đơn vị để in trên đầu chứng từ.
+   - Trên phiếu nhập/xuất/trả/bù: chọn nơi xuất, nơi nhận khi phiếu còn nháp; bấm "In phiếu (PDF)" để in và ký.
+
+6. Số bộ tối đa sản xuất được (Báo cáo, hoặc ở Xuất kho > Kiểm tra đáp ứng):
+   - Theo cơ cấu size của đơn và riêng từng size; đã tính cả phần NPL đã cấp cho đơn.
+
+7. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.

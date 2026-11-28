@@ -21,6 +21,8 @@ public sealed class Ctx
     public Queries Q { get; }
     public PinService Pin { get; }
     public BackupService Backup { get; }
+    public PlaceService Places { get; }
+    public CompanyInfo Company { get; }
 
     public static string DefaultDataDir() =>
         Environment.GetEnvironmentVariable("QLNPL_DATA_DIR") is { Length: > 0 } d ? d
@@ -35,7 +37,7 @@ public sealed class Ctx
         Cat = new(C); Bom = new(C); Orders = new(C); Stock = new(C);
         Issue = new(C, Orders, Stock); Transfer = new(C, Stock); Count = new(C, Stock);
         Reports = new(C, Orders, Stock); Adjust = new(C, Orders, Stock);
-        Q = new(C); Pin = new(C); Backup = new(C);
+        Q = new(C); Pin = new(C); Backup = new(C); Places = new(C); Company = new(C);
     }
 
     public string BackupDir => Path.Combine(DataDir, "backups");

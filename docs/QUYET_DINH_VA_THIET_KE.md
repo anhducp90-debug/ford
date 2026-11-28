@@ -96,3 +96,17 @@ Dữ liệu cũ: migration 3 để `customer_id` của NPL rỗng (phải gán t
 - Đơn hàng đủ dữ liệu khi: mọi BOM đã khai báo đều có định mức cho các size của đơn, và mỗi chủng loại/size có ít nhất một nguồn định mức (BOM riêng của chủng loại hoặc BOM theo bộ).
 - Cấp phát theo phạm vi: "ALL" (cả đơn), mã chủng loại, hoặc "(Bộ)" (chỉ NPL từ BOM theo bộ, ví dụ cấp riêng cho tổ đóng gói).
 - Migration 5 đổi loại cũ "Chủng loại" thành "Sản xuất". BOM Đóng gói theo chủng loại tạo trước đó vẫn tính được, nhưng không tạo mới được.
+
+## 7. Số bộ tối đa sản xuất được (mục 6.4)
+
+- Theo cơ cấu size của đơn: k = min( (đã cấp cho đơn + tồn khả dụng) / nhu cầu cả đơn ) trên mọi mã NPL; số bộ tối đa = ⌊k × tổng số bộ⌋, không vượt số bộ đặt; báo mã NPL giới hạn.
+- Riêng từng size: ⌊min((đã cấp + tồn khả dụng) / định mức 1 bộ của size)⌋ – mỗi size độc lập, không cộng các size.
+- Tồn khả dụng = tồn thực tế − lượng giữ cho đơn khác. Thiếu dữ liệu (BOM/định mức) thì không kết luận.
+- Kiểm tra đáp ứng: thiếu = max(0, nhu cầu − đã cấp cho đơn − tồn khả dụng).
+
+## 8. Nơi xuất / Nơi nhận và chứng từ
+
+- Danh mục `place` (Quản trị): mã, tên, địa chỉ, loại (chỉ nơi xuất / chỉ nơi nhận / cả hai), ngừng sử dụng.
+- Phiếu kho có `from_place_id`, `to_place_id`; chỉ sửa khi phiếu còn nháp; kiểm tra loại và trạng thái; nơi xuất ≠ nơi nhận.
+- Mặc định: nơi nhận của phiếu nhập/trả, nơi xuất của phiếu xuất/cấp phát (thường là kho NPL). Xuất bù lấy theo phiếu gốc.
+- In chứng từ PDF A4: thông tin đơn vị, số/ngày, khách hàng, đơn hàng, nơi xuất, nơi nhận, phạm vi cấp, bảng NPL (đề xuất/thực cấp), chữ ký (người lập, thủ kho, người giao/nhận, phụ trách). Bản nháp in kèm dòng "BẢN NHÁP – CHƯA XÁC NHẬN".

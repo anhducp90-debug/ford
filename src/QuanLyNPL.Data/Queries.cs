@@ -11,7 +11,9 @@ public sealed record BomRow(long Id, string Name, string Type, bool PerSet, long
 public sealed record BomVersionRow(long Id, int No, DateTime CreatedAt);
 public sealed record BomLineRow(string Material, string MaterialName, string Size, decimal Usage, decimal Waste);
 public sealed record OrderRow(long Id, string No, long CustomerId, string CustomerCode, long ProductId, string ProductCode, DateTime OrderDate, DateTime? DueDate, string Status, decimal TotalSets);
-public sealed record DocRow(long Id, string Type, string DocNo, string Status, long? OrderId, string OrderNo, string CustomerCode, string? Scope, string? Kind, long? RefDocId, DateTime CreatedAt, DateTime? ConfirmedAt, string? Note);
+public sealed record DocRow(long Id, string Type, string DocNo, string Status, long? OrderId, string OrderNo, string CustomerCode, string? Scope, string? Kind, long? RefDocId, DateTime CreatedAt, DateTime? ConfirmedAt, string? Note,
+    long? FromPlaceId = null, string FromPlace = "", long? ToPlaceId = null, string ToPlace = "");
+public sealed record PlaceRow(long Id, string Code, string Name, string? Address, string Kind, bool Active);
 public sealed record DocLineRow(string Material, string MaterialName, string Unit, decimal Qty, decimal? Suggested, bool Entered);
 public sealed record CountRow(long Id, string DocNo, string Status, string CustomerCode, string? Reason, DateTime CreatedAt);
 public sealed record CountLineRow(string Material, string MaterialName, decimal Counted, decimal? Book, decimal? Diff);
@@ -81,11 +83,20 @@ public sealed class Queries(SqliteConnection c)
                 r.GetString(9).Split('|', StringSplitOptions.RemoveEmptyEntries).Sum(Db.D)), null, ("$k", customerId), ("$s", status));
 
     public List<DocRow> Docs(string? type = null, long? orderId = null, string? status = null) =>
-        Db.Query(c, @"SELECT d.id,d.type,d.doc_no,d.status,d.order_id,COALESCE(o.order_no,''),COALESCE(k.code,''),d.scope,d.kind,d.ref_doc_id,d.created_at,d.confirmed_at,d.note
+        Db.Query(c, @"SELECT d.id,d.type,d.doc_no,d.status,d.order_id,COALESCE(o.order_no,''),COALESCE(k.code,''),d.scope,d.kind,d.ref_doc_id,d.created_at,d.confirmed_at,d.note,
+                        d.from_place_id,COALESCE(pf.name,''),d.to_place_id,COALESCE(pt.name,'')
                       FROM stock_doc d LEFT JOIN ""order"" o ON o.id=d.order_id LEFT JOIN customer k ON k.id=d.customer_id
+                      LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id
                       WHERE ($t IS NULL OR d.type=$t) AND ($o IS NULL OR d.order_id=$o) AND ($s IS NULL OR d.status=$s) ORDER BY d.id DESC",
             r => new DocRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetString(6), OptStr(r, 7), OptStr(r, 8), OptLong(r, 9),
-                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12)), null, ("$t", type), ("$o", orderId), ("$s", status));
+                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12), OptLong(r, 13), r.GetString(14), OptLong(r, 15), r.GetString(16)), null, ("$t", type), ("$o", orderId), ("$s", status));
+
+    /// <summary>Nơi xuất / nơi nhận. forFrom: lấy nơi dùng làm "nơi xuất" (XUAT, CA_HAI); forFrom=false: "nơi nhận" (NHAN, CA_HAI).</summary>
+    public List<PlaceRow> Places(bool? forFrom = null, bool activeOnly = false) =>
+        Db.Query(c, @"SELECT id,code,name,address,kind,active FROM place
+                      WHERE ($a=0 OR active=1) AND ($f IS NULL OR kind='CA_HAI' OR kind=CASE WHEN $f=1 THEN 'XUAT' ELSE 'NHAN' END) ORDER BY code",
+            r => new PlaceRow(r.GetInt64(0), r.GetString(1), r.GetString(2), OptStr(r, 3), r.GetString(4), r.GetInt32(5) == 1),
+            null, ("$a", activeOnly ? 1 : 0), ("$f", forFrom is null ? null : forFrom.Value ? 1 : 0));
 
     public List<DocLineRow> DocLines(long docId) =>
         Db.Query(c, "SELECT m.code,m.name,m.unit,l.qty,l.qty_suggested,l.entered FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d ORDER BY l.id",

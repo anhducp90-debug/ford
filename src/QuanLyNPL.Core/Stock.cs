@@ -1,11 +1,12 @@
 namespace QuanLyNPL.Core;
 
-public sealed record StockPosition(string MaterialCode, decimal OnHand, decimal ReservedForOthers);
+/// <summary>IssuedToOrder: lượng đã cấp ròng cho chính đơn (cấp + bù − trả) – phần nhu cầu này đã được đáp ứng.</summary>
+public sealed record StockPosition(string MaterialCode, decimal OnHand, decimal ReservedForOthers, decimal IssuedToOrder = 0m);
 
 public enum FulfillStatus { Enough, Short, Incomplete }
 
 public sealed record AvailabilityLine(string MaterialCode, decimal Demand, decimal OnHand,
-    decimal Reserved, decimal Available, decimal Shortage);
+    decimal Reserved, decimal Available, decimal Shortage, decimal Issued = 0m);
 
 public sealed record AvailabilityResult(FulfillStatus Status, IReadOnlyList<AvailabilityLine> Lines);
 
@@ -24,7 +25,9 @@ public static class Stock
             var onHand = p?.OnHand ?? 0m;
             var reserved = p?.ReservedForOthers ?? 0m;
             var avail = onHand - reserved;
-            lines.Add(new(mat, need, onHand, reserved, avail, Math.Max(0m, need - avail)));
+            var issued = p?.IssuedToOrder ?? 0m;
+            // Thiếu = nhu cầu − phần đã cấp cho đơn − tồn khả dụng.
+            lines.Add(new(mat, need, onHand, reserved, avail, Math.Max(0m, need - issued - avail), issued));
         }
         // Dữ liệu chưa đủ thì không bao giờ kết luận ĐỦ.
         var status = !demand.IsComplete ? FulfillStatus.Incomplete

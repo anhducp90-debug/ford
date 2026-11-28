@@ -42,10 +42,10 @@ jobs:
         run: |
           choco install nsis -y --no-progress
           New-Item -ItemType Directory -Force dist | Out-Null
-          & "C:\Program Files (x86)\NSIS\makensis.exe" -V2 -DVERSION=1.0.0 "-DSRC=$PWD\publish" "-DOUT=$PWD\dist\QuanLyNPL_Setup_1.0.0.exe" installer\QuanLyNPL.nsi
+          & "C:\Program Files (x86)\NSIS\makensis.exe" -V2 -DVERSION=1.1.0 "-DSRC=$PWD\publish" "-DOUT=$PWD\dist\QuanLyNPL_Setup_1.1.0.exe" installer\QuanLyNPL.nsi
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: QuanLyNPL_Setup
-          path: dist/QuanLyNPL_Setup_1.0.0.exe
+          path: dist/QuanLyNPL_Setup_1.1.0.exe

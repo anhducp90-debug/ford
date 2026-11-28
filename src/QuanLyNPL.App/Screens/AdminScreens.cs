@@ -93,3 +93,43 @@ public sealed class AuditScreen : Screen
 
     static string Short(string? s) => s is null ? "" : s.Length > 120 ? s[..120] + "…" : s;
 }
+
+public sealed class PlaceScreen : Screen
+{
+    public override string Title => "Nơi xuất / Nơi nhận";
+    public override string Subtitle => "Danh mục dùng để hoàn thiện chứng từ: phiếu nhập ghi nơi xuất (bên giao: nhà cung cấp, khách hàng…) và nơi nhận (kho); phiếu xuất ghi nơi xuất (kho) và nơi nhận (tổ cắt, chuyền may…).";
+    PlaceRow? _sel;
+
+    static readonly Opt<PlaceKind>[] Kinds = { new("Nơi xuất và nơi nhận", PlaceKind.CaHai), new("Chỉ là nơi xuất", PlaceKind.Xuat), new("Chỉ là nơi nhận", PlaceKind.Nhan) };
+
+    protected override Control Build()
+    {
+        var code = Ui.Input(120, "Mã"); var name = Ui.Input(240, "Tên"); var addr = Ui.Input(280, "Địa chỉ / ghi chú");
+        var kind = Ui.Combo(Kinds, PlaceKind.CaHai, 200);
+        if (_sel is not null) { code.Text = _sel.Code; code.IsEnabled = false; name.Text = _sel.Name; addr.Text = _sel.Address; kind.SelectedItem = Kinds.First(k => PlaceService.Code(k.Value) == _sel.Kind); }
+        var inTo = Ui.Combo(DocText.PlaceOpts(false), X.Places.DefaultInTo, 260);
+        var outFrom = Ui.Combo(DocText.PlaceOpts(true), X.Places.DefaultOutFrom, 260);
+        var cName = Ui.Input(320, "Tên đơn vị", X.Company.Name); var cAddr = Ui.Input(420, "Địa chỉ", X.Company.Address);
+        return Ui.Col(
+            Ui.Card(_sel is null ? "Khai báo nơi xuất / nơi nhận" : $"Sửa {_sel.Code}",
+                Ui.Row(Ui.Label("Mã", true), code, Ui.Label("Tên", true), name, Ui.Label("Loại", true), kind),
+                Ui.Row(Ui.Label("Địa chỉ"), addr,
+                    _sel is null
+                        ? Ui.Btn("Lưu", () => Ui.Try(() => { X.Places.Add(Ui.Req(code, "mã"), Ui.Req(name, "tên"), Ui.Sel<PlaceKind>(kind), addr.Text); Reload(); }, "Đã lưu nơi xuất / nơi nhận."), primary: true)
+                        : Ui.Btn("Lưu thay đổi", () => Ui.Try(() => { X.Places.Update(_sel.Id, Ui.Req(name, "tên"), Ui.Sel<PlaceKind>(kind), addr.Text); _sel = null; Reload(); }, "Đã cập nhật."), primary: true),
+                    _sel is null ? null : Ui.Btn(_sel.Active ? "Ngừng sử dụng" : "Dùng lại", () => Ui.Try(() => { X.Places.SetActive(_sel.Id, !_sel.Active); _sel = null; Reload(); }, "Đã cập nhật trạng thái.")),
+                    _sel is null ? null : Ui.Btn("Khai báo mới", () => { _sel = null; Reload(); }))),
+            Ui.List(X.Q.Places(), new (string, Func<PlaceRow, string>, bool)[]
+            {
+                ("Mã", p => p.Code, false), ("Tên", p => p.Name, false), ("Loại", p => PlaceService.Label(p.Kind), false),
+                ("Địa chỉ / ghi chú", p => p.Address ?? "", false), ("Trạng thái", p => p.Active ? "Đang dùng" : "Ngừng sử dụng", false)
+            }, p => { if (p is not null && p.Id != _sel?.Id) { _sel = p; Reload(); } }, 300, p => p.Id == _sel?.Id),
+            Ui.Card("Mặc định khi lập phiếu",
+                Ui.Row(Ui.Label("Nơi nhận của phiếu nhập / phiếu trả"), inTo),
+                Ui.Row(Ui.Label("Nơi xuất của phiếu xuất / cấp phát"), outFrom,
+                    Ui.Btn("Lưu mặc định", () => Ui.Try(() => { X.Places.DefaultInTo = Ui.Sel<long?>(inTo); X.Places.DefaultOutFrom = Ui.Sel<long?>(outFrom); }, "Đã lưu mặc định."), primary: true))),
+            Ui.Card("Thông tin đơn vị (in trên đầu chứng từ)",
+                Ui.Row(Ui.Label("Tên đơn vị"), cName), Ui.Row(Ui.Label("Địa chỉ"), cAddr,
+                    Ui.Btn("Lưu", () => Ui.Try(() => { X.Company.Name = cName.Text ?? ""; X.Company.Address = cAddr.Text ?? ""; }, "Đã lưu thông tin đơn vị."), primary: true))));
+    }
+}
