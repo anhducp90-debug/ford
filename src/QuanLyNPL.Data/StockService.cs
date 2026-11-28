@@ -226,4 +226,35 @@ public sealed class StockService(SqliteConnection c)
         var pos = demand.TotalByMaterial.Keys.Select(m => new StockPosition(m, OnHand(m), ReservedForOthers(m, orderId), IssuedNet(orderId, m)));
         return Stock.Check(demand, pos);
     }
+
+    /// <summary>Ghi số hóa đơn / chứng từ gốc của phiếu (khi còn nháp).</summary>
+    public void SetInvoice(long docId, string? invoiceNo)
+    {
+        var st = Db.Scalar(c, "SELECT status FROM stock_doc WHERE id=$i", null, ("$i", docId)) as string ?? throw new BusinessException("Phiếu không tồn tại.");
+        if (st != "DRAFT") throw new BusinessException("Phiếu đã xác nhận, không sửa số hóa đơn.");
+        Db.Exec(c, "UPDATE stock_doc SET invoice_no=$n WHERE id=$i", null, ("$n", string.IsNullOrWhiteSpace(invoiceNo) ? null : invoiceNo.Trim()), ("$i", docId));
+    }
+
+    /// <summary>
+    /// Dòng nhập theo đơn vị phụ (vd. kg): số lượng tồn = số nhập × hệ số (làm tròn 2 số lẻ); lưu số nhập, đơn vị, hệ số để đối chiếu.
+    /// Đơn vị phải đúng đơn vị nhập phụ đã khai báo của NPL.
+    /// </summary>
+    public void ApplyEntries(long docId, IReadOnlyList<(string material, decimal entryQty, string unit, decimal factor)> entries)
+    {
+        if (entries.Count == 0) return;
+        var st = Db.Scalar(c, "SELECT status FROM stock_doc WHERE id=$i", null, ("$i", docId)) as string ?? throw new BusinessException("Phiếu không tồn tại.");
+        if (st != "DRAFT") throw new BusinessException("Phiếu đã xác nhận.");
+        using var tx = c.BeginTransaction();
+        foreach (var (m, q, u, f) in entries)
+        {
+            var alt = Db.Scalar(c, "SELECT alt_unit FROM material WHERE code=$c", tx, ("$c", m)) as string;
+            if (!string.Equals(alt, u, StringComparison.OrdinalIgnoreCase)) throw new BusinessException($"{m}: chưa khai báo đơn vị nhập {u} (Khai báo > Nguyên phụ liệu > Quy đổi).");
+            if (q < 0 || f <= 0) throw new BusinessException($"{m}: số nhập không được âm, hệ số phải lớn hơn 0.");
+            if (Db.Exec(c, @"UPDATE stock_doc_line SET qty=$q, entry_qty=$e, entry_unit=$u, entry_factor=$f
+                             WHERE doc_id=$d AND material_id=(SELECT id FROM material WHERE code=$c)", tx,
+                    ("$q", Db.D(Math.Round(q * f, 2, MidpointRounding.AwayFromZero))), ("$e", Db.D(q)), ("$u", alt), ("$f", Db.D(f)), ("$d", docId), ("$c", m)) == 0)
+                throw new BusinessException($"{m} không có trong phiếu.");
+        }
+        tx.Commit();
+    }
 }

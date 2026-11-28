@@ -34,18 +34,23 @@ public sealed class CustomerScreen : Screen
         var code = Ui.Input(140, "Mã"); var name = Ui.Input(300, "Tên khách hàng");
         return Ui.Col(
             Ui.Card("Khai báo khách hàng", Ui.Row(Ui.Label("Mã", true), code, Ui.Label("Tên", true), name,
-                Ui.Btn("Lưu khách hàng", () => Ui.Try(() => { X.Cat.AddCustomer(Ui.Req(code, "mã"), Ui.Req(name, "tên")); Reload(); }, "Đã lưu khách hàng."), primary: true))),
+                Ui.Btn("Lưu khách hàng", () => Ui.Try(() => { X.Cat.AddCustomer(Ui.Req(code, "mã"), Ui.Req(name, "tên")); Reload(); }, "Đã lưu khách hàng."), primary: true),
+                Ui.Btn("Sửa tên khách hàng đang chọn", () => Ui.Try(() =>
+                {
+                    if (_sel is null) throw new BusinessException("Chọn một khách hàng trong danh sách.");
+                    X.Cat.UpdateCustomer(_sel.Id, Ui.Req(name, "tên")); Reload();
+                }, "Đã sửa tên khách hàng.")))),
             Ui.Row(Ui.Btn("Ngừng sử dụng / Dùng lại khách hàng đang chọn", () => Ui.Try(() =>
             {
                 if (_sel is null) throw new BusinessException("Chọn một khách hàng trong danh sách.");
                 X.Cat.SetCustomerActive(_sel.Id, !_sel.Active); Reload();
             }, "Đã cập nhật trạng thái."))),
-            Ui.List(X.Q.Customers(), new (string, Func<CustomerRow, string>, bool)[]
+            Ui.SearchList("customers", X.Q.Customers(), new (string, Func<CustomerRow, string>, bool)[]
             {
                 ("Mã", c => c.Code, false), ("Tên", c => c.Name, false),
                 ("Mã hàng", c => X.Q.Products(c.Id).Count.ToString(), true), ("NPL", c => X.Q.Materials(c.Id).Count.ToString(), true),
                 ("Trạng thái", c => c.Active ? "Đang dùng" : "Ngừng sử dụng", false)
-            }, c => _sel = c));
+            }, c => { _sel = c; if (c is not null) { code.Text = c.Code; name.Text = c.Name; } }));
     }
 }
 
@@ -58,7 +63,7 @@ public sealed class MaterialScreen : Screen
     protected override Control Build()
     {
         var cust = Ui.Combo(Opts.Customers(), _filter);
-        var code = Ui.Input(140, "Mã NPL"); var name = Ui.Input(220, "Tên"); var unit = Ui.Input(80, "ĐVT"); var note = Ui.Input(200, "Ghi chú");
+        var code = Ui.Input(140, "Mã NPL", _sel?.Code); var name = Ui.Input(220, "Tên", _sel?.Name); var unit = Ui.Input(80, "ĐVT", _sel?.Unit); var note = Ui.Input(200, "Ghi chú", _sel?.Note);
         var unassigned = X.Cat.UnassignedMaterials();
         return Ui.Col(
             unassigned.Count > 0 ? Ui.Banner($"Có {unassigned.Count} NPL chưa gán khách hàng: {string.Join(", ", unassigned.Take(10))}. Chọn NPL, chọn khách hàng rồi bấm \"Gán khách hàng\".", "warn") : null,
@@ -69,8 +74,9 @@ public sealed class MaterialScreen : Screen
                     {
                         var k = Ui.Sel<long?>(cust) ?? throw new BusinessException("Phải chọn khách hàng cho NPL.");
                         X.Cat.AddMaterial(Ui.Req(code, "mã NPL"), Ui.Req(name, "tên"), Ui.Req(unit, "đơn vị tính"), k, note.Text);
-                        _filter = k; Reload();
+                        _filter = k; _sel = null; Reload();
                     }, "Đã lưu NPL."), primary: true),
+                    _sel is null ? null : Ui.Btn("Khai báo mới", () => { _sel = null; Reload(); }),
                     Ui.Btn("Cập nhật tên/ĐVT/ghi chú của NPL đang chọn", () => Ui.Try(() =>
                     {
                         if (_sel is null) throw new BusinessException("Chọn một NPL trong danh sách.");
@@ -87,13 +93,42 @@ public sealed class MaterialScreen : Screen
                         X.Cat.SetMaterialActive(_sel.Code, !_sel.Active); Reload();
                     }, "Đã cập nhật trạng thái."))),
                 Ui.Hint("Chọn một dòng để nạp vào ô nhập khi cần sửa. NPL đã có giao dịch thì không đổi đơn vị tính; đã dùng thì không đổi khách hàng.")),
+            ConversionCard(),
             Ui.Row(Ui.Label("Lọc theo khách hàng"), Ui.Combo(Opts.Customers(false, "Tất cả khách hàng"), _filter, 260, v => { _filter = v; Reload(); })),
-            Ui.List(X.Q.Materials(_filter), new (string, Func<MaterialRow, string>, bool)[]
+            Ui.SearchList("materials", X.Q.Materials(_filter), new (string, Func<MaterialRow, string>, bool)[]
             {
                 ("Mã", m => m.Code, false), ("Tên", m => m.Name, false), ("Khách hàng", m => m.CustomerCode.Length > 0 ? m.CustomerCode : "(chưa gán)", false), ("ĐVT", m => m.Unit, false),
+                ("Nhập theo", m => m.AltUnit is null ? "" : $"1 {m.AltUnit} = {Ui.N(m.AltFactor ?? 0)} {m.Unit}", false),
                 ("Tồn thực tế", m => Ui.N(X.Stock.OnHand(m.Code)), true), ("Đã giữ", m => Ui.N(X.Stock.ReservedForOthers(m.Code, null)), true),
                 ("Trạng thái", m => m.Active ? "Đang dùng" : "Ngừng sử dụng", false), ("Ghi chú", m => m.Note ?? "", false)
-            }, m => { _sel = m; if (m is not null) { code.Text = m.Code; name.Text = m.Name; unit.Text = m.Unit; note.Text = m.Note; } }));
+            }, m => { if (m is not null && m.Code != _sel?.Code) { _sel = m; _alt = m.AltUnit ?? ""; _factor = m.AltFactor is decimal f ? Ui.N(f) : ""; Reload(); } }, isSelected: m => m.Code == _sel?.Code));
+    }
+
+    string _alt = "", _factor = "", _gsm = "", _width = "";
+
+    /// <summary>Quy đổi đơn vị nhập (vd. vải nhập theo kg, tồn/cấp theo m) – hệ số mặc định, sửa được theo từng lô khi nhập kho.</summary>
+    Control ConversionCard()
+    {
+        if (_sel is null) return Ui.Card("Quy đổi đơn vị nhập (vd. kg → m)", Ui.Hint("Chọn một NPL trong danh sách để khai báo đơn vị nhập phụ và hệ số quy đổi."));
+        var alt = Ui.Input(80, "kg", _alt); alt.TextChanged += (_, _) => _alt = alt.Text ?? "";
+        var factor = Ui.Input(110, "hệ số", _factor); factor.TextChanged += (_, _) => _factor = factor.Text ?? "";
+        var gsm = Ui.Input(90, "g/m²", _gsm); gsm.TextChanged += (_, _) => _gsm = gsm.Text ?? "";
+        var width = Ui.Input(90, "cm", _width); width.TextChanged += (_, _) => _width = width.Text ?? "";
+        return Ui.Card($"Quy đổi đơn vị nhập – {_sel.Code} ({_sel.Name}), đơn vị tồn: {_sel.Unit}",
+            Ui.Row(Ui.Label("1"), alt, Ui.Label("="), factor, Ui.Label(_sel.Unit),
+                Ui.Btn("Lưu quy đổi", () => Ui.Try(() =>
+                {
+                    X.Cat.SetMaterialConversion(_sel.Code, _alt, string.IsNullOrWhiteSpace(_alt) ? null : Ui.Dec(_factor, "hệ số quy đổi")); Reload();
+                }, "Đã lưu quy đổi đơn vị."), primary: true),
+                Ui.Btn("Bỏ quy đổi", () => Ui.Try(() => { X.Cat.SetMaterialConversion(_sel.Code, null, null); _alt = ""; _factor = ""; Reload(); }, "Đã bỏ quy đổi."))),
+            Ui.Row(Ui.Label("Tính hệ số m/kg từ định lượng"), gsm, Ui.Label("g/m² và khổ"), width, Ui.Label("cm"),
+                Ui.Btn("Tính", () => Ui.Try(() =>
+                {
+                    _factor = Ui.N(CatalogRepository.MetersPerKg(Ui.Dec(_gsm, "định lượng"), Ui.Dec(_width, "khổ vải")));
+                    if (string.IsNullOrWhiteSpace(_alt)) _alt = "kg";
+                    Reload();
+                }, "Đã tính hệ số m/kg = 1000 / (định lượng × khổ m). Kiểm tra rồi bấm Lưu quy đổi."))),
+            Ui.Hint("Khi nhập kho chọn đơn vị kg ở dòng phiếu, hệ thống quy ra " + _sel.Unit + " = số kg × hệ số (làm tròn 2 số lẻ) và lưu lại số kg, hệ số đã dùng để đối chiếu. Hệ số mỗi lô vải khác nhau thì sửa ngay trên dòng phiếu nhập."));
     }
 }
 
@@ -155,17 +190,22 @@ public sealed class ProductScreen : Screen
                         X.Cat.AddProduct(Ui.Sel<long?>(cust) ?? throw new BusinessException("Phải chọn khách hàng cho mã hàng."),
                             Ui.Req(code, "mã hàng"), Ui.Req(name, "tên"), Ui.Sel<long?>(grid) ?? throw new BusinessException("Phải chọn lưới size."));
                         Reload();
-                    }, "Đã lưu mã hàng. Tiếp theo: khai báo chủng loại."), primary: true))),
+                    }, "Đã lưu mã hàng. Tiếp theo: khai báo chủng loại."), primary: true),
+                    Ui.Btn("Sửa tên mã hàng đang chọn", () => Ui.Try(() =>
+                    {
+                        if (_sel is null) throw new BusinessException("Chọn một mã hàng trong danh sách.");
+                        X.Cat.UpdateProduct(_sel.Id, Ui.Req(name, "tên")); Reload();
+                    }, "Đã sửa tên mã hàng.")))),
             Ui.Row(Ui.Btn("Ngừng sử dụng / Dùng lại mã hàng đang chọn", () => Ui.Try(() =>
             {
                 if (_sel is null) throw new BusinessException("Chọn một mã hàng trong danh sách.");
                 X.Cat.SetProductActive(_sel.Id, !_sel.Active); Reload();
             }, "Đã cập nhật trạng thái."))),
-            Ui.List(X.Q.Products(), new (string, Func<ProductRow, string>, bool)[]
+            Ui.SearchList("products", X.Q.Products(), new (string, Func<ProductRow, string>, bool)[]
             {
                 ("Mã hàng", p => p.Code, false), ("Tên", p => p.Name, false), ("Khách hàng", p => p.CustomerCode, false), ("Lưới size", p => p.GridCode, false),
                 ("Chủng loại", p => p.VariantCount.ToString(), true), ("Trạng thái", p => p.Active ? "Đang dùng" : "Ngừng sử dụng", false)
-            }, p => _sel = p));
+            }, p => { _sel = p; if (p is not null) { code.Text = p.Code; name.Text = p.Name; } }));
     }
 }
 
@@ -173,18 +213,18 @@ public sealed class VariantScreen : Screen
 {
     public override string Title => "Chủng loại";
     public override string Subtitle => "Chọn mã hàng; chủng loại thuộc khách hàng và dùng lưới size của mã hàng. Nhóm Áo/Quần chỉ để phân loại, không gộp chủng loại.";
-    long? _prod;
+    long? _prod; VariantRow? _selV;
 
     protected override Control Build()
     {
         var prods = Opts.Products();
         _prod ??= prods.FirstOrDefault()?.Value;
-        var prodCb = Ui.Combo(prods, _prod, 320, v => { _prod = v; Reload(); });
+        var prodCb = Ui.Combo(prods, _prod, 320, v => { _prod = v; _selV = null; Reload(); });
         if (_prod is null) return Ui.Col(Ui.Row(Ui.Label("Mã hàng", true), prodCb), Ui.Banner("Chưa có mã hàng. Khai báo mã hàng trước.", "warn"));
         var p = X.Q.Products().Single(x => x.Id == _prod);
-        var code = Ui.Input(120, "Mã"); var name = Ui.Input(200, "Tên");
-        var group = Ui.Combo(new[] { "Áo", "Quần", "Khác" }.Select(g => new Opt<string>(g, g)), "Áo", 100);
-        var qty = Ui.Input(70, null, "1");
+        var code = Ui.Input(120, "Mã", _selV?.Code); var name = Ui.Input(200, "Tên", _selV?.Name);
+        var group = Ui.Combo(new[] { "Áo", "Quần", "Khác" }.Select(g => new Opt<string>(g, g)), _selV?.Group is { Length: > 0 } gg ? gg : "Áo", 100);
+        var qty = Ui.Input(70, null, _selV is null ? "1" : Ui.N(_selV.QtyPerSet));
         return Ui.Col(
             Ui.Row(Ui.Label("Mã hàng", true), prodCb, Ui.Chip($"Khách hàng: {p.CustomerCode}", "muted"), Ui.Chip($"Lưới size: {p.GridCode} ({string.Join(", ", X.Q.ProductSizes(p.Id))})", "muted")),
             Ui.Card("Khai báo chủng loại",
@@ -192,12 +232,18 @@ public sealed class VariantScreen : Screen
                     Ui.Btn("Lưu chủng loại", () => Ui.Try(() =>
                     {
                         X.Cat.AddVariant(p.Id, Ui.Req(code, "mã chủng loại"), Ui.Req(name, "tên"), Ui.Sel<string>(group) ?? "Khác", Ui.Dec(qty.Text, "SL/bộ")); Reload();
-                    }, "Đã lưu chủng loại."), primary: true)),
+                    }, "Đã lưu chủng loại."), primary: _selV is null),
+                    _selV is null ? null : Ui.Btn("Sửa chủng loại đang chọn", () => Ui.Try(() =>
+                    {
+                        X.Cat.UpdateVariant(_selV.Id, Ui.Req(name, "tên"), Ui.Sel<string>(group) ?? "Khác", Ui.Dec(qty.Text, "SL/bộ")); _selV = null; Reload();
+                    }, "Đã sửa chủng loại."), primary: true),
+                    _selV is null ? null : Ui.Btn("Khai báo mới", () => { _selV = null; Reload(); })),
                 Ui.Hint("Định mức theo quy ước size khác (ví dụ áo S, M, L) phải được quy đổi sang size của mã hàng ngoài hệ thống trước khi khai báo BOM.")),
             Ui.Card($"Cấu thành một bộ – {p.Code}",
                 Ui.List(X.Q.Variants(p.Id), new (string, Func<VariantRow, string>, bool)[]
                 {
                     ("Mã", v => v.Code, false), ("Chủng loại", v => v.Name, false), ("Nhóm", v => v.Group, false), ("SL trong 1 bộ", v => Ui.N(v.QtyPerSet), true)
-                }, maxHeight: 300)));
+                }, v => { if (v is not null && v.Id != _selV?.Id) { _selV = v; Reload(); } }, 300, v => v.Id == _selV?.Id),
+                Ui.Hint("Chọn một dòng để sửa tên / nhóm / SL trong bộ. SL trong bộ chỉ sửa được khi mã hàng chưa có đơn.")));
     }
 }

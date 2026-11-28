@@ -62,6 +62,7 @@ public static class VoucherPdf
                     Pair("Nơi xuất:", d.FromPlace); Pair("Nơi nhận:", d.ToPlace);
                     if (isIssue || d.Scope is not null) { Pair("Loại BOM:", Scope(d.Scope)); Pair("", ""); }
                     if (refNo is not null) { Pair("Phiếu gốc:", refNo); Pair("", ""); }
+                    if (d.InvoiceNo is not null) { Pair("Số hóa đơn:", d.InvoiceNo); Pair("", ""); }
                     Pair("Ghi chú:", d.Note); Pair("", "");
                 });
                 if (qtyText.Length > 0)
@@ -85,7 +86,7 @@ public static class VoucherPdf
                         i++;
                         t.Cell().Border(0.5f).Padding(4).AlignCenter().Text(i.ToString());
                         t.Cell().Border(0.5f).Padding(4).Text(l.Material);
-                        t.Cell().Border(0.5f).Padding(4).Text(l.MaterialName);
+                        t.Cell().Border(0.5f).Padding(4).Text(l.EntryUnit is null ? l.MaterialName : $"{l.MaterialName}\n(nhập {l.EntryText})");
                         t.Cell().Border(0.5f).Padding(4).AlignCenter().Text(l.Unit);
                         if (isIssue) t.Cell().Border(0.5f).Padding(4).AlignRight().Text(l.Suggested is decimal s ? N(s) : "");
                         t.Cell().Border(0.5f).Padding(4).AlignRight().Text(l.Entered ? N(l.Qty) : "");

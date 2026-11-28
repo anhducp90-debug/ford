@@ -18,6 +18,7 @@ public sealed class MainWindow : Window
 {
     public static readonly Module[] Modules =
     {
+        new("Trang chủ", new NavItem[] { new("Việc cần làm", () => new HomeScreen()) }),
         new("Quản trị", new NavItem[] { new("Sao lưu / Phục hồi", () => new BackupScreen()), new("Bảo mật & khóa PIN", () => new SecurityScreen()), new("Nơi xuất / Nơi nhận", () => new PlaceScreen()), new("Nhật ký thay đổi", () => new AuditScreen()) }),
         new("Khai báo", new NavItem[] { new("Khách hàng", () => new CustomerScreen()), new("Nguyên phụ liệu", () => new MaterialScreen()), new("Lưới size", () => new GridScreen()),
             new("Mã hàng", () => new ProductScreen()), new("Chủng loại", () => new VariantScreen()), new("BOM & định mức", () => new BomScreen()),
@@ -34,7 +35,7 @@ public sealed class MainWindow : Window
     readonly ContentControl _content = new();
     readonly TextBlock _status = new() { Margin = new Thickness(16, 6), TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis };
     readonly Panel _lockLayer = new() { Background = Ui.Bg };
-    int _mod = 1, _item = 6;
+    int _mod = 0, _item = 0;
     AutoLock _autoLock;
     readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(5) };
 
@@ -134,6 +135,14 @@ public sealed class MainWindow : Window
         var s = screen ?? Modules[module].Items[item].Make();
         s.Reload();
         _content.Content = s;
+    }
+
+    /// <summary>Mở màn hình mặc định của một mục theo tên.</summary>
+    public void Go(string itemTitle)
+    {
+        for (var m = 0; m < Modules.Length; m++)
+            for (var i = 0; i < Modules[m].Items.Length; i++)
+                if (Modules[m].Items[i].Title == itemTitle) { Navigate(m, i); return; }
     }
 
     /// <summary>Mở một màn hình theo tên mục (dùng khi chuyển từ màn này sang màn khác).</summary>

@@ -23,6 +23,7 @@ public sealed class Ctx
     public BackupService Backup { get; }
     public PlaceService Places { get; }
     public CompanyInfo Company { get; }
+    public WorkflowService Flow { get; }
 
     public static string DefaultDataDir() =>
         Environment.GetEnvironmentVariable("QLNPL_DATA_DIR") is { Length: > 0 } d ? d
@@ -38,9 +39,13 @@ public sealed class Ctx
         Issue = new(C, Orders, Stock); Transfer = new(C, Stock); Count = new(C, Stock);
         Reports = new(C, Orders, Stock); Adjust = new(C, Orders, Stock);
         Q = new(C); Pin = new(C); Backup = new(C); Places = new(C); Company = new(C);
+        Flow = new(C, Orders, Stock, Issue);
     }
 
     public string BackupDir => Path.Combine(DataDir, "backups");
+
+    /// <summary>Thời điểm bản sao lưu gần nhất (tự động hoặc thủ công trong thư mục sao lưu).</summary>
+    public DateTime? LastBackup => Directory.Exists(BackupDir) ? Directory.GetFiles(BackupDir, "*.db").Select(File.GetLastWriteTime).DefaultIfEmpty().Max() is var t && t != default ? t : null : null;
 
     /// <summary>Tự sao lưu mỗi ngày một bản khi mở phần mềm; giữ 14 bản gần nhất.</summary>
     public void AutoBackup()

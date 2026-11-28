@@ -159,5 +159,16 @@ ALTER TABLE stock_doc ADD COLUMN issue_variants TEXT;
 UPDATE carry_ledger SET scope='NOI_NHAN' WHERE place_id IS NOT NULL;
 UPDATE surplus_transfer SET from_scope='NOI_NHAN', to_scope='NOI_NHAN';
 "
+    ,
+@"
+-- Phiếu nhập: số hóa đơn riêng. Quy đổi đơn vị: NPL có đơn vị nhập phụ (vd. kg) + hệ số quy ra đơn vị tồn (vd. m/kg);
+-- dòng phiếu lưu số lượng theo đơn vị nhập và hệ số đã dùng (lưu vết), số lượng tồn = số nhập × hệ số.
+ALTER TABLE stock_doc ADD COLUMN invoice_no TEXT;
+ALTER TABLE material ADD COLUMN alt_unit TEXT;
+ALTER TABLE material ADD COLUMN alt_factor TEXT;
+ALTER TABLE stock_doc_line ADD COLUMN entry_qty TEXT;
+ALTER TABLE stock_doc_line ADD COLUMN entry_unit TEXT;
+ALTER TABLE stock_doc_line ADD COLUMN entry_factor TEXT;
+"
     };
 }

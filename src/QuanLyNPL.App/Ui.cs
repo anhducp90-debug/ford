@@ -78,7 +78,7 @@ public static class Ui
     public static Button Btn(string text, Action onClick, bool primary = false, bool danger = false)
     {
         var b = new Button { Content = text, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(12, 5) };
-        if (primary) { b.Background = Accent; b.Foreground = Brushes.White; b.FontWeight = FontWeight.SemiBold; }
+        if (primary) { b.Background = Accent; b.Foreground = Brushes.White; b.FontWeight = FontWeight.SemiBold; b.Classes.Add("primary"); }
         if (danger) b.Foreground = Bad;
         b.Click += (_, _) => onClick();
         return b;
@@ -109,8 +109,21 @@ public static class Ui
     {
         var s = Col(items);
         if (title is not null) s.Children.Insert(0, H3(title));
-        return new Border { Child = s, Background = Surface, BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 12), Margin = new Thickness(0, 0, 0, 12) };
+        var card = new Border { Child = s, Background = Surface, BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 12), Margin = new Thickness(0, 0, 0, 12) };
+        // Enter trong ô nhập = bấm nút chính của khung (Lưu / Tạo phiếu…)
+        card.AddHandler(Avalonia.Input.InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key != Avalonia.Input.Key.Enter || e.Handled || e.Source is not TextBox { AcceptsReturn: false }) return;
+            var primary = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(card).OfType<Button>().FirstOrDefault(b => b.Classes.Contains("primary") && b.IsEffectivelyEnabled);
+            if (primary is null) return;
+            e.Handled = true;
+            primary.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        }, Avalonia.Interactivity.RoutingStrategies.Bubble);
+        return card;
     }
+
+    /// <summary>Cuộn tới khung khi màn hình vừa vẽ xong (vd. phiếu nháp vừa tạo).</summary>
+    public static void FocusLater(Control c) => Avalonia.Threading.Dispatcher.UIThread.Post(() => c.BringIntoView(), Avalonia.Threading.DispatcherPriority.Background);
 
     public static Border Banner(string text, string kind)
     {
@@ -196,6 +209,29 @@ public static class Ui
             onSelect is null ? null : o => onSelect(o is T t ? t : default), isSelected is null ? -1 : list.FindIndex(i => isSelected(i)));
     }
 
+    static readonly Dictionary<string, string> SearchText = new();
+
+    /// <summary>Danh sách có ô tìm kiếm (lọc theo mọi cột, giữ chữ đã gõ khi màn hình vẽ lại).</summary>
+    public static Control SearchList<T>(string key, IEnumerable<T> items, (string header, Func<T, string> get, bool num)[] cols, Action<T?>? onSelect = null, double maxHeight = 420, Func<T, bool>? isSelected = null)
+    {
+        var all = items.ToList();
+        var text = SearchText.GetValueOrDefault(key, "");
+        bool Match(T i, string q) => q.Length == 0 || cols.Any(c => c.get(i).Contains(q, StringComparison.CurrentCultureIgnoreCase));
+        var dg = List(all.Where(i => Match(i, text.Trim())), cols, onSelect, maxHeight, isSelected);
+        var count = Text("", Muted);
+        void Count(int n) => count.Text = n == all.Count ? $"{all.Count} dòng" : $"{n} / {all.Count} dòng";
+        Count(all.Count(i => Match(i, text.Trim())));
+        var box = Input(280, "Tìm (mã, tên, số phiếu…)", text);
+        box.TextChanged += (_, _) =>
+        {
+            var q = (box.Text ?? "").Trim(); SearchText[key] = box.Text ?? "";
+            var rows = all.Where(i => Match(i, q)).ToList();
+            dg.ItemsSource = rows.Select(i => new GridRow(cols.Select(c => c.get(i)).ToArray(), i)).ToList();
+            Count(rows.Count);
+        };
+        return Col(Row(box, count), dg);
+    }
+
     // ---------- Thông báo / xử lý lỗi ----------
     public static void Try(Action a, string? success = null)
     {
@@ -219,8 +255,8 @@ public static class Ui
             _ => "Lỗi không mong muốn: " + ex.Message
         };
         if (ex is not BusinessException) Log.Error("UI", ex);
-        if (msg.Contains('\n')) _ = Dialog.Info("Không thực hiện được", msg);
         App.Main.Status(msg.Split('\n')[0] + (msg.Contains('\n') ? " …" : ""), "bad");
+        _ = Dialog.Info("Không thực hiện được", msg);   // lỗi chặn luôn hiện hộp thoại, không chỉ ở thanh trạng thái
     }
 
     // ---------- Tệp ----------
@@ -309,6 +345,9 @@ public sealed class LineState
     public string? Size { get; set; }
     public string Qty { get; set; } = "";
     public string Waste { get; set; } = "";
+    /// <summary>Đơn vị nhập (null = đơn vị tồn) và hệ số quy đổi (vd. m/kg) khi nhập theo đơn vị phụ.</summary>
+    public string? Unit { get; set; }
+    public string Factor { get; set; } = "";
 }
 
 /// <summary>Bảng nhập dòng: NPL (+ NPL đích / size) + số lượng (+ hao hụt), thêm/xóa dòng.</summary>
@@ -320,17 +359,26 @@ public sealed class LinesEditor
     readonly bool _waste;
     readonly string _qtyLabel, _matLabel, _mat2Label;
     readonly StackPanel _rows = new() { Spacing = 4 };
+    readonly Func<string, MaterialRow?>? _units;
+    string _filter = "";
 
     public Control View { get; }
 
+    /// <param name="units">Có giá trị: thêm cột đơn vị nhập + hệ số (nhập theo kg, quy ra đơn vị tồn).</param>
     public LinesEditor(List<LineState> lines, IList<Opt<string>> mats, string qtyLabel = "Số lượng", IList<Opt<string>>? sizes = null, bool waste = false,
-        IList<Opt<string>>? mats2 = null, string matLabel = "Mã NPL", string mat2Label = "Mã NPL đích")
+        IList<Opt<string>>? mats2 = null, string matLabel = "Mã NPL", string mat2Label = "Mã NPL đích", Func<string, MaterialRow?>? units = null)
     {
-        _lines = lines; _mats = mats; _mats2 = mats2; _sizes = sizes; _waste = waste; _qtyLabel = qtyLabel; _matLabel = matLabel; _mat2Label = mat2Label;
+        _lines = lines; _mats = mats; _mats2 = mats2; _sizes = sizes; _waste = waste; _qtyLabel = qtyLabel; _matLabel = matLabel; _mat2Label = mat2Label; _units = units;
         if (_lines.Count == 0) _lines.Add(new LineState { Size = sizes is null ? null : "*" });
         Render();
-        View = Ui.Col(Header(), _rows, Ui.Row(Ui.Btn("+ Thêm dòng", () => { _lines.Add(new LineState { Size = _sizes is null ? null : "*" }); Render(); })));
+        var filter = Ui.Input(240, "Lọc NPL theo mã / tên");
+        filter.TextChanged += (_, _) => { _filter = (filter.Text ?? "").Trim(); Render(); };
+        View = Ui.Col(_mats.Count > 8 ? Ui.Row(filter, Ui.Hint("Lọc danh sách chọn NPL ở các dòng bên dưới.")) : null, Header(), _rows,
+            Ui.Row(Ui.Btn("+ Thêm dòng", () => { _lines.Add(new LineState { Size = _sizes is null ? null : "*" }); Render(); }), Ui.Hint("Enter ở ô số lượng dòng cuối: thêm dòng mới.")));
     }
+
+    IList<Opt<string>> Filtered(string? selected) => _filter.Length == 0 ? _mats
+        : _mats.Where(o => o.Value == selected || o.Text.Contains(_filter, StringComparison.CurrentCultureIgnoreCase)).ToList();
 
     Grid NewGrid()
     {
@@ -340,6 +388,7 @@ public sealed class LinesEditor
         if (_sizes is not null) g.ColumnDefinitions.Add(new ColumnDefinition(120, GridUnitType.Pixel));
         g.ColumnDefinitions.Add(new ColumnDefinition(120, GridUnitType.Pixel));
         if (_waste) g.ColumnDefinitions.Add(new ColumnDefinition(110, GridUnitType.Pixel));
+        if (_units is not null) { g.ColumnDefinitions.Add(new ColumnDefinition(100, GridUnitType.Pixel)); g.ColumnDefinitions.Add(new ColumnDefinition(110, GridUnitType.Pixel)); g.ColumnDefinitions.Add(new ColumnDefinition(150, GridUnitType.Pixel)); }
         g.ColumnDefinitions.Add(new ColumnDefinition(60, GridUnitType.Pixel));
         return g;
     }
@@ -349,6 +398,7 @@ public sealed class LinesEditor
         var g = NewGrid(); var col = 0;
         void H(string t) { var tb = new TextBlock { Text = t, Foreground = Ui.Muted, FontSize = 12, FontWeight = FontWeight.SemiBold }; Grid.SetColumn(tb, col++); g.Children.Add(tb); }
         H(_matLabel); if (_mats2 is not null) H(_mat2Label); if (_sizes is not null) H("Size"); H(_qtyLabel); if (_waste) H("Hao hụt %");
+        if (_units is not null) { H("Đơn vị nhập"); H("Hệ số quy đổi"); H("Quy ra tồn"); }
         return g;
     }
 
@@ -359,15 +409,53 @@ public sealed class LinesEditor
         {
             var g = NewGrid(); var col = 0;
             void Add(Control c) { c.Margin = new Thickness(0, 0, 8, 0); Grid.SetColumn(c, col++); g.Children.Add(c); }
-            var m = Ui.Combo(_mats, l.Mat, 290, v => l.Mat = v); Add(m);
+            var m = Ui.Combo(Filtered(l.Mat), l.Mat, 290, v => { l.Mat = v; l.Unit = null; l.Factor = ""; if (_units is not null) Render(); }); Add(m);
             if (_mats2 is not null) Add(Ui.Combo(_mats2, l.Mat2, 290, v => l.Mat2 = v));
             if (_sizes is not null) Add(Ui.Combo(_sizes, l.Size, 110, v => l.Size = v));
-            var q = Ui.Input(110, "0", l.Qty); q.TextChanged += (_, _) => l.Qty = q.Text ?? ""; q.HorizontalContentAlignment = HorizontalAlignment.Right; Add(q);
+            var q = Ui.Input(110, "0", l.Qty); q.HorizontalContentAlignment = HorizontalAlignment.Right; Add(q);
+            q.KeyDown += (_, e) =>
+            {   // Enter ở dòng cuối: thêm dòng mới
+                if (e.Key != Avalonia.Input.Key.Enter || _lines.LastOrDefault() != l) return;
+                e.Handled = true; _lines.Add(new LineState { Size = _sizes is null ? null : "*" }); Render();
+            };
             if (_waste) { var w = Ui.Input(100, "0", l.Waste); w.TextChanged += (_, _) => l.Waste = w.Text ?? ""; w.HorizontalContentAlignment = HorizontalAlignment.Right; Add(w); }
+            TextBlock? conv = null;
+            void Conv()
+            {
+                if (conv is null) return;
+                var mr = l.Mat is null ? null : _units!(l.Mat);
+                if (mr?.AltUnit is null || l.Unit is null) { conv.Text = ""; return; }
+                try { conv.Text = $"= {Ui.N(Math.Round(Ui.Dec(l.Qty, "số lượng") * Ui.Dec(l.Factor, "hệ số"), 2, MidpointRounding.AwayFromZero))} {mr.Unit}"; }
+                catch (BusinessException) { conv.Text = "(nhập số lượng, hệ số)"; }
+            }
+            q.TextChanged += (_, _) => { l.Qty = q.Text ?? ""; Conv(); };
+            if (_units is not null)
+            {
+                var mr = l.Mat is null ? null : _units(l.Mat);
+                var opts = mr is null ? new List<Opt<string?>>() : new List<Opt<string?>> { new(mr.Unit, null) };
+                if (mr?.AltUnit is not null) opts.Add(new(mr.AltUnit, mr.AltUnit));
+                var f = Ui.Input(100, mr?.AltFactor is decimal df ? Ui.N(df) : "hệ số", l.Factor); f.HorizontalContentAlignment = HorizontalAlignment.Right;
+                f.IsEnabled = l.Unit is not null;
+                f.TextChanged += (_, _) => { l.Factor = f.Text ?? ""; Conv(); };
+                var u = Ui.Combo(opts, l.Unit, 90, v =>
+                {
+                    l.Unit = v; f.IsEnabled = v is not null;
+                    if (v is not null && string.IsNullOrWhiteSpace(l.Factor) && mr?.AltFactor is decimal d0) { l.Factor = Ui.N(d0); f.Text = l.Factor; }
+                    Conv();
+                });
+                u.IsEnabled = mr?.AltUnit is not null;
+                Add(u); Add(f);
+                conv = Ui.Text("", Ui.Muted); Add(conv); Conv();
+            }
             Add(Ui.Btn("✕", () => { _lines.Remove(l); Render(); }, danger: true));
             _rows.Children.Add(g);
         }
     }
+
+    /// <summary>Đọc dòng kèm đơn vị nhập: số lượng theo đơn vị đã chọn; unit/factor null khi nhập theo đơn vị tồn.</summary>
+    public static List<(string mat, decimal qty, string? unit, decimal? factor)> ReadUnits(IEnumerable<LineState> lines) =>
+        lines.Where(l => !string.IsNullOrEmpty(l.Mat)).Select((l, i) => (l.Mat!, Ui.Dec(l.Qty, $"số lượng dòng {i + 1}"), l.Unit,
+            l.Unit is null ? (decimal?)null : Ui.Dec(l.Factor, $"hệ số quy đổi dòng {i + 1}"))).ToList();
 
     /// <summary>Đọc các dòng đã chọn NPL; dòng trống bị bỏ qua.</summary>
     public static List<(string mat, decimal qty)> Read(IEnumerable<LineState> lines, string qtyField = "số lượng") =>

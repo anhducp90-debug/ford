@@ -140,3 +140,17 @@ Quy trình thực tế: một đơn hàng do nhiều tổ cùng làm, mỗi tổ
 - **Điều chuyển NPL dư**: từ (đơn, nơi nhận) sang (đơn cùng khách hàng, nơi nhận khác); NPL phải có trong BOM của đơn nhận; chỉ trong số dư dương; không đổi tồn kho.
 - **Quyết toán & đóng đơn**: theo nơi nhận / mã NPL, kèm **Tiến độ cấp phát theo size**. Còn dư → không cho đóng; còn thiếu NPL hoặc chưa cấp hết số lượng đơn → phải xác nhận.
 - Điều chỉnh đơn: giảm dưới phần đã đưa vào phiếu cấp chỉ cảnh báo ("Cấp vượt đơn"). Đổi BOM chỉ ảnh hưởng phiếu cấp sau.
+
+## 11. Vận hành khép kín và tối ưu thao tác (bản 1.6.0, sau đợt dùng thử)
+
+- **Trang chủ "Việc cần làm"** (mở đầu tiên): bước thiết lập ban đầu khi chưa có dữ liệu; phiếu nháp chờ xác nhận (kể cả kiểm kê, chuyển KH), đơn thiếu dữ liệu BOM / thiếu NPL, nơi nhận đang dư / thiếu, đơn sẵn sàng đóng, lần sao lưu gần nhất. Mỗi việc có nút mở đúng màn hình với dữ liệu điền sẵn (`WorkflowService.Todos`).
+- **7 chặng của đơn hàng** trên màn Đơn hàng: Đơn hàng (BOM đủ) → Đáp ứng → Nhập kho → Cấp phát (% số lượng) → Cân đối → Quyết toán → Đóng đơn; mỗi chặng có trạng thái và nút việc tiếp theo (`WorkflowService.Stages`).
+- **Điền sẵn từ sổ cân đối**: Trả NPL "Nạp phần đang dư của nơi nhận", Xuất bù "Nạp phần đang thiếu"; màn Quyết toán có nút Trả phần dư / Bù phần thiếu / Điều chuyển theo từng nơi nhận.
+- **Phiếu cấp**: phiếu nháp hiện ngay đầu màn, nút "Thực cấp = đề xuất", dòng khác đề xuất được đánh dấu.
+- **Lỗi chặn** luôn hiện hộp thoại. **Lưu đơn** kiểm tra BOM trước, thiếu thì hỏi lại.
+- **Phiếu nhập**: số hóa đơn riêng (`stock_doc.invoice_no`), "Nạp phần đang thiếu của đơn", mẫu và nhập dòng từ Excel (cột Mã NPL, Số lượng, Đơn vị nhập, Hệ số).
+- **Danh mục**: sửa tên khách hàng / mã hàng; sửa chủng loại (SL/bộ chỉ khi mã hàng chưa có đơn); chép toàn bộ BOM từ mã hàng cùng khách hàng (ghép theo mã chủng loại, bỏ size không có ở lưới đích).
+- **Nhập liệu nhanh**: ô tìm kiếm trên các danh sách chính; ô lọc NPL trong bảng dòng; Enter trong ô nhập = nút chính của khung; Enter ở số lượng dòng cuối = thêm dòng.
+- **Quy đổi kg → m** (migration 12): NPL có đơn vị nhập phụ (`material.alt_unit`) và hệ số mặc định (`alt_factor`, m/kg; tính từ định lượng g/m² và khổ: m/kg = 1000 / (GSM × khổ m)). Dòng phiếu nhập chọn kg, sửa hệ số theo lô; tồn = kg × hệ số (làm tròn 2 số lẻ, nửa lên); lưu `entry_qty / entry_unit / entry_factor` để đối chiếu, in trên phiếu.
+- **Sửa lỗi phát hiện khi dùng thử (1.5.3)**: BOM tạo trong ngày áp dụng cho đơn cùng ngày (so theo ngày); size hiển thị theo thứ tự lưới; thông báo không lưu sang màn khác.
+- Công cụ `tools/UiTrial`: dùng thử từ dữ liệu trống theo luồng thủ kho, đếm thao tác, chụp màn hình.

@@ -129,4 +129,40 @@ public sealed class BomRepository(SqliteConnection c)
         tx.Commit();
         return vidNew;
     }
+
+    /// <summary>
+    /// Chép BOM (phiên bản mới nhất) từ mã hàng nguồn sang mã hàng đích cùng khách hàng: BOM theo bộ chép theo loại;
+    /// BOM theo chủng loại ghép theo MÃ chủng loại. Mỗi BOM đích nhận một phiên bản mới; dòng size không có trong lưới đích bị bỏ và báo lại.
+    /// </summary>
+    public (int copied, List<string> notes) CopyFromProduct(long fromProductId, long toProductId, DateTime createdAt)
+    {
+        if (fromProductId == toProductId) throw new BusinessException("Chọn mã hàng nguồn khác mã hàng đích.");
+        long Cust(long p) => Convert.ToInt64(Db.Scalar(c, "SELECT customer_id FROM product WHERE id=$p", null, ("$p", p)) ?? throw new BusinessException("Mã hàng không tồn tại."));
+        if (Cust(fromProductId) != Cust(toProductId)) throw new BusinessException("Chỉ chép BOM giữa các mã hàng cùng khách hàng (NPL thuộc khách hàng).");
+        var targetSizes = Db.Query(c, "SELECT i.size_code FROM size_grid_item i JOIN product p ON p.default_grid_id=i.grid_id WHERE p.id=$p", r => r.GetString(0), null, ("$p", toProductId)).ToHashSet();
+        var targetVars = Db.Query(c, "SELECT code,id FROM variant WHERE product_id=$p", r => (r.GetString(0), r.GetInt64(1)), null, ("$p", toProductId)).ToDictionary(x => x.Item1, x => x.Item2);
+        var src = Db.Query(c, @"SELECT b.id,b.type,b.per_set,v.code FROM bom b LEFT JOIN variant v ON v.id=b.scope_variant_id WHERE b.product_id=$p ORDER BY b.id",
+            r => (id: r.GetInt64(0), type: r.GetString(1), perSet: r.GetInt32(2) == 1, variant: r.IsDBNull(3) ? null : r.GetString(3)), null, ("$p", fromProductId));
+        var notes = new List<string>(); var plan = new List<(long? target, Func<long> create, List<BomLineInput> lines, string label)>();
+        foreach (var b in src)
+        {
+            var type = b.type switch { "TO_CAT" => BomType.ToCat, "SAN_XUAT" => BomType.SanXuat, "DONG_GOI" => BomType.DongGoi, _ => (BomType?)null };
+            if (type is null) { notes.Add($"Bỏ qua BOM kiểu cũ #{b.id}."); continue; }
+            var vid = Db.Scalar(c, "SELECT id FROM bom_version WHERE bom_id=$b ORDER BY version_no DESC LIMIT 1", null, ("$b", b.id));
+            if (vid is null) continue;
+            var raw = Db.Query(c, "SELECT m.code,l.size_code,l.usage,l.waste_percent FROM bom_line l JOIN material m ON m.id=l.material_id WHERE l.bom_version_id=$v ORDER BY l.id",
+                r => new BomLineInput(r.GetString(0), r.GetString(1), Db.D(r.GetString(2)), Db.D(r.GetString(3))), null, ("$v", Convert.ToInt64(vid)));
+            var label = $"{BomTypes.Label(type.Value)} {(b.perSet ? "theo bộ" : "chủng loại " + b.variant)}";
+            var dropped = raw.Where(l => l.SizeCode != "*" && !targetSizes.Contains(l.SizeCode)).Select(l => $"{l.MaterialCode}/{l.SizeCode}").ToList();
+            if (dropped.Count > 0) notes.Add($"{label}: bỏ {dropped.Count} dòng size không có ở mã hàng đích ({string.Join(", ", dropped)}).");
+            var lines = raw.Where(l => l.SizeCode == "*" || targetSizes.Contains(l.SizeCode)).ToList();
+            if (lines.Count == 0) continue;
+            if (b.perSet) plan.Add((FindSet(toProductId, type.Value), () => CreateSetBom(toProductId, type.Value), lines, label));
+            else if (b.variant is not null && targetVars.TryGetValue(b.variant, out var tv)) plan.Add((Find(tv, type.Value), () => CreateBom(tv, type.Value), lines, label));
+            else notes.Add($"{label}: mã hàng đích không có chủng loại {b.variant}, bỏ qua.");
+        }
+        if (plan.Count == 0) throw new BusinessException("Không có BOM nào chép được." + (notes.Count > 0 ? "\n" + string.Join("\n", notes) : ""));
+        foreach (var (target, create, lines, _) in plan) AddVersion(target ?? create(), createdAt, lines);
+        return (plan.Count, notes);
+    }
 }

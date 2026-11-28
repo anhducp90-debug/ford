@@ -47,21 +47,75 @@ internal static class DocText
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); } catch { /* không có trình xem PDF thì bỏ qua */ }
     });
 
-    public static Control Lines(long docId) =>
-        Ui.List(App.X.Q.DocLines(docId), new (string, Func<DocLineRow, string>, bool)[]
+    public static Control Lines(long docId)
+    {
+        var lines = App.X.Q.DocLines(docId);
+        var cols = new List<(string, Func<DocLineRow, string>, bool)>
         {
             ("Mã NPL", l => l.Material, false), ("Tên", l => l.MaterialName, false), ("ĐVT", l => l.Unit, false),
             ("Đề xuất", l => l.Suggested is decimal s ? Ui.N(s) : "", true), ("Số lượng", l => l.Entered ? Ui.N(l.Qty) : "(chưa nhập)", true)
-        }, maxHeight: 300);
+        };
+        if (lines.Any(l => l.EntryUnit is not null)) cols.Add(("Nhập theo / quy đổi", l => l.EntryText, false));
+        return Ui.List(lines, cols.ToArray(), maxHeight: 300);
+    }
+
+    /// <summary>Cột danh sách phiếu trong một đơn (bỏ cột khách hàng / đơn trùng lặp).</summary>
+    public static (string, Func<DocRow, string>, bool)[] OrderCols => new (string, Func<DocRow, string>, bool)[]
+    {
+        ("Số phiếu", d => d.DocNo, false), ("Loại", Type, false), ("Nơi nhận cấp", d => d.IssuePlace, false), ("Loại BOM", d => Scope(d.Scope), false),
+        ("Trạng thái", d => Status(d.Status), false), ("Tạo lúc", d => Ui.DT(d.CreatedAt), false), ("Xác nhận lúc", d => d.ConfirmedAt is DateTime t ? Ui.DT(t) : "", false), ("Ghi chú", d => d.Note ?? "", false)
+    };
+
+    /// <summary>Cột danh sách phiếu nhập (không có cột cấp phát).</summary>
+    public static (string, Func<DocRow, string>, bool)[] InCols => new (string, Func<DocRow, string>, bool)[]
+    {
+        ("Số phiếu", d => d.DocNo, false), ("Loại", Type, false), ("Khách hàng", d => d.CustomerCode, false), ("Số hóa đơn", d => d.InvoiceNo ?? "", false),
+        ("Nơi xuất (bên giao)", d => d.FromPlace, false), ("Nơi nhận", d => d.ToPlace, false), ("Trạng thái", d => Status(d.Status), false),
+        ("Tạo lúc", d => Ui.DT(d.CreatedAt), false), ("Xác nhận lúc", d => d.ConfirmedAt is DateTime t ? Ui.DT(t) : "", false), ("Ghi chú", d => d.Note ?? "", false)
+    };
 }
 
 public sealed class ReceiptScreen : Screen
 {
     public override string Title => "Phiếu nhập kho";
-    public override string Subtitle => "Mỗi phiếu thuộc một khách hàng. Phiếu nháp không đổi tồn; chỉ khi xác nhận mới ghi sổ. Phiếu đã xác nhận không sửa, chỉ điều chỉnh có lưu vết.";
-    DocRow? _sel; long? _cust; string _no = "", _note = "";
+    public override string Subtitle => "Mỗi phiếu thuộc một khách hàng. Phiếu nháp không đổi tồn; chỉ khi xác nhận mới ghi sổ. Ghi số hóa đơn để đối chiếu. Có thể nạp phần đang thiếu của đơn, nhập dòng từ Excel, nhập vải theo kg (quy ra m theo hệ số của lô).";
+    DocRow? _sel; long? _cust; string _no = "", _note = "", _invoice = ""; long? _shortOrder;
     long? _fromPlace, _toPlace = App.X.Places.DefaultInTo;
     readonly List<LineState> _lines = new();
+
+    public ReceiptScreen(long? docId = null, long? shortForOrder = null)
+    {
+        if (docId is long d && X.Q.Docs("IN").FirstOrDefault(x => x.Id == d) is { } doc) Load(doc);
+        if (shortForOrder is long o) { _shortOrder = o; _cust = X.Q.Orders().FirstOrDefault(x => x.Id == o)?.CustomerId; LoadShortage(o); }
+    }
+
+    void Load(DocRow d)
+    {
+        _sel = d;
+        if (d is not { Status: "DRAFT", Kind: null }) return;
+        _lines.Clear();
+        _lines.AddRange(X.Q.DocLines(d.Id).Select(l => l.EntryUnit is not null
+            ? new LineState { Mat = l.Material, Qty = Ui.N(l.EntryQty ?? 0), Unit = l.EntryUnit, Factor = Ui.N(l.EntryFactor ?? 0) }
+            : new LineState { Mat = l.Material, Qty = Ui.N(l.Qty) }));
+        _no = d.DocNo; _note = d.Note ?? ""; _invoice = d.InvoiceNo ?? ""; _cust = X.Q.Customers().FirstOrDefault(c => c.Code == d.CustomerCode)?.Id ?? _cust;
+        _fromPlace = d.FromPlaceId; _toPlace = d.ToPlaceId;
+    }
+
+    /// <summary>Nạp phần đang thiếu của đơn (nhu cầu còn lại − tồn khả dụng) vào bảng dòng.</summary>
+    void LoadShortage(long orderId)
+    {
+        var shortage = X.Stock.CheckOrder(orderId, X.Orders).Lines.Where(l => l.Shortage > 0).ToList();
+        _lines.RemoveAll(l => string.IsNullOrEmpty(l.Mat));
+        foreach (var l in shortage)
+        {
+            var ex = _lines.FirstOrDefault(x => x.Mat == l.MaterialCode);
+            if (ex is null) _lines.Add(new LineState { Mat = l.MaterialCode, Qty = Ui.N(Math.Ceiling(l.Shortage * 100) / 100) });
+            else { ex.Qty = Ui.N(Math.Ceiling(l.Shortage * 100) / 100); ex.Unit = null; ex.Factor = ""; }
+        }
+        var o = X.Q.Orders().First(x => x.Id == orderId);
+        if (_note.Length == 0) _note = "Nhập cho đơn " + o.No;
+        App.Main?.Status(shortage.Count == 0 ? $"Đơn {o.No} không thiếu NPL." : $"Đã nạp {shortage.Count} mã đang thiếu của đơn {o.No}. Sửa số lượng theo hóa đơn thực nhận.", shortage.Count == 0 ? "ok" : "warn");
+    }
 
     protected override Control Build()
     {
@@ -72,16 +126,36 @@ public sealed class ReceiptScreen : Screen
         var custs = Opts.Customers();
         _cust ??= custs.FirstOrDefault()?.Value;
         var no = Ui.Input(140, null, _no); no.TextChanged += (_, _) => _no = no.Text ?? ""; no.IsEnabled = !editingDraft;
+        var invoice = Ui.Input(180, "Số hóa đơn / chứng từ", _invoice); invoice.TextChanged += (_, _) => _invoice = invoice.Text ?? "";
         var note = Ui.Input(260, "Ghi chú / nguồn", _note); note.TextChanged += (_, _) => _note = note.Text ?? "";
-        var custCb = Ui.Combo(custs, _cust, 260, v => { _cust = v; _lines.RemoveAll(l => l.Mat is not null && X.Cat.MaterialCustomerId(l.Mat) != v); Reload(); });
+        var custCb = Ui.Combo(custs, _cust, 260, v => { _cust = v; _shortOrder = null; _lines.RemoveAll(l => l.Mat is not null && X.Cat.MaterialCustomerId(l.Mat) != v); Reload(); });
         custCb.IsEnabled = !editingDraft;
-        var editor = new LinesEditor(_lines, Opts.Materials(_cust));
+        var matRows = X.Q.Materials(_cust).ToDictionary(m => m.Code);
+        var editor = new LinesEditor(_lines, Opts.Materials(_cust), "Số lượng", units: code => matRows.GetValueOrDefault(code));
+        var orders = X.Q.Orders(_cust, "OPEN").Select(o => new Opt<long?>($"{o.No} – {o.ProductCode}", o.Id)).ToList();
 
         var form = Ui.Card(editingDraft ? $"Phiếu nháp {_sel!.DocNo}" : "Phiếu nhập mới",
-            Ui.Row(Ui.Label("Khách hàng", true), custCb, Ui.Label("Số phiếu", true), no, Ui.Label("Ghi chú"), note),
+            Ui.Row(Ui.Label("Khách hàng", true), custCb, Ui.Label("Số phiếu", true), no, Ui.Label("Số hóa đơn"), invoice, Ui.Label("Ghi chú"), note),
             Ui.Row(Ui.Label("Nơi xuất (bên giao)"), Ui.Combo(DocText.PlaceOpts(true), _fromPlace, 260, v => _fromPlace = v),
                 Ui.Label("Nơi nhận"), Ui.Combo(DocText.PlaceOpts(false), _toPlace, 260, v => _toPlace = v),
                 editingDraft ? DocText.PrintButton(_sel!.Id) : null),
+            Ui.Row(Ui.Label("Nạp phần đang thiếu của đơn"), orders.Count == 0 ? Ui.Hint("(khách hàng không có đơn đang mở)") : Ui.Combo(orders, _shortOrder, 300, v => _shortOrder = v),
+                orders.Count == 0 ? null : Ui.Btn("Nạp phần thiếu", () => Ui.Try(() => { LoadShortage(_shortOrder ?? throw new BusinessException("Chọn đơn hàng.")); Reload(); })),
+                Ui.BtnAsync("Tải mẫu Excel", async () =>
+                {
+                    var path = await Ui.SavePath("Lưu mẫu phiếu nhập", "Mau phieu nhap", "xlsx", "Bảng tính Excel");
+                    if (path is null) return;
+                    await using (var fs = File.Create(path)) ReceiptExcel.WriteTemplate(matRows.Values.Where(m => m.Active), fs);
+                    App.Main.Status("Đã lưu mẫu: " + path, "ok");
+                }),
+                Ui.BtnAsync("Nhập dòng từ Excel", async () =>
+                {
+                    var path = await Ui.OpenPath("Chọn file phiếu nhập", "xlsx", "Bảng tính Excel");
+                    if (path is null) return;
+                    List<ReceiptExcelLine> rows;
+                    await using (var fs = File.OpenRead(path)) rows = ReceiptExcel.Read(fs);
+                    ImportRows(rows, matRows); Reload();
+                })),
             editor.View,
             Ui.Row(
                 Ui.Btn("Lưu nháp", () => Ui.Try(() => { Save(); Reload(); }, "Đã lưu phiếu nháp."), primary: !editingDraft),
@@ -90,7 +164,7 @@ public sealed class ReceiptScreen : Screen
                     var id = Save();
                     var lines = X.Q.DocLines(id);
                     if (!await Dialog.Confirm("Xác nhận nhập kho", $"Xác nhận phiếu {X.Q.Docs("IN").First(d => d.Id == id).DocNo}?\n" +
-                        string.Join("\n", lines.Select(l => $"  {l.Material}: +{Ui.N(l.Qty)} {l.Unit}")) + "\n\nSau khi xác nhận, phiếu không sửa được.", "Xác nhận")) { Reload(); return; }
+                        string.Join("\n", lines.Select(l => $"  {l.Material}: +{Ui.N(l.Qty)} {l.Unit}" + (l.EntryUnit is null ? "" : $" ({l.EntryText})"))) + "\n\nSau khi xác nhận, phiếu không sửa được.", "Xác nhận")) { Reload(); return; }
                     X.Stock.Confirm(id);
                     New(); App.Main.Status("Đã xác nhận nhập kho.", "ok"); Reload();
                 }, primary: true),
@@ -103,32 +177,49 @@ public sealed class ReceiptScreen : Screen
 
         return Ui.Col(form,
             Ui.Card("Danh sách phiếu nhập (chọn để xem / sửa phiếu nháp)",
-                Ui.List(docs, DocText.Cols, d =>
+                Ui.SearchList("receipts", docs, DocText.InCols, d =>
                 {
                     if (d is null || d.Id == _sel?.Id) return;
-                    _sel = d;
-                    if (d is { Status: "DRAFT", Kind: null })
-                    {
-                        _lines.Clear(); _lines.AddRange(X.Q.DocLines(d.Id).Select(l => new LineState { Mat = l.Material, Qty = Ui.N(l.Qty) }));
-                        _no = d.DocNo; _note = d.Note ?? ""; _cust = X.Q.Customers().FirstOrDefault(c => c.Code == d.CustomerCode)?.Id ?? _cust;
-                        _fromPlace = d.FromPlaceId; _toPlace = d.ToPlaceId;
-                    }
-                    Reload();
+                    Load(d); Reload();
                 }, 300, d => d.Id == _sel?.Id)),
-            _sel is { } s && !(s is { Status: "DRAFT", Kind: null }) ? Ui.Card($"Chi tiết {s.DocNo} ({DocText.Type(s)} – {DocText.Status(s.Status)})", DocText.PlacesAndPrint(s, Reload), DocText.Lines(s.Id)) : null);
+            _sel is { } s && !(s is { Status: "DRAFT", Kind: null }) ? Ui.Card($"Chi tiết {s.DocNo} ({DocText.Type(s)} – {DocText.Status(s.Status)})" + (s.InvoiceNo is null ? "" : $" · HĐ {s.InvoiceNo}"), DocText.PlacesAndPrint(s, Reload), DocText.Lines(s.Id)) : null);
+    }
+
+    void ImportRows(List<ReceiptExcelLine> rows, Dictionary<string, MaterialRow> mats)
+    {
+        var errs = rows.Where(r => !mats.ContainsKey(r.Material)).Select(r => $"{r.Material}: không phải NPL của khách hàng đang chọn.").ToList();
+        errs.AddRange(rows.Where(r => mats.TryGetValue(r.Material, out var m) && r.Unit is not null && !string.Equals(r.Unit, m.Unit, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(r.Unit, m.AltUnit, StringComparison.OrdinalIgnoreCase)).Select(r => $"{r.Material}: đơn vị {r.Unit} chưa khai báo quy đổi."));
+        if (errs.Count > 0) throw new BusinessException(string.Join("\n", errs));
+        _lines.RemoveAll(l => string.IsNullOrEmpty(l.Mat));
+        foreach (var r in rows)
+        {
+            var m = mats[r.Material];
+            var alt = r.Unit is not null && string.Equals(r.Unit, m.AltUnit, StringComparison.OrdinalIgnoreCase);
+            _lines.Add(new LineState { Mat = r.Material, Qty = Ui.N(r.Qty), Unit = alt ? m.AltUnit : null, Factor = alt ? Ui.N(r.Factor ?? m.AltFactor ?? 0) : "" });
+        }
+        App.Main.Status($"Đã nạp {rows.Count} dòng từ Excel – kiểm tra rồi Lưu nháp / Xác nhận.", "ok");
     }
 
     long Save()
     {
-        var lines = LinesEditor.Read(_lines);
-        if (_sel is { Status: "DRAFT", Kind: null } d) { X.Stock.ReplaceDraftLines(d.Id, lines); X.Places.SetDocPlaces(d.Id, _fromPlace, _toPlace); return d.Id; }
-        var id = X.Stock.CreateDraft("IN", _no.Trim(), lines, null, _note, _cust ?? throw new BusinessException("Chọn khách hàng."));
-        X.Places.SetDocPlaces(id, _fromPlace, _toPlace);
+        var rows = LinesEditor.ReadUnits(_lines);
+        var lines = rows.Select(r => (r.mat, r.unit is null ? r.qty : Math.Round(r.qty * r.factor!.Value, 2, MidpointRounding.AwayFromZero))).ToList();
+        var entries = rows.Where(r => r.unit is not null).Select(r => (r.mat, r.qty, r.unit!, r.factor!.Value)).ToList();
+        long id;
+        if (_sel is { Status: "DRAFT", Kind: null } d) { X.Stock.ReplaceDraftLines(d.Id, lines); X.Places.SetDocPlaces(d.Id, _fromPlace, _toPlace); id = d.Id; }
+        else
+        {
+            id = X.Stock.CreateDraft("IN", _no.Trim(), lines, null, _note, _cust ?? throw new BusinessException("Chọn khách hàng."));
+            X.Places.SetDocPlaces(id, _fromPlace, _toPlace);
+        }
+        X.Stock.ApplyEntries(id, entries);
+        X.Stock.SetInvoice(id, _invoice);
         _sel = X.Q.Docs("IN").First(x => x.Id == id);
         return id;
     }
 
-    void New() { _sel = null; _lines.Clear(); _no = ""; _note = ""; _fromPlace = null; _toPlace = X.Places.DefaultInTo; }
+    void New() { _sel = null; _lines.Clear(); _no = ""; _note = ""; _invoice = ""; _fromPlace = null; _toPlace = X.Places.DefaultInTo; }
 }
 
 public sealed class CountScreen : Screen

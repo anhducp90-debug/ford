@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 namespace QuanLyNPL.Data;
 
 public sealed record CustomerRow(long Id, string Code, string Name, bool Active);
-public sealed record MaterialRow(long Id, string Code, string Name, string Unit, long? CustomerId, string CustomerCode, bool Active, string? Note);
+public sealed record MaterialRow(long Id, string Code, string Name, string Unit, long? CustomerId, string CustomerCode, bool Active, string? Note, string? AltUnit = null, decimal? AltFactor = null);
 public sealed record SizeGridRow(long Id, string Code, string Name, bool Active, string Sizes, bool Used);
 public sealed record ProductRow(long Id, string Code, string Name, long CustomerId, string CustomerCode, long GridId, string GridCode, bool Active, int VariantCount);
 public sealed record VariantRow(long Id, string Code, string Name, string Group, decimal QtyPerSet);
@@ -12,9 +12,14 @@ public sealed record BomVersionRow(long Id, int No, DateTime CreatedAt);
 public sealed record BomLineRow(string Material, string MaterialName, string Size, decimal Usage, decimal Waste);
 public sealed record OrderRow(long Id, string No, long CustomerId, string CustomerCode, long ProductId, string ProductCode, DateTime OrderDate, DateTime? DueDate, string Status, decimal TotalSets);
 public sealed record DocRow(long Id, string Type, string DocNo, string Status, long? OrderId, string OrderNo, string CustomerCode, string? Scope, string? Kind, long? RefDocId, DateTime CreatedAt, DateTime? ConfirmedAt, string? Note,
-    long? FromPlaceId = null, string FromPlace = "", long? ToPlaceId = null, string ToPlace = "", long? IssuePlaceId = null, string IssuePlace = "", string? SubKind = null);
+    long? FromPlaceId = null, string FromPlace = "", long? ToPlaceId = null, string ToPlace = "", long? IssuePlaceId = null, string IssuePlace = "", string? SubKind = null, string? InvoiceNo = null);
 public sealed record PlaceRow(long Id, string Code, string Name, string? Address, string Kind, bool Active);
-public sealed record DocLineRow(string Material, string MaterialName, string Unit, decimal Qty, decimal? Suggested, bool Entered);
+public sealed record DocLineRow(string Material, string MaterialName, string Unit, decimal Qty, decimal? Suggested, bool Entered,
+    decimal? EntryQty = null, string? EntryUnit = null, decimal? EntryFactor = null)
+{
+    /// <summary>Ghi chú quy đổi, vd. "100 kg × 3,2 m/kg".</summary>
+    public string EntryText => EntryQty is decimal q && EntryUnit is not null ? $"{AuditLog.N(q)} {EntryUnit} × {AuditLog.N(EntryFactor ?? 0)} {Unit}/{EntryUnit}" : "";
+}
 public sealed record CountRow(long Id, string DocNo, string Status, string CustomerCode, string? Reason, DateTime CreatedAt);
 public sealed record CountLineRow(string Material, string MaterialName, decimal Counted, decimal? Book, decimal? Diff);
 public sealed record TransferRow(long Id, string DocNo, string FromCustomer, string ToCustomer, string Status, string? Reason, DateTime CreatedAt);
@@ -44,9 +49,9 @@ public sealed class Queries(SqliteConnection c)
             r => new CustomerRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3) == 1), null, ("$a", activeOnly ? 1 : 0));
 
     public List<MaterialRow> Materials(long? customerId = null, bool activeOnly = false) =>
-        Db.Query(c, @"SELECT m.id,m.code,m.name,m.unit,m.customer_id,COALESCE(k.code,''),m.active,m.note FROM material m LEFT JOIN customer k ON k.id=m.customer_id
+        Db.Query(c, @"SELECT m.id,m.code,m.name,m.unit,m.customer_id,COALESCE(k.code,''),m.active,m.note,m.alt_unit,m.alt_factor FROM material m LEFT JOIN customer k ON k.id=m.customer_id
                       WHERE ($k IS NULL OR m.customer_id=$k) AND ($a=0 OR m.active=1) ORDER BY m.code",
-            r => new MaterialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetInt32(6) == 1, OptStr(r, 7)),
+            r => new MaterialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetInt32(6) == 1, OptStr(r, 7), OptStr(r, 8), r.IsDBNull(9) ? null : Db.D(r.GetString(9))),
             null, ("$k", customerId), ("$a", activeOnly ? 1 : 0));
 
     public List<SizeGridRow> Grids() =>
@@ -93,12 +98,12 @@ public sealed class Queries(SqliteConnection c)
 
     public List<DocRow> Docs(string? type = null, long? orderId = null, string? status = null) =>
         Db.Query(c, @"SELECT d.id,d.type,d.doc_no,d.status,d.order_id,COALESCE(o.order_no,''),COALESCE(k.code,''),d.scope,d.kind,d.ref_doc_id,d.created_at,d.confirmed_at,d.note,
-                        d.from_place_id,COALESCE(pf.name,''),d.to_place_id,COALESCE(pt.name,''),d.issue_place_id,COALESCE(pi.name,''),d.sub_kind
+                        d.from_place_id,COALESCE(pf.name,''),d.to_place_id,COALESCE(pt.name,''),d.issue_place_id,COALESCE(pi.name,''),d.sub_kind,d.invoice_no
                       FROM stock_doc d LEFT JOIN ""order"" o ON o.id=d.order_id LEFT JOIN customer k ON k.id=d.customer_id
                       LEFT JOIN place pf ON pf.id=d.from_place_id LEFT JOIN place pt ON pt.id=d.to_place_id LEFT JOIN place pi ON pi.id=d.issue_place_id
                       WHERE ($t IS NULL OR d.type=$t) AND ($o IS NULL OR d.order_id=$o) AND ($s IS NULL OR d.status=$s) ORDER BY d.id DESC",
             r => new DocRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), OptLong(r, 4), r.GetString(5), r.GetString(6), OptStr(r, 7), OptStr(r, 8), OptLong(r, 9),
-                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12), OptLong(r, 13), r.GetString(14), OptLong(r, 15), r.GetString(16), OptLong(r, 17), r.GetString(18), OptStr(r, 19)), null, ("$t", type), ("$o", orderId), ("$s", status));
+                Db.Date(r.GetString(10)), OptDate(r, 11), OptStr(r, 12), OptLong(r, 13), r.GetString(14), OptLong(r, 15), r.GetString(16), OptLong(r, 17), r.GetString(18), OptStr(r, 19), OptStr(r, 20)), null, ("$t", type), ("$o", orderId), ("$s", status));
 
     /// <summary>Nơi xuất / nơi nhận. forFrom: lấy nơi dùng làm "nơi xuất" (XUAT, CA_HAI); forFrom=false: "nơi nhận" (NHAN, CA_HAI).</summary>
     public List<PlaceRow> Places(bool? forFrom = null, bool activeOnly = false) =>
@@ -108,8 +113,9 @@ public sealed class Queries(SqliteConnection c)
             null, ("$a", activeOnly ? 1 : 0), ("$f", forFrom is null ? null : forFrom.Value ? 1 : 0));
 
     public List<DocLineRow> DocLines(long docId) =>
-        Db.Query(c, "SELECT m.code,m.name,m.unit,l.qty,l.qty_suggested,l.entered FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d ORDER BY l.id",
-            r => new DocLineRow(r.GetString(0), r.GetString(1), r.GetString(2), Db.D(r.GetString(3)), r.IsDBNull(4) ? null : Db.D(r.GetString(4)), r.GetInt32(5) == 1), null, ("$d", docId));
+        Db.Query(c, "SELECT m.code,m.name,m.unit,l.qty,l.qty_suggested,l.entered,l.entry_qty,l.entry_unit,l.entry_factor FROM stock_doc_line l JOIN material m ON m.id=l.material_id WHERE l.doc_id=$d ORDER BY l.id",
+            r => new DocLineRow(r.GetString(0), r.GetString(1), r.GetString(2), Db.D(r.GetString(3)), r.IsDBNull(4) ? null : Db.D(r.GetString(4)), r.GetInt32(5) == 1,
+                r.IsDBNull(6) ? null : Db.D(r.GetString(6)), OptStr(r, 7), r.IsDBNull(8) ? null : Db.D(r.GetString(8))), null, ("$d", docId));
 
     public List<CountRow> Counts() =>
         Db.Query(c, "SELECT s.id,s.doc_no,s.status,COALESCE(k.code,''),s.reason,s.created_at FROM stock_count s LEFT JOIN customer k ON k.id=s.customer_id ORDER BY s.id DESC",

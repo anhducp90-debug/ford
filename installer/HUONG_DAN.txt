@@ -63,3 +63,23 @@ QUẢN LÝ NGUYÊN PHỤ LIỆU – HƯỚNG DẪN NHANH
    - Phiếu đã xác nhận không sửa/xóa được; chỉ phiếu nháp được hủy (có ghi nhật ký).
 
 8. Khi có lỗi: chi tiết được ghi trong %LOCALAPPDATA%\QuanLyNPL\logs.
+
+7. Trang chủ - Việc cần làm (mở đầu tiên sau khi nhập PIN):
+   - Mới dùng: làm lần lượt các bước "Thiết lập ban đầu" (mỗi bước có nút mở đúng màn hình).
+   - Hằng ngày: phiếu nháp chờ xác nhận, đơn thiếu BOM / thiếu NPL, tổ đang dư / thiếu, đơn sẵn sàng đóng.
+     Bấm nút ở từng dòng: "Nhập phần thiếu", "Bù phần thiếu", "Trả phần dư"... phiếu đã điền sẵn số.
+   - Khai báo > Đơn hàng: chọn đơn để xem 7 chặng (Đơn hàng > Đáp ứng > Nhập kho > Cấp phát > Cân đối
+     > Quyết toán > Đóng đơn) và nút việc tiếp theo.
+
+8. Nhập liệu nhanh:
+   - Phiếu cấp: "Thực cấp = đề xuất" rồi chỉ sửa dòng cấp khác.
+   - Phiếu nhập: ghi Số hóa đơn; "Nạp phần thiếu" của đơn; "Tải mẫu Excel" / "Nhập dòng từ Excel".
+   - BOM: "Chép BOM" từ mã hàng khác cùng khách hàng.
+   - Enter trong ô nhập = bấm nút chính; Enter ở ô số lượng dòng cuối = thêm dòng.
+   - Danh sách có ô "Tìm"; bảng dòng nhiều NPL có ô "Lọc NPL theo mã / tên".
+
+9. Vải nhập theo kg, tồn và cấp theo mét:
+   - Khai báo > Nguyên phụ liệu: chọn mã vải > "Quy đổi đơn vị nhập": 1 kg = ... m
+     (hoặc nhập định lượng g/m2 và khổ cm rồi bấm "Tính": m/kg = 1000 / (g/m2 x khổ m)).
+   - Phiếu nhập: ở dòng vải chọn Đơn vị nhập = kg, sửa hệ số theo lô nếu khác; hệ thống quy ra mét.
+     Phiếu lưu và in lại số kg, hệ số đã dùng.

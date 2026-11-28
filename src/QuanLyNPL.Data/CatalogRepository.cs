@@ -181,4 +181,63 @@ public sealed class CatalogRepository(SqliteConnection c)
         return id;
     }
 
+
+    // ---------------- Sửa danh mục ----------------
+
+    public void UpdateCustomer(long id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new BusinessException("Chưa nhập tên khách hàng.");
+        var old = Db.Scalar(c, "SELECT name FROM customer WHERE id=$i", null, ("$i", id)) as string ?? throw new BusinessException("Khách hàng không tồn tại.");
+        Db.Exec(c, "UPDATE customer SET name=$n WHERE id=$i", null, ("$n", name.Trim()), ("$i", id));
+        AuditLog.Write(c, "customer", "Sửa", Db.Scalar(c, "SELECT code FROM customer WHERE id=$i", null, ("$i", id)) as string, old, name.Trim(), entityId: id);
+    }
+
+    public void UpdateProduct(long id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new BusinessException("Chưa nhập tên mã hàng.");
+        var old = Db.Scalar(c, "SELECT name FROM product WHERE id=$i", null, ("$i", id)) as string ?? throw new BusinessException("Mã hàng không tồn tại.");
+        Db.Exec(c, "UPDATE product SET name=$n WHERE id=$i", null, ("$n", name.Trim()), ("$i", id));
+        AuditLog.Write(c, "product", "Sửa", Db.Scalar(c, "SELECT code FROM product WHERE id=$i", null, ("$i", id)) as string, old, name.Trim(), entityId: id);
+    }
+
+    /// <summary>Sửa chủng loại. SL/bộ chỉ đổi được khi mã hàng chưa có đơn (đơn đã lập giữ cấu hình đã chụp).</summary>
+    public void UpdateVariant(long id, string name, string group, decimal qtyPerSet)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new BusinessException("Chưa nhập tên chủng loại.");
+        if (qtyPerSet <= 0) throw new BusinessException("Số lượng trong bộ phải lớn hơn 0.");
+        var old = Db.Query(c, "SELECT v.code,v.name,COALESCE(v.group_name,''),v.qty_per_set,v.product_id,p.code FROM variant v JOIN product p ON p.id=v.product_id WHERE v.id=$i",
+            r => (code: r.GetString(0), name: r.GetString(1), group: r.GetString(2), qty: Db.D(r.GetString(3)), prod: r.GetInt64(4), pcode: r.GetString(5)), null, ("$i", id)).SingleOrDefault();
+        if (old == default) throw new BusinessException("Chủng loại không tồn tại.");
+        if (old.qty != qtyPerSet && Convert.ToInt32(Db.Scalar(c, "SELECT COUNT(*) FROM \"order\" WHERE product_id=$p", null, ("$p", old.prod))) > 0)
+            throw new BusinessException("Mã hàng đã có đơn hàng: không đổi SL/bộ (khai báo chủng loại mới nếu cấu thành bộ thay đổi).");
+        Db.Exec(c, "UPDATE variant SET name=$n, group_name=$g, qty_per_set=$q WHERE id=$i", null, ("$n", name.Trim()), ("$g", group), ("$q", Db.D(qtyPerSet)), ("$i", id));
+        AuditLog.Write(c, "variant", "Sửa", $"{old.pcode} / {old.code}", $"{old.name} · {old.group} · SL/bộ {AuditLog.N(old.qty)}", $"{name.Trim()} · {group} · SL/bộ {AuditLog.N(qtyPerSet)}", entityId: id);
+    }
+
+    // ---------------- Quy đổi đơn vị nhập ----------------
+
+    /// <summary>
+    /// Đơn vị nhập phụ của NPL (vd. vải nhập theo kg, tồn và cấp theo m) và hệ số: 1 đơn vị nhập = hệ số × đơn vị tồn.
+    /// altUnit rỗng = bỏ quy đổi. Hệ số mặc định, sửa được theo từng lô khi nhập.
+    /// </summary>
+    public void SetMaterialConversion(string code, string? altUnit, decimal? factor)
+    {
+        var unit = Db.Scalar(c, "SELECT unit FROM material WHERE code=$c", null, ("$c", code)) as string ?? throw new BusinessException($"Mã NPL không tồn tại: {code}");
+        altUnit = string.IsNullOrWhiteSpace(altUnit) ? null : altUnit.Trim();
+        if (altUnit is not null)
+        {
+            if (string.Equals(altUnit, unit, StringComparison.OrdinalIgnoreCase)) throw new BusinessException("Đơn vị nhập phụ phải khác đơn vị tồn.");
+            if (factor is not > 0) throw new BusinessException($"Hệ số quy đổi phải lớn hơn 0 ({unit}/{altUnit}).");
+        }
+        var old = Db.Query(c, "SELECT alt_unit,alt_factor FROM material WHERE code=$c", r => r.IsDBNull(0) ? "" : $"1 {r.GetString(0)} = {(r.IsDBNull(1) ? "" : AuditLog.N(Db.D(r.GetString(1))))} {unit}", null, ("$c", code)).Single();
+        Db.Exec(c, "UPDATE material SET alt_unit=$a, alt_factor=$f WHERE code=$c", null, ("$a", altUnit), ("$f", altUnit is null ? null : Db.D(factor!.Value)), ("$c", code));
+        AuditLog.Write(c, "material", "Quy đổi đơn vị", code, old, altUnit is null ? "(bỏ quy đổi)" : $"1 {altUnit} = {AuditLog.N(factor!.Value)} {unit}");
+    }
+
+    /// <summary>Số mét vải trong 1 kg từ định lượng (g/m²) và khổ (cm): m/kg = 1000 / (GSM × khổ m). Làm tròn 4 số lẻ.</summary>
+    public static decimal MetersPerKg(decimal gsm, decimal widthCm)
+    {
+        if (gsm <= 0 || widthCm <= 0) throw new BusinessException("Định lượng và khổ vải phải lớn hơn 0.");
+        return Math.Round(1000m / (gsm * widthCm / 100m), 4);
+    }
 }

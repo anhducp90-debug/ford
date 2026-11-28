@@ -32,6 +32,7 @@ void Click(string text, int nth = 0) { actions++; var b = All<Button>().Where(b 
 TextBox Box(string wm, int nth = 0) => All<TextBox>().Where(t => t.Watermark == wm).ElementAt(nth);
 void Type(string wm, string text, int nth = 0) { actions++; Box(wm, nth).Text = text; Pump(); }
 void TypeBox(TextBox b, string text) { actions++; b.Text = text; Pump(); }
+ComboBox Place(string item) => All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith(item)) && !cb.Items.Cast<object>().Any(o => o.ToString() == "(chưa chọn)"));
 ComboBox ComboWith(string item, int nth = 0) => All<ComboBox>().Where(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith(item))).ElementAt(nth);
 void Pick(ComboBox cb, string startsWith) { actions++; cb.SelectedItem = cb.Items.Cast<object>().First(o => o.ToString()!.StartsWith(startsWith)); Pump(); }
 void Check(string content, bool on) { actions++; var cb = All<CheckBox>().First(c => (c.Content as TextBlock)?.Text == content || (c.Content as string) == content); cb.IsChecked = on; Pump(); }
@@ -56,6 +57,7 @@ Ok(w.IsLocked && Shows("Lần đầu sử dụng"), "lần đầu bắt tạo PI
 x.Pin.SetPin("2468"); w.TryUnlock("2468"); Pump(); actions += 3;
 Shot("man_hinh_dau_tien");
 Note($"Màn hình mở ra đầu tiên: {All<TextBlock>().First(t => t.FontSize >= 20).Text}");
+Ok(Shows("Thiết lập ban đầu"), "trang chủ hiện các bước thiết lập ban đầu");
 
 // ---------------- 1. Quản trị ----------------
 Step("1. Quản trị – nơi xuất / nơi nhận, thông tin đơn vị");
@@ -77,6 +79,13 @@ Go("Khách hàng"); Type("Mã", "AP"); Type("Tên khách hàng", "Thời trang A
 Go("Nguyên phụ liệu");
 foreach (var (c, n, u) in new[] { ("AP-VC", "Vải chính kaki", "m"), ("AP-VL", "Vải lót", "m"), ("AP-CHI", "Chỉ may 40/2", "cuộn"), ("AP-NUT", "Nút 4 lỗ", "cái"), ("AP-NHAN", "Nhãn chính", "cái"), ("AP-TUI", "Túi PE", "cái") })
 { Pick(All<ComboBox>().First(), "AP"); Type("Mã NPL", c); Type("Tên", n); Type("ĐVT", u); Click("Lưu NPL mới"); }
+// Vải chính nhập theo kg: tính hệ số m/kg từ định lượng 208 g/m², khổ 150 cm
+actions++; All<DataGrid>().First().SelectedIndex = x.Q.Materials().FindIndex(m => m.Code == "AP-VC"); Pump();
+Type("g/m²", "208"); Type("cm", "150"); Click("Tính");
+Note("Hệ số tính được: " + Box("hệ số").Text + " m/kg");
+Click("Lưu quy đổi");
+Ok(x.Q.Materials().Single(m => m.Code == "AP-VC").AltUnit == "kg", "khai báo quy đổi kg → m cho vải chính");
+Shot("quy_doi_kg_m");
 Ok(x.Q.Materials().Count == 6, "khai báo 6 NPL");
 Note($"Sau khi lưu, ô khách hàng {(Ui.Sel<long?>(All<ComboBox>().First()) is null ? "BỊ XÓA, phải chọn lại mỗi lần" : "được giữ")}.");
 Shot("khai_bao_npl");
@@ -131,18 +140,22 @@ Note("Nhu cầu: " + string.Join(", ", need.Select(kv => $"{kv.Key} {Ui.N(kv.Val
 Step("6. Nhập kho theo hóa đơn NCC (nút thiếu 300 cái)");
 Go("Phiếu nhập");
 Pick(ComboWith("NCC-TT"), "NCC-TT");
-Lines(("AP-VC", "560"), ("AP-VL", "90"), ("AP-CHI", "12"), ("AP-NUT", "1300"), ("AP-NHAN", "450"), ("AP-TUI", "220"));
-Type("Ghi chú / nguồn", "HĐ 0001234 Dệt Thành Tâm");
+Lines(("AP-VC", "175"), ("AP-VL", "90"), ("AP-CHI", "12"), ("AP-NUT", "1300"), ("AP-NHAN", "450"), ("AP-TUI", "220"));
+// dòng vải chính: nhập 175 kg, lô thực tế 3,2 m/kg
+Pick(All<ComboBox>().Where(cb => cb.Width == 90).First(), "kg");
+TypeBox(All<TextBox>().First(t => t.Width == 100 && t.IsEnabled), "3,2");
+Type("Số hóa đơn / chứng từ", "0001234");
 Shot("phieu_nhap");
 Click("Xác nhận nhập");
-Ok(x.Stock.OnHand("AP-VC") == 560 && x.Stock.OnHand("AP-NUT") == 1300, "nhập + xác nhận, tồn tăng");
+Ok(x.Stock.OnHand("AP-VC") == 560 && x.Stock.OnHand("AP-NUT") == 1300, "nhập + xác nhận: 175 kg × 3,2 = 560 m vải chính, tồn tăng");
+Ok(x.Q.Docs("IN").First().InvoiceNo == "0001234", "lưu số hóa đơn");
 Go("Kiểm tra đáp ứng"); Shot("kiem_tra_dap_ung_sau_nhap");
 Note(Shows("THIẾU NPL") ? "Sau nhập: còn THIẾU (nút) – đúng dữ liệu" : "Sau nhập: ĐỦ");
 
 // ---------------- 7. Cấp nhà cắt ----------------
 Step("7. Cấp NPL cho nhà cắt – cả bộ, toàn đơn");
 Go("Phiếu xuất (cấp phát)");
-Pick(ComboWith("CAT"), "CAT");
+Pick(Place("CAT"), "CAT");
 Click("Điền tối đa còn lại");
 Shot("lap_phieu_cap_nha_cat");
 Click("Tạo phiếu xuất nháp");
@@ -150,8 +163,9 @@ var catDoc = x.Q.Docs("OUT", oid).First(d => d.IssuePlace == "Nhà cắt");
 var catLines = x.Q.DocLines(catDoc.Id);
 Note("Đề xuất: " + string.Join(", ", catLines.Select(l => $"{l.Material} {Ui.N(l.Suggested ?? 0)}")));
 // Thủ kho cấp tròn cây vải
+Click("Thực cấp = đề xuất");
 var act = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
-TypeBox(act[0], "550"); TypeBox(act[1], "90");
+TypeBox(act[0], "550"); TypeBox(act[1], "90");   // cấp tròn cây vải
 Shot("nhap_thuc_cap_nha_cat");
 Click("Xác nhận xuất");
 Ok(x.Q.Docs("OUT", oid).First(d => d.Id == catDoc.Id).Status == "CONFIRMED", "xác nhận phiếu cấp nhà cắt");
@@ -160,7 +174,7 @@ var pdf = Path.Combine(outDir, "phieu_cap_nha_cat.pdf"); using (var fs = File.Cr
 
 // ---------------- 8. Cấp các tổ may ----------------
 Step("8. Cấp tổ may 1 (áo) và tổ may 2 (quần) – BOM Sản xuất, lẻ chủng loại");
-Pick(ComboWith("MAY1"), "MAY1");
+Pick(Place("MAY1"), "MAY1");
 Check("BOM Tổ cắt", false); Check("BOM Sản xuất", true);
 Check("Cả bộ (tất cả)", false); Check("AO – Áo bảo hộ", true);
 Click("Điền tối đa còn lại"); Click("Tạo phiếu xuất nháp");
@@ -168,17 +182,17 @@ var may1 = x.Q.Docs("OUT", oid).First(d => d.IssuePlace == "Tổ may 1");
 act = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
 var may1Lines = x.Q.DocLines(may1.Id);
 Note("Đề xuất tổ may 1: " + string.Join(", ", may1Lines.Select(l => $"{l.Material} {Ui.N(l.Suggested ?? 0)}")));
-TypeBox(act[0], Ui.N(may1Lines[0].Suggested ?? 0)); TypeBox(act[1], "1000");   // nút chỉ cấp được 1000
+Click("Thực cấp = đề xuất");
+act = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
+TypeBox(act[1], "1000");   // nút chỉ cấp được 1000
 Shot("tom_may1_thuc_cap");
 Click("Xác nhận xuất");
 Ok(x.Q.Docs("OUT", oid).First(d => d.Id == may1.Id).Status == "CONFIRMED", "tổ may 1 xác nhận (nút cấp thiếu)");
-Pick(ComboWith("MAY2"), "MAY2");
+Pick(Place("MAY2"), "MAY2");
 Check("AO – Áo bảo hộ", false); Check("QUAN – Quần bảo hộ", true);
 Click("Điền tối đa còn lại"); Click("Tạo phiếu xuất nháp");
 var may2 = x.Q.Docs("OUT", oid).First(d => d.IssuePlace == "Tổ may 2");
-act = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
-var may2Lines = x.Q.DocLines(may2.Id);
-for (var i = 0; i < act.Count; i++) TypeBox(act[i], Ui.N(may2Lines[i].Suggested ?? 0));
+Click("Thực cấp = đề xuất");
 Click("Xác nhận xuất");
 Ok(x.Q.Docs("OUT", oid).First(d => d.Id == may2.Id).Status == "CONFIRMED", "tổ may 2 xác nhận");
 Note($"Tồn nút sau cấp: {Ui.N(x.Stock.OnHand("AP-NUT"))}");
@@ -186,41 +200,39 @@ Note($"Tồn nút sau cấp: {Ui.N(x.Stock.OnHand("AP-NUT"))}");
 // ---------------- 9. Nhập bổ sung + bù thiếu ----------------
 Step("9. Nhập bổ sung nút, xuất bù thiếu cho tổ may 1");
 Go("Phiếu nhập"); Pick(ComboWith("NCC-TT"), "NCC-TT"); Lines(("AP-NUT", "400")); Click("Xác nhận nhập");
-Go("Trả NPL & xuất bù");
+Go("Việc cần làm");
 var shortNut = -x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-NUT"), IssueScopes.Place, may1.IssuePlaceId);
-Note($"Tổ may 1 đang thiếu nút: {Ui.N(shortNut)} – màn hình xuất bù {(Shows(Ui.N(shortNut)) ? "CÓ" : "KHÔNG")} hiển thị số đang thiếu");
-Pick(ComboWith("PX-0002"), "PX-0002");
-var supEditorIdx = 1;   // editor thứ 2 trên màn (phiếu trả là editor 1)
-var mcb = All<ComboBox>().Where(cb => cb.Width == 290).ToList();
-Pick(mcb[supEditorIdx], "AP-NUT"); TypeBox(All<TextBox>().Where(t => t.Width == 110 && t.Watermark == "0").ElementAt(supEditorIdx), Ui.N(shortNut));
+Ok(Shows("Tổ may 1 đang THIẾU NPL"), $"trang Việc cần làm báo tổ may 1 thiếu {Ui.N(shortNut)} nút");
+Shot("viec_can_lam");
+Click("Bù phần thiếu");
+Ok(All<TextBox>().Any(t => t.Text == Ui.N(shortNut)), "phiếu xuất bù đã điền sẵn số đang thiếu");
 Click("Tạo phiếu xuất bù nháp"); Click("Xác nhận");
 Ok(x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-NUT"), IssueScopes.Place, may1.IssuePlaceId) == 0, "bù thiếu xong, tổ may 1 cân đối nút");
 Shot("xuat_bu");
 
 // ---------------- 10. Bù hao hụt + trả dư ----------------
 Step("10. Nhà cắt cắt hỏng (bù hao hụt 8 m) và trả vải dư");
+Go("Trả NPL & xuất bù");
 Pick(ComboWith("PX-0001"), "PX-0001"); Radio("Bù hao hụt vượt định mức");
-mcb = All<ComboBox>().Where(cb => cb.Width == 290).ToList();
+var mcb = All<ComboBox>().Where(cb => cb.Width == 290).ToList();
 Pick(mcb[1], "AP-VC"); TypeBox(All<TextBox>().Where(t => t.Width == 110 && t.Watermark == "0").ElementAt(1), "8");
 Click("Tạo phiếu xuất bù nháp"); Click("Xác nhận");
 var vcBal = x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-VC"), IssueScopes.Place, catDoc.IssuePlaceId);
 Note($"Số dư vải chính nhà cắt: {Ui.N(vcBal)}");
 Pick(ComboWith("Nhà cắt"), "Nhà cắt");
-mcb = All<ComboBox>().Where(cb => cb.Width == 290).ToList();
-Pick(mcb[0], "AP-VC"); TypeBox(All<TextBox>().Where(t => t.Width == 110 && t.Watermark == "0").ElementAt(0), Ui.N(Math.Max(0, vcBal)));
+Click("Nạp phần đang dư của nơi nhận");
 Click("Tạo phiếu trả nháp"); Click("Xác nhận");
-Ok(x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-VC"), IssueScopes.Place, catDoc.IssuePlaceId) == 0, "trả dư xong, nhà cắt cân đối vải chính");
+Ok(x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-VC"), IssueScopes.Place, catDoc.IssuePlaceId) == 0 && x.Stock.CarryClosing(oid, x.Cat.MaterialId("AP-VL"), IssueScopes.Place, catDoc.IssuePlaceId) == 0,
+   "nạp phần dư + trả: nhà cắt cân đối cả vải chính và vải lót");
 Shot("tra_npl");
 
 // ---------------- 11. Đóng gói ----------------
 Step("11. Cấp đóng gói cho tổ hoàn thiện");
 Go("Phiếu xuất (cấp phát)");
-Pick(ComboWith("HT"), "HT"); Check("BOM Tổ cắt", false); Check("BOM Đóng gói", true);
+Pick(Place("HT"), "HT"); Check("BOM Tổ cắt", false); Check("BOM Đóng gói", true);
 Click("Điền tối đa còn lại"); Click("Tạo phiếu xuất nháp");
 var ht = x.Q.Docs("OUT", oid).First(d => d.IssuePlace == "Tổ hoàn thiện");
-act = All<TextBox>().Where(t => t.Watermark == "chưa nhập").ToList();
-var htLines = x.Q.DocLines(ht.Id);
-for (var i = 0; i < act.Count; i++) TypeBox(act[i], Ui.N(htLines[i].Suggested ?? 0));
+Click("Thực cấp = đề xuất");
 Click("Xác nhận xuất");
 Ok(x.Q.Docs("OUT", oid).First(d => d.Id == ht.Id).Status == "CONFIRMED", "cấp đóng gói");
 
@@ -248,17 +260,18 @@ Ok(closed, "đóng đơn");
 if (!closed) Note("Lý do không đóng: " + (Dialog.LastMessage ?? w.StatusText));
 if (!closed)
 {
-    Step("13b. Trả 2 m vải lót dư của nhà cắt rồi đóng đơn lại");
-    Click("Trả NPL dư về kho");
-    Note("Nút \"Trả NPL dư về kho\" mở màn Trả NPL nhưng KHÔNG điền sẵn nơi nhận / mã NPL / số dư – phải nhập lại.");
-    Pick(ComboWith("Nhà cắt"), "Nhà cắt");
-    var mc = All<ComboBox>().Where(cb => cb.Width == 290).ToList();
-    Pick(mc[0], "AP-VL"); TypeBox(All<TextBox>().Where(t => t.Width == 110 && t.Watermark == "0").ElementAt(0), "2");
+    Step("13b. Trả phần dư từ màn quyết toán rồi đóng đơn");
+    Click("Trả phần dư về kho");
     Click("Tạo phiếu trả nháp"); Click("Xác nhận");
     Go("Quyết toán & đóng đơn"); Click("Đóng đơn");
     Ok(x.Q.Orders(status: null).Single().Status == "CLOSED", "đóng đơn sau khi trả dư");
-    Shot("dong_don");
 }
+Go("Đơn hàng"); actions++; All<CheckBox>().First(c => (c.Content as string) == "Chỉ đơn đang mở").IsChecked = false; Pump();
+actions++; All<DataGrid>().First().SelectedIndex = 0; Pump();
+Shot("don_hang_7_chang");
+Ok(x.Flow.Stages(oid).All(st => st.State == "done"), "7 chặng của đơn đều hoàn tất");
+Go("Việc cần làm"); Shot("viec_can_lam_cuoi");
+Ok(x.Flow.Todos().Count == 0, "không còn việc tồn đọng");
 
 // ---------------- 14. Báo cáo ----------------
 Step("14. Báo cáo cuối kỳ");

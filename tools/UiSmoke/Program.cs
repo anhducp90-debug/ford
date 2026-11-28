@@ -85,7 +85,7 @@ actual[0].Text = "4,8"; Pump();
 Click("Xác nhận xuất");
 Expect(x.Stock.OnHand("CHI") == 7.2m, "xác nhận phiếu xuất (CHI 12 − 4,8)");
 // Lập phiếu bằng checkbox trên giao diện: tổ cắt 2 cắt cả bộ phần size còn lại; chuyền may 2 may lẻ quần
-ComboBox ComboWith(string item) => All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith(item)));
+ComboBox ComboWith(string item) => All<ComboBox>().First(cb => cb.Items.Cast<object>().Any(o => o.ToString()!.StartsWith(item)) && !cb.Items.Cast<object>().Any(o => o.ToString() == "(chưa chọn)"));   // bỏ qua ô nơi xuất/nhận của phiếu nháp
 void Check(string content, bool on) { var cb = All<CheckBox>().First(c => (c.Content as TextBlock)?.Text == content); cb.IsChecked = on; Pump(); }
 var dh0 = x.Q.Orders().First(o => o.No == "DH-0412").Id;
 Pick(ComboWith("TO-CAT-2"), "TO-CAT-2");

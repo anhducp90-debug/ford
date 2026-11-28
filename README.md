@@ -15,6 +15,7 @@ Phần mềm Windows chạy offline trên một máy, quản lý nhập – BOM 
 | `src/QuanLyNPL.App` | Ứng dụng desktop (Avalonia): 5 phân hệ Quản trị, Khai báo, Nhập kho, Xuất kho, Báo cáo; khóa PIN |
 | `tests/` | Unit test (xUnit) |
 | `tools/UiSmoke` | Chạy thử giao diện không cần màn hình: mở mọi màn, bấm các quy trình chính, chụp ảnh |
+| `tools/UiTrial` | Dùng thử như thủ kho từ dữ liệu trống: chạy trọn một đơn, đếm thao tác, chụp màn hình, ghi nhật ký |
 | `installer/` | Script bộ cài NSIS + hướng dẫn |
 
 ## Build
@@ -22,6 +23,7 @@ Phần mềm Windows chạy offline trên một máy, quản lý nhập – BOM 
 ```bash
 dotnet test tests/QuanLyNPL.Core.Tests && dotnet test tests/QuanLyNPL.Data.Tests
 dotnet run --project tools/UiSmoke -- shots          # kiểm thử giao diện
+dotnet run --project tools/UiTrial -- trial         # dùng thử luồng thủ kho, đo thao tác
 dotnet publish src/QuanLyNPL.App -c Release -r win-x64 --self-contained true -p:DebugType=none -o publish
 cp src/QuanLyNPL.App/app.ico installer/HUONG_DAN.txt publish/
 makensis -DVERSION=1.0.0 -DSRC=$PWD/publish -DOUT=$PWD/QuanLyNPL_Setup_1.0.0.exe installer/QuanLyNPL.nsi

@@ -23,7 +23,11 @@ public sealed class IssueScreen : Screen
     readonly Dictionary<string, string> _actual = new();
     readonly Dictionary<string, string> _qty = new();
 
-    public IssueScreen(long? orderId = null) { _order = orderId; }
+    public IssueScreen(long? orderId = null, long? docId = null)
+    {
+        _order = orderId;
+        if (docId is long d) _sel = X.Q.Docs("OUT").FirstOrDefault(x => x.Id == d);
+    }
 
     protected override Control Build()
     {
@@ -36,13 +40,16 @@ public sealed class IssueScreen : Screen
         if (_place is null || places.All(p => p.Value != _place)) _place = places.FirstOrDefault()?.Value;
         var docs = X.Q.Docs("OUT", o).Where(d => d.Scope is not null && d.RefDocId is null).ToList();
         _sel = _sel is not null ? docs.FirstOrDefault(d => d.Id == _sel.Id) : docs.FirstOrDefault(d => d.Status == "DRAFT");
+        // Phiếu nháp đang chọn hiện NGAY dưới ô đơn hàng (không phải cuộn tìm ô thực cấp)
+        var draft = _sel is { Status: "DRAFT" } ? DraftCard(_sel) : null;
         return Ui.Col(
-            Ui.Row(Ui.Label("Đơn hàng"), orderCb),
+            Ui.Row(Ui.Label("Đơn hàng"), orderCb, Ui.Btn("Xem đơn & các chặng", () => App.Main.Open("Đơn hàng", new OrderScreen(o)))),
+            draft,
             places.Count == 0
                 ? Ui.Banner("Chưa có nơi nhận. Khai báo ở Quản trị → Nơi xuất / Nơi nhận (ví dụ Nhà cắt, Tổ may 1, Tổ hoàn thiện).", "warn")
                 : NewCard(o, places),
-            Ui.Card("Phiếu cấp phát của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; _actual.Clear(); Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : _sel.Status == "DRAFT" ? DraftCard(_sel)
+            Ui.Card("Phiếu cấp phát của đơn", Ui.SearchList("issue-docs", docs, DocText.OrderCols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; _actual.Clear(); Reload(); } }, 240, d => d.Id == _sel?.Id)),
+            _sel is null || _sel.Status == "DRAFT" ? null
                 : Ui.Card($"Phiếu {_sel.DocNo} – {_sel.IssuePlace} · {DocText.Scope(_sel.Scope)} – đã xác nhận", QtyLine(_sel.Id), DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id)));
     }
 
@@ -144,7 +151,15 @@ public sealed class IssueScreen : Screen
             var mat = l.Material; tb.TextChanged += (_, _) => _actual[mat] = tb.Text ?? "";
             Cell(Ui.Text(l.Material), r, 0); Cell(Ui.Text(l.MaterialName), r, 1); Cell(Ui.Text(Ui.N(l.Suggested ?? 0)), r, 2);
             Cell(Ui.Text(Ui.N(avail), avail < (l.Suggested ?? 0) ? Ui.Bad : null), r, 3); Cell(tb, r, 4);
-            Cell(Ui.Text(l.Entered ? "" : "chưa nhập", Ui.Warn), r, 5);
+            var note = Ui.Text("", Ui.Warn);
+            void Note()
+            {
+                var t = _actual.GetValueOrDefault(mat, "");
+                decimal? v = null; try { if (!string.IsNullOrWhiteSpace(t)) v = Ui.Dec(t, "thực cấp"); } catch (BusinessException) { }
+                note.Text = string.IsNullOrWhiteSpace(t) ? "chưa nhập" : v is null ? "không phải số" : v != (l.Suggested ?? 0) ? $"khác đề xuất {(v > l.Suggested ? "+" : "")}{Ui.N(v.Value - (l.Suggested ?? 0))}" : "";
+            }
+            tb.TextChanged += (_, _) => Note(); Note();
+            Cell(note, r, 5);
             r++;
         }
         List<string> SaveActual()
@@ -154,8 +169,13 @@ public sealed class IssueScreen : Screen
                 warns.AddRange(X.Issue.SetActual(d.Id, m, Ui.Dec(v, "thực cấp " + m)));
             return warns;
         }
-        return Ui.Card($"Phiếu nháp {d.DocNo} – nơi nhận {d.IssuePlace} · {DocText.Scope(d.Scope)}", QtyLine(d.Id), DocText.PlacesAndPrint(d, Reload), grid,
+        var card = Ui.Card($"Phiếu nháp {d.DocNo} – nơi nhận {d.IssuePlace} · {DocText.Scope(d.Scope)} – nhập thực cấp rồi Xác nhận xuất", QtyLine(d.Id), DocText.PlacesAndPrint(d, Reload), grid,
             Ui.Row(
+                Ui.Btn("Thực cấp = đề xuất", () =>
+                {
+                    foreach (var l in lines) _actual[l.Material] = Ui.N(l.Suggested ?? 0);
+                    Reload(); App.Main.Status("Đã điền thực cấp bằng đề xuất – sửa dòng nào cấp khác rồi Xác nhận xuất.", "ok");
+                }),
                 Ui.BtnAsync("Lưu thực cấp", async () =>
                 {
                     var w = SaveActual(); Reload();
@@ -173,15 +193,50 @@ public sealed class IssueScreen : Screen
                     if (!await Dialog.Confirm("Hủy phiếu nháp", $"Hủy phiếu nháp {d.DocNo}? Số lượng trên phiếu được trả lại phần còn cấp.", "Hủy phiếu", danger: true)) return;
                     X.Stock.DeleteDraft(d.Id, "Hủy phiếu xuất nháp"); _sel = null; _actual.Clear(); Reload();
                 }, danger: true)));
+        card.BorderBrush = Ui.Accent; card.BorderThickness = new Avalonia.Thickness(2);
+        return card;
     }
 }
 
 public sealed class ReturnScreen : Screen
 {
+    public enum Prefill { None, Surplus, Shortage }
     public override string Title => "Trả NPL & xuất bù";
-    public override string Subtitle => "Trả: nơi nhận trả NPL về kho – tăng tồn và giảm lượng đã cấp của ĐÚNG nơi nhận đó (không trả vượt lượng nơi đó đã nhận). Xuất bù gắn phiếu cấp gốc: Bù thiếu tính vào cân đối; Bù hao hụt ghi là hao hụt vượt định mức, không làm số dư dương.";
+    public override string Subtitle => "Trả: nơi nhận trả NPL về kho – tăng tồn và giảm lượng đã cấp của ĐÚNG nơi nhận đó. Xuất bù gắn phiếu cấp gốc: Bù thiếu tính vào cân đối; Bù hao hụt ghi là hao hụt vượt định mức. Dùng nút \"Nạp phần đang dư / đang thiếu\" để lấy số từ sổ cân đối, không phải gõ lại.";
     long? _order; long? _key; long? _src; SupplementKind _kind = SupplementKind.BuThieu; DocRow? _sel;
     readonly List<LineState> _ret = new(), _sup = new();
+
+    public ReturnScreen(long? orderId = null, long? placeId = null, Prefill prefill = Prefill.None, long? docId = null)
+    {
+        _order = orderId; _key = placeId;
+        if (docId is long d) _sel = X.Q.Docs().FirstOrDefault(x => x.Id == d);
+        if (orderId is long o && placeId is long p)
+        {
+            if (prefill == Prefill.Surplus) LoadBalance(_ret, o, p, surplus: true);
+            if (prefill == Prefill.Shortage)
+            {
+                _src = X.Q.Docs("OUT", o, "CONFIRMED").Where(x => x.Scope is not null && x.RefDocId is null && x.IssuePlaceId == p).Select(x => (long?)x.Id).FirstOrDefault();
+                _kind = SupplementKind.BuThieu;
+                LoadBalance(_sup, o, p, surplus: false);
+            }
+        }
+    }
+
+    /// <summary>Nạp số dư dương (phần dư) hoặc âm (phần thiếu) của nơi nhận từ sổ cân đối vào bảng dòng.</summary>
+    static void LoadBalance(List<LineState> lines, long orderId, long placeId, bool surplus)
+    {
+        lines.Clear();
+        lines.AddRange(App.X.Issue.Settlement(orderId).Where(s => s.PlaceId == placeId && (surplus ? Math.Round(s.Balance, 2) > 0 : Math.Round(s.Balance, 2) < 0))
+            .Select(s => new LineState { Mat = s.Material, Qty = Ui.N(Math.Abs(s.Balance)) }));
+    }
+
+    Control Balances(long orderId, long? placeId)
+    {
+        if (placeId is null) return Ui.Hint("Chọn nơi nhận để xem số dư.");
+        var rows = X.Issue.Settlement(orderId).Where(s => s.PlaceId == placeId && Math.Round(s.Balance, 2) != 0).ToList();
+        return rows.Count == 0 ? Ui.Text("Nơi nhận này đang cân đối (không dư, không thiếu).", Ui.Ok)
+            : Ui.Text("Số dư hiện tại: " + string.Join(" · ", rows.Select(s => $"{s.Material} {(s.Balance > 0 ? "dư" : "thiếu")} {Ui.N(Math.Abs(s.Balance))} {s.Unit}")), Ui.Warn, true);
+    }
 
     protected override Control Build()
     {
@@ -195,6 +250,7 @@ public sealed class ReturnScreen : Screen
         if (_key is null || keys.All(k => k.Value != _key)) _key = keys.FirstOrDefault()?.Value;
         var sources = X.Q.Docs("OUT", o.Id, "CONFIRMED").Where(d => d.Scope is not null && d.RefDocId is null).ToList();
         if (_src is null || sources.All(s => s.Id != _src)) _src = sources.FirstOrDefault()?.Id;
+        var srcDoc = sources.FirstOrDefault(s => s.Id == _src);
         var docs = X.Q.Docs(null, o.Id).Where(d => d.Type == "RETURN" || (d.Type == "OUT" && d.RefDocId is not null)).ToList();
         if (_sel is not null) _sel = docs.FirstOrDefault(d => d.Id == _sel.Id);
         var kindRow = new WrapPanel();
@@ -204,37 +260,7 @@ public sealed class ReturnScreen : Screen
             rb.IsCheckedChanged += (_, _) => { if (rb.IsChecked == true) _kind = k; };
             kindRow.Children.Add(rb);
         }
-        return Ui.Col(
-            Ui.Row(Ui.Label("Đơn hàng"), orderCb),
-            Ui.Card("Phiếu trả NPL",
-                keys.Count == 0 ? Ui.Hint("Chưa có nơi nhận nào nhận NPL của đơn.") : Ui.Row(Ui.Label("Nơi nhận trả"), Ui.Combo(keys, _key, 420, v => _key = v)),
-                new LinesEditor(_ret, mats, "Số lượng trả").View,
-                Ui.Row(Ui.Btn("Tạo phiếu trả nháp", () => Ui.Try(() =>
-                {
-                    var place = _key ?? throw new BusinessException("Chọn nơi nhận.");
-                    var id = X.Issue.CreateReturn(o.Id, place, X.Q.NextNo("TR"), LinesEditor.Read(_ret, "số lượng trả"));
-                    X.Places.SetDocPlaces(id, place, X.Places.DefaultInTo == place ? null : X.Places.DefaultInTo);
-                    _ret.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
-                }, "Đã tạo phiếu trả nháp."), primary: true))),
-            Ui.Card("Phiếu xuất bù",
-                sources.Count == 0 ? Ui.Hint("Đơn chưa có phiếu cấp phát đã xác nhận để xuất bù.") :
-                Ui.Row(Ui.Label("Phiếu cấp gốc"), Ui.Combo(sources.Select(s => new Opt<long?>($"{s.DocNo} – {s.IssuePlace} · {DocText.Scope(s.Scope)}", s.Id)), _src, 380, v => _src = v)),
-                kindRow,
-                new LinesEditor(_sup, mats, "Số lượng bù").View,
-                Ui.Row(Ui.BtnAsync("Tạo phiếu xuất bù nháp", async () =>
-                {
-                    var src = _src ?? throw new BusinessException("Chọn phiếu cấp gốc.");
-                    var lines = LinesEditor.Read(_sup, "số lượng bù");
-                    var w = X.Issue.SupplementWarnings(src, lines, _kind);
-                    if (w.Count > 0 && !await Dialog.Confirm("Cảnh báo xuất bù", string.Join("\n", w) + "\n\nVẫn lập phiếu xuất bù?", "Vẫn lập phiếu")) return;
-                    var id = X.Issue.CreateSupplement(src, X.Q.NextNo("XB"), lines, _kind);
-                    var srcDoc = X.Q.Docs().First(x => x.Id == src);
-                    X.Places.SetDocPlaces(id, srcDoc.FromPlaceId ?? X.Places.DefaultOutFrom, srcDoc.ToPlaceId ?? srcDoc.IssuePlaceId);
-                    _sup.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
-                    App.Main.Status("Đã tạo phiếu xuất bù nháp.", "ok");
-                }, primary: true))),
-            Ui.Card("Phiếu trả / xuất bù của đơn", Ui.List(docs, DocText.Cols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; Reload(); } }, 240, d => d.Id == _sel?.Id)),
-            _sel is null ? null : Ui.Card($"{DocText.Type(_sel)} {_sel.DocNo} – {_sel.IssuePlace} · {DocText.Status(_sel.Status)}", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id),
+        var selCard = _sel is null ? null : Ui.Card($"{DocText.Type(_sel)} {_sel.DocNo} – {_sel.IssuePlace} · {DocText.Status(_sel.Status)}", DocText.PlacesAndPrint(_sel, Reload), DocText.Lines(_sel.Id),
                 _sel.Status != "DRAFT" ? null : Ui.Row(
                     Ui.BtnAsync("Xác nhận", async () =>
                     {
@@ -245,7 +271,44 @@ public sealed class ReturnScreen : Screen
                     {
                         if (!await Dialog.Confirm("Hủy phiếu nháp", $"Hủy phiếu nháp {_sel.DocNo}?", "Hủy phiếu", danger: true)) return;
                         X.Stock.DeleteDraft(_sel.Id, "Hủy phiếu nháp"); _sel = null; Reload();
-                    }, danger: true))));
+                    }, danger: true)));
+        if (selCard is not null) Ui.FocusLater(selCard);
+        return Ui.Col(
+            Ui.Row(Ui.Label("Đơn hàng"), orderCb),
+            selCard is not null && _sel!.Status == "DRAFT" ? selCard : null,
+            Ui.Card("Phiếu trả NPL",
+                keys.Count == 0 ? Ui.Hint("Chưa có nơi nhận nào nhận NPL của đơn.") : Ui.Row(Ui.Label("Nơi nhận trả"), Ui.Combo(keys, _key, 420, v => { _key = v; _ret.Clear(); Reload(); }),
+                    Ui.Btn("Nạp phần đang dư của nơi nhận", () => { if (_key is long p) { LoadBalance(_ret, o.Id, p, true); Reload(); } })),
+                keys.Count == 0 ? null : Balances(o.Id, _key),
+                new LinesEditor(_ret, mats, "Số lượng trả").View,
+                Ui.Row(Ui.Btn("Tạo phiếu trả nháp", () => Ui.Try(() =>
+                {
+                    var place = _key ?? throw new BusinessException("Chọn nơi nhận.");
+                    var id = X.Issue.CreateReturn(o.Id, place, X.Q.NextNo("TR"), LinesEditor.Read(_ret, "số lượng trả"));
+                    X.Places.SetDocPlaces(id, place, X.Places.DefaultInTo == place ? null : X.Places.DefaultInTo);
+                    _ret.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
+                }, "Đã tạo phiếu trả nháp – kiểm tra rồi bấm Xác nhận."), primary: true))),
+            Ui.Card("Phiếu xuất bù",
+                sources.Count == 0 ? Ui.Hint("Đơn chưa có phiếu cấp phát đã xác nhận để xuất bù.") :
+                Ui.Row(Ui.Label("Phiếu cấp gốc"), Ui.Combo(sources.Select(s => new Opt<long?>($"{s.DocNo} – {s.IssuePlace} · {DocText.Scope(s.Scope)}", s.Id)), _src, 380, v => { _src = v; _sup.Clear(); Reload(); }),
+                    Ui.Btn("Nạp phần đang thiếu của nơi nhận", () => { if (srcDoc?.IssuePlaceId is long p) { LoadBalance(_sup, o.Id, p, false); Reload(); } })),
+                srcDoc is null ? null : Balances(o.Id, srcDoc.IssuePlaceId),
+                kindRow,
+                new LinesEditor(_sup, mats, "Số lượng bù").View,
+                Ui.Row(Ui.BtnAsync("Tạo phiếu xuất bù nháp", async () =>
+                {
+                    var src = _src ?? throw new BusinessException("Chọn phiếu cấp gốc.");
+                    var lines = LinesEditor.Read(_sup, "số lượng bù");
+                    var w = X.Issue.SupplementWarnings(src, lines, _kind);
+                    if (w.Count > 0 && !await Dialog.Confirm("Cảnh báo xuất bù", string.Join("\n", w) + "\n\nVẫn lập phiếu xuất bù?", "Vẫn lập phiếu")) return;
+                    var id = X.Issue.CreateSupplement(src, X.Q.NextNo("XB"), lines, _kind);
+                    var srcD = X.Q.Docs().First(x => x.Id == src);
+                    X.Places.SetDocPlaces(id, srcD.FromPlaceId ?? X.Places.DefaultOutFrom, srcD.ToPlaceId ?? srcD.IssuePlaceId);
+                    _sup.Clear(); _sel = X.Q.Docs(null, o.Id).First(d => d.Id == id); Reload();
+                    App.Main.Status("Đã tạo phiếu xuất bù nháp – kiểm tra rồi bấm Xác nhận.", "ok");
+                }, primary: true))),
+            Ui.Card("Phiếu trả / xuất bù của đơn", Ui.SearchList("return-docs", docs, DocText.OrderCols, d => { if (d is not null && d.Id != _sel?.Id) { _sel = d; Reload(); } }, 240, d => d.Id == _sel?.Id)),
+            selCard is not null && _sel!.Status != "DRAFT" ? selCard : null);
     }
 }
 
@@ -254,6 +317,8 @@ public sealed class SurplusScreen : Screen
     public override string Title => "Điều chuyển NPL dư";
     public override string Subtitle => "Chuyển NPL đang DƯ ở một nơi nhận sang nơi nhận khác hoặc đơn khác cùng khách hàng (NPL đã ở xưởng, không qua kho). Chỉ chuyển trong phạm vi số dư; ghi sổ cân đối cả hai phía. Đây là cách duy nhất để dùng phần dư của tổ này cho tổ khác.";
     long? _order; int _row = -1; long? _toOrder; long? _toPlace; string _qty = "", _reason = "";
+
+    public SurplusScreen(long? orderId = null) { _order = orderId; }
 
     protected override Control Build()
     {
@@ -344,10 +409,28 @@ public sealed class SettleScreen : Screen
             Ui.Banner(string.Join("\n", t.Filters.Where(f => f.StartsWith("Kết luận") || f.StartsWith("Chưa cấp") || f.StartsWith("Cấp vượt"))), dư > 0 ? "bad" : thiếu > 0 ? "warn" : "ok"),
             t.Rows.Count == 0 ? Ui.Hint("Đơn chưa cấp phát.") : Ui.Table(t, maxHeight: 520),
             Ui.Card("Tiến độ cấp theo size", Ui.Table(X.Reports.IssueProgress(o.Id), maxHeight: 360)),
-            o.Status != "OPEN" ? null : Ui.Row(
-                dư > 0 ? Ui.Btn("Trả NPL dư về kho", () => App.Main.Open("Trả NPL & xuất bù", new ReturnScreen())) : null,
-                dư > 0 ? Ui.Btn("Điều chuyển NPL dư", () => App.Main.Open("Điều chuyển NPL dư", new SurplusScreen())) : null,
-                Ui.BtnAsync("Đóng đơn", async () => await CloseFlow(o.Id, o.No, Reload), primary: true)));
+            o.Status != "OPEN" ? null : Actions(o.Id),
+            o.Status != "OPEN" ? null : Ui.Row(Ui.BtnAsync("Đóng đơn", async () => await CloseFlow(o.Id, o.No, Reload), primary: true)));
+    }
+
+    /// <summary>Việc xử lý theo từng nơi nhận: trả phần dư / bù phần thiếu, mở phiếu đã điền sẵn từ sổ cân đối.</summary>
+    static Control? Actions(long orderId)
+    {
+        var s = App.X.Issue.Settlement(orderId).Where(x => x.PlaceId is not null && Math.Round(x.Balance, 2) != 0).ToList();
+        if (s.Count == 0) return null;
+        var card = Ui.Card("Xử lý dư / thiếu theo nơi nhận");
+        var col = (StackPanel)card.Child!;
+        foreach (var g in s.GroupBy(x => (x.PlaceId!.Value, x.Place)))
+        {
+            var dư = g.Where(x => x.Balance > 0).ToList(); var thiếu = g.Where(x => x.Balance < 0).ToList();
+            col.Children.Add(Ui.Row(Ui.Text(g.Key.Place, null, true),
+                dư.Count == 0 ? null : Ui.Text("dư " + string.Join(", ", dư.Select(x => $"{x.Material} {Ui.N(x.Balance)} {x.Unit}")), Ui.Warn),
+                thiếu.Count == 0 ? null : Ui.Text("thiếu " + string.Join(", ", thiếu.Select(x => $"{x.Material} {Ui.N(-x.Balance)} {x.Unit}")), Ui.Bad),
+                dư.Count == 0 ? null : Ui.Btn("Trả phần dư về kho", () => App.Main.Open("Trả NPL & xuất bù", new ReturnScreen(orderId, g.Key.Item1, ReturnScreen.Prefill.Surplus))),
+                dư.Count == 0 ? null : Ui.Btn("Điều chuyển phần dư", () => App.Main.Open("Điều chuyển NPL dư", new SurplusScreen(orderId))),
+                thiếu.Count == 0 ? null : Ui.Btn("Bù phần thiếu", () => App.Main.Open("Trả NPL & xuất bù", new ReturnScreen(orderId, g.Key.Item1, ReturnScreen.Prefill.Shortage)))));
+        }
+        return card;
     }
 
     /// <summary>Đóng đơn có quyết toán: dư → báo lỗi; thiếu → hỏi xác nhận; đủ → hỏi xác nhận đóng.</summary>
