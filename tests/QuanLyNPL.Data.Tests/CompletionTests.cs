@@ -141,3 +141,55 @@ public class OperationTests
         Assert.Equal(3, q.Materials(f.Cust).Count);
     }
 }
+
+public class MaxSetsTests
+{
+    // Đơn: 10 bộ 110/56 + 10 bộ 120/60. BOM: VAI 1/SP (áo, quần) → 2/bộ; KHOA đóng gói theo bộ: 1 (110/56), 2 (120/60).
+    static (Fixture f, long o) Setup()
+    {
+        var f = new Fixture();
+        f.BomAll(new DateTime(2026, 1, 1), new[] { new BomLineInput("VAI", "*", 1m) });
+        f.Bom.AddVersion(f.Bom.CreateSetBom(f.Prod, BomType.DongGoi), new DateTime(2026, 1, 1), new[] { new BomLineInput("KHOA", "*", 1m), new BomLineInput("KHOA", "120/60", 2m) });
+        var o = f.Orders.CreateOrder(f.Prod, "O", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 10), new OrderLine("120/60", 10) });
+        return (f, o);
+    }
+
+    [Fact]
+    public void ByOrderMix_UsesTightestMaterial_AndCapsAtOrdered()
+    {
+        var (f, o) = Setup();
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 30m), ("KHOA", 100m) }));   // VAI cần 40 → 75%
+        var (mix, size, sum) = new ReportService(f.C, f.Orders, f.Stock).MaxSets(o);
+        Assert.True(sum.Complete);
+        Assert.Equal(15m, sum.MaxSets);                   // 75% × 20 bộ
+        Assert.Equal(new[] { "VAI" }, sum.Limiting);
+        Assert.Equal("VAI", mix.Rows[0][0]);
+        Assert.Equal(75m, mix.Rows[0][4]);
+        // Riêng từng size: 110/56 cần VAI 2 + KHOA 1/bộ → min(30/2, 100/1)=15 ; 120/60 → min(15, 100/2=50)=15
+        Assert.Equal(15m, size.Rows.Single(r => (string)r[0]! == "110/56")[2]);
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N2", new[] { ("VAI", 100m) }));   // dư thừa → không vượt số bộ đặt
+        Assert.Equal(20m, new ReportService(f.C, f.Orders, f.Stock).MaxSets(o).Summary.MaxSets);
+        Assert.Equal("KHOA", new ReportService(f.C, f.Orders, f.Stock).MaxSets(o).BySize.Rows.Single(r => (string)r[0]! == "120/60")[3]);
+    }
+
+    [Fact]
+    public void ReservationsOfOtherOrders_ReduceAvailability_NoStock_IsZero()
+    {
+        var (f, o) = Setup();
+        Assert.Equal(0m, new ReportService(f.C, f.Orders, f.Stock).MaxSets(o).Summary.MaxSets);
+        f.Stock.Confirm(f.Stock.CreateDraft("IN", "N1", new[] { ("VAI", 40m), ("KHOA", 30m) }));
+        var o2 = f.Orders.CreateOrder(f.Prod, "O2", new DateTime(2026, 2, 1), new[] { new OrderLine("110/56", 5) });
+        f.Stock.Reserve(o2, "VAI", 20m);
+        Assert.Equal(10m, new ReportService(f.C, f.Orders, f.Stock).MaxSets(o).Summary.MaxSets);   // còn 20 VAI → 50%
+    }
+
+    [Fact]
+    public void Incomplete_NoConclusion()
+    {
+        using var f = new Fixture();
+        var o = f.Orders.CreateOrder(f.Prod, "O", DateTime.Now, new[] { new OrderLine("110/56", 1) });
+        var r = new ReportService(f.C, f.Orders, f.Stock).MaxSets(o);
+        Assert.False(r.Summary.Complete);
+        Assert.Contains(r.ByOrderMix.Filters, x => x.StartsWith("CHƯA ĐỦ"));
+    }
+}

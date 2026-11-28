@@ -193,13 +193,19 @@ public sealed class CheckScreen : Screen
             FulfillStatus.Short => Ui.Banner($"THIẾU NPL – {r.Lines.Count(l => l.Shortage > 0)} mã thiếu: {string.Join(", ", r.Lines.Where(l => l.Shortage > 0).Select(l => l.MaterialCode))}", "bad"),
             _ => Ui.Banner("CHƯA ĐỦ DỮ LIỆU: " + string.Join("; ", d.Issues.Select(i => i.Message).Distinct()), "warn")
         };
+        var max = X.Reports.MaxSets(o).Summary;
+        var maxLine = max.Complete
+            ? Ui.Banner($"Có thể sản xuất tối đa {Ui.N(max.MaxSets)} / {Ui.N(max.OrderedSets)} bộ theo cơ cấu size của đơn ({Ui.N(Math.Round(max.Ratio * 100, 1))}%)" +
+                (max.MaxSets < max.OrderedSets ? $" – giới hạn bởi {string.Join(", ", max.Limiting)}." : "."), max.MaxSets < max.OrderedSets ? "muted" : "ok")
+            : null;
         var res = X.Q.Reservations(o);
         ReservationRow? selRes = null;
         var resQty = Ui.Input(100, "Số lượng", _resQty); resQty.TextChanged += (_, _) => _resQty = resQty.Text ?? "";
         return Ui.Col(
             Ui.Row(Ui.Label("Đơn hàng"), orderCb, only, Ui.BtnAsync("Xuất Excel", () => Ui.Export(table, false)), Ui.BtnAsync("Xuất PDF", () => Ui.Export(table, true)),
                 Ui.Btn("Tạo phiếu xuất", () => App.Main.Open("Phiếu xuất (cấp phát)", new IssueScreen(o)))),
-            banner,
+            banner, maxLine,
+            Ui.Row(Ui.Btn("Xem số bộ tối đa theo từng size", () => App.Main.Open("Số bộ tối đa sản xuất được", new ReportScreen("max") { OrderId = o }))),
             Ui.Table(table, row => { var m = row?[0] as string; if (m is not null && m != _mat) { _mat = m; Reload(); } }),
             _mat is null ? Ui.Hint("Chọn một mã NPL để xem nhu cầu đến từ BOM / chủng loại / size nào và để giữ kho.") :
             Ui.Card($"Nguồn nhu cầu {_mat}",

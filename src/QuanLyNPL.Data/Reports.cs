@@ -9,6 +9,9 @@ public sealed record ReportTable(string Title, IReadOnlyList<string> Filters, IR
 public sealed record ReportFilter(DateTime? From = null, DateTime? To = null, long? CustomerId = null, long? ProductId = null,
     long? OrderId = null, string? MaterialCode = null, bool OnlyShortage = false);
 
+/// <summary>Kết quả tóm tắt số bộ tối đa theo cơ cấu size của đơn.</summary>
+public sealed record MaxSetsSummary(bool Complete, decimal OrderedSets, decimal MaxSets, decimal Ratio, IReadOnlyList<string> Limiting);
+
 public sealed class ReportService(SqliteConnection c, OrderService orders, StockService stock)
 {
     static string FDate(DateTime d) => d.ToString("dd/MM/yyyy");
@@ -115,6 +118,50 @@ public sealed class ReportService(SqliteConnection c, OrderService orders, Stock
         return (new ReportTable("Định mức một bộ", filters, new[] { "Mã NPL", "Tên", "ĐVT" }.Concat(sizes.Select(s => "Size " + s)).ToList(), rows),
                 new ReportTable("Định mức một bộ – chi tiết nguồn", filters, new[] { "Size", "Mã NPL", "Tên", "BOM", "Chủng loại", "Lượng / bộ" }, detail),
                 distinctIssues);
+    }
+
+    /// <summary>
+    /// Số bộ tối đa sản xuất được với tồn khả dụng hiện tại (đã trừ lượng giữ cho đơn khác):
+    /// (1) theo cơ cấu size của đơn: hệ số k = min(tồn khả dụng / nhu cầu) trên mọi mã NPL, số bộ = k × tổng số bộ (không vượt số bộ đặt);
+    /// (2) riêng từng size: min(tồn khả dụng / định mức 1 bộ của size) – mỗi size tính độc lập, không cộng các size với nhau.
+    /// </summary>
+    public (ReportTable ByOrderMix, ReportTable BySize, MaxSetsSummary Summary) MaxSets(long orderId)
+    {
+        var snap = orders.LoadSnapshot(orderId);
+        var lines = orders.LoadLines(orderId);
+        var total = lines.Sum(l => l.Sets);
+        var d = OrderService.Calculate(snap, lines);
+        decimal Avail(string m) => Math.Max(0m, stock.OnHand(m) - stock.ReservedForOthers(m, orderId));
+        var need = d.Sources.GroupBy(x => x.MaterialCode).ToDictionary(g => g.Key, g => g.Sum(x => x.Qty));
+
+        var mixRows = need.Where(kv => kv.Value > 0)
+            .Select(kv => (mat: kv.Key, need: kv.Value, avail: Avail(kv.Key), ratio: Avail(kv.Key) / kv.Value))
+            .OrderBy(x => x.ratio).ThenBy(x => x.mat, StringComparer.Ordinal).ToList();
+        var k = mixRows.Count == 0 ? 0m : Math.Min(1m, mixRows.Min(x => x.ratio));
+        var maxMix = Math.Floor(k * total);
+        var limiting = mixRows.Where(x => x.ratio == mixRows[0].ratio).Select(x => x.mat).ToList();
+
+        var filters = Describe(new ReportFilter(OrderId: orderId));
+        var incomplete = !d.IsComplete;
+        if (incomplete) filters.Add("CHƯA ĐỦ DỮ LIỆU: " + string.Join("; ", d.Issues.Select(i => i.Message).Distinct()) + " – không kết luận số bộ tối đa.");
+        else filters.Add($"Theo cơ cấu size của đơn: tối đa {maxMix:#,##0} / {total:#,##0} bộ ({k * 100:0.#}%), giới hạn bởi: {string.Join(", ", limiting)}");
+
+        var byMix = new ReportTable("Số bộ tối đa – theo cơ cấu size của đơn", filters,
+            new[] { "Mã NPL", "Tên", "Nhu cầu cả đơn", "Tồn khả dụng", "Đáp ứng %", "Số bộ tối đa theo mã" },
+            mixRows.Select(x => new object?[] { x.mat, MatName(x.mat), Math.Round(x.need, 2), x.avail, Math.Round(Math.Min(x.ratio, 9.99m) * 100, 1), Math.Floor(Math.Min(x.ratio, 1m) * total) }).ToList());
+
+        var sizeRows = new List<object?[]>();
+        foreach (var l in lines)
+        {
+            var r = OrderService.Calculate(snap, new[] { new OrderLine(l.DefaultSize, 1m) });
+            var norm = r.Sources.GroupBy(x => x.MaterialCode).Select(g => (mat: g.Key, q: g.Sum(x => x.Qty))).Where(x => x.q > 0).ToList();
+            if (norm.Count == 0 || !r.IsComplete) { sizeRows.Add(new object?[] { l.DefaultSize, l.Sets, null, "CHƯA ĐỦ DỮ LIỆU" }); continue; }
+            var per = norm.Select(x => (x.mat, max: Math.Floor(Avail(x.mat) / x.q))).OrderBy(x => x.max).ToList();
+            sizeRows.Add(new object?[] { l.DefaultSize, l.Sets, per[0].max, string.Join(", ", per.Where(x => x.max == per[0].max).Select(x => x.mat)) });
+        }
+        var bySize = new ReportTable("Số bộ tối đa – riêng từng size", filters,
+            new[] { "Size", "Số bộ đặt", "Tối đa nếu chỉ sản xuất size này", "NPL giới hạn" }, sizeRows);
+        return (byMix, bySize, new MaxSetsSummary(!incomplete, total, incomplete ? 0 : maxMix, incomplete ? 0 : k, limiting));
     }
 
     string MatUnit(string code) => (string)Db.Scalar(c, "SELECT unit FROM material WHERE code=$c", null, ("$c", code))!;
